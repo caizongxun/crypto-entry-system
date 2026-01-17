@@ -89,3 +89,27 @@ SIGNAL_QUALITY_RANGES = {
     'moderate': (50, 64),
     'poor': (0, 49),
 }
+
+TIMEFRAME_CONFIGS = {
+    '15m': {
+        'bb_period': 20,
+        'bb_std': 2.0,
+        'lookforward': 5,
+        'bounce_threshold': 0.005,
+        'model_type': 'xgboost',
+    },
+    '1h': {
+        'bb_period': 20,
+        'bb_std': 2.0,
+        'lookforward': 4,
+        'bounce_threshold': 0.005,
+        'model_type': 'xgboost',
+    },
+    '1d': {
+        'bb_period': 20,
+        'bb_std': 2.0,
+        'lookforward': 3,
+        'bounce_threshold': 0.01,
+        'model_type': 'xgboost',
+    },
+}
