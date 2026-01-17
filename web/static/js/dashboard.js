@@ -5,7 +5,7 @@ let tvLiveChart = null;
 let mlPredictions = [];
 let currentTimeframe = '60';
 let notifications = [];
-let chartHeight = 400;
+let chartHeight = 600;
 let refreshInterval = 15000;
 
 const timeframeMap = {
@@ -22,10 +22,10 @@ const timeframeMap = {
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Dashboard initialized');
     loadSettings();
-    initializeChart();
-    initializeLiveChart();
     initializeEventListeners();
     initializeResizeHandles();
+    initializeChart();
+    initializeLiveChart();
     loadDashboardData();
     setInterval(loadDashboardData, refreshInterval);
 });
@@ -89,6 +89,7 @@ function initializeResizeHandles() {
 
 function initializeChart() {
     const container = document.getElementById('priceChart');
+    if (!container) return;
     
     const symbol = 'BINANCE:' + currentSymbol.replace('USDT', '') + 'USDT';
     const interval = timeframeMap[currentTimeframe]?.tvInterval || '60';
@@ -277,7 +278,7 @@ function updateChart() {
         tvChart.remove();
         tvChart = null;
     }
-    initializeChart();
+    setTimeout(() => initializeChart(), 100);
 }
 
 function updateLiveChart() {
@@ -285,7 +286,7 @@ function updateLiveChart() {
         tvLiveChart.remove();
         tvLiveChart = null;
     }
-    initializeLiveChart();
+    setTimeout(() => initializeLiveChart(), 100);
 }
 
 function switchSection(section) {
@@ -383,6 +384,7 @@ function updateMLPredictions(data) {
     mlPredictions = data.predictions || [];
     const container = document.getElementById('mlPredictionsList');
     const table = document.getElementById('mlSignalsTable');
+    const dashboardTable = document.getElementById('dashboardTradeHistory');
 
     if (!container) {
         console.error('ML predictions container not found');
@@ -519,6 +521,7 @@ function updateAccountInfo(data) {
 
         const tradeHistory = data.trade_history || [];
         const historyTable = document.getElementById('tradeHistoryTable');
+        const dashboardTable = document.getElementById('dashboardTradeHistory');
         
         if (historyTable) {
             if (tradeHistory.length === 0) {
@@ -534,6 +537,22 @@ function updateAccountInfo(data) {
                         <td>${trade.quantity ? parseFloat(trade.quantity).toFixed(4) : 'N/A'}</td>
                         <td style="color: ${(trade.pnl || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</td>
                         <td style="color: ${(trade.pnl_percentage || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl_percentage || 0) >= 0 ? '+' : ''}${(trade.pnl_percentage || 0).toFixed(2)}%</td>
+                    </tr>
+                `).join('');
+            }
+        }
+
+        if (dashboardTable) {
+            const recentTrades = tradeHistory.slice(-5);
+            if (recentTrades.length === 0) {
+                dashboardTable.innerHTML = '<tr><td colspan="4" class="empty-state">No trades</td></tr>';
+            } else {
+                dashboardTable.innerHTML = recentTrades.reverse().map(trade => `
+                    <tr>
+                        <td>${trade.position_type || 'N/A'}</td>
+                        <td>$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'N/A'}</td>
+                        <td>$${trade.close_price ? parseFloat(trade.close_price).toFixed(2) : 'N/A'}</td>
+                        <td style="color: ${(trade.pnl || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</td>
                     </tr>
                 `).join('');
             }
