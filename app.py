@@ -3,19 +3,34 @@ from flask_cors import CORS
 import pandas as pd
 from datetime import datetime, timedelta
 import requests
-from binance.client import Client
 import os
+import sys
 from dotenv import load_dotenv
 
+# Add the project root to Python path
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+
+load_dotenv()
+
+# Import models
 from models.ml_model import CryptoEntryModel
 from models.on_chain_data import OnChainDataProvider
 from models.market_sentiment import MarketSentimentAnalyzer
 from models.paper_trading import PaperTradingEngine
+
+# Import services
 from app.services.whale_tracking import WhaleTracker
 from app.services.exchange_flow import ExchangeFlowAnalyzer
+
+# Import routes
 from app.routes.on_chain import on_chain_bp
 
-load_dotenv()
+# Try to import Binance client, but handle if not installed
+try:
+    from binance.client import Client
+except ImportError:
+    Client = None
+    print('Warning: python-binance not installed. Some features may not work.')
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 CORS(app)
@@ -23,31 +38,61 @@ CORS(app)
 # Register blueprints
 app.register_blueprint(on_chain_bp)
 
-ml_model = CryptoEntryModel('BTCUSDT', '1h')
-ml_model.load_model()
+# Initialize ML model
+try:
+    ml_model = CryptoEntryModel('BTCUSDT', '1h')
+    ml_model.load_model()
+except Exception as e:
+    print(f'Warning: Could not load ML model: {str(e)}')
+    ml_model = None
 
-on_chain_provider = OnChainDataProvider('BTCUSDT')
-on_chain_provider.set_api_keys(
-    glassnode_key=os.getenv('GLASSNODE_API_KEY'),
-    alternative_key=os.getenv('ALTERNATIVE_API_KEY')
-)
+# Initialize on-chain data provider
+try:
+    on_chain_provider = OnChainDataProvider('BTCUSDT')
+    on_chain_provider.set_api_keys(
+        glassnode_key=os.getenv('GLASSNODE_API_KEY'),
+        alternative_key=os.getenv('ALTERNATIVE_API_KEY')
+    )
+except Exception as e:
+    print(f'Warning: Could not initialize on-chain provider: {str(e)}')
+    on_chain_provider = None
 
-sentiment_analyzer = MarketSentimentAnalyzer('BTC')
+# Initialize sentiment analyzer
+try:
+    sentiment_analyzer = MarketSentimentAnalyzer('BTC')
+except Exception as e:
+    print(f'Warning: Could not initialize sentiment analyzer: {str(e)}')
+    sentiment_analyzer = None
 
-paper_trading = PaperTradingEngine(initial_balance=10000.0)
+# Initialize paper trading engine
+try:
+    paper_trading = PaperTradingEngine(initial_balance=10000.0)
+except Exception as e:
+    print(f'Warning: Could not initialize paper trading: {str(e)}')
+    paper_trading = None
 
 # Initialize new services
-whale_tracker = WhaleTracker(api_key=os.getenv('GLASSNODE_API_KEY'))
-exchange_analyzer = ExchangeFlowAnalyzer(api_key=os.getenv('GLASSNODE_API_KEY'))
+try:
+    whale_tracker = WhaleTracker(api_key=os.getenv('GLASSNODE_API_KEY'))
+    exchange_analyzer = ExchangeFlowAnalyzer(api_key=os.getenv('GLASSNODE_API_KEY'))
+except Exception as e:
+    print(f'Warning: Could not initialize whale tracking services: {str(e)}')
+    whale_tracker = None
+    exchange_analyzer = None
 
+# Initialize Binance client
 binance_api_key = os.getenv('BINANCE_API_KEY')
 binance_api_secret = os.getenv('BINANCE_API_SECRET')
 
-if binance_api_key and binance_api_secret:
-    client = Client(api_key=binance_api_key, api_secret=binance_api_secret)
+if binance_api_key and binance_api_secret and Client:
+    try:
+        client = Client(api_key=binance_api_key, api_secret=binance_api_secret)
+    except Exception as e:
+        print(f'Warning: Could not initialize Binance client: {str(e)}')
+        client = None
 else:
     client = None
-    print('Warning: Binance API keys not configured. Price data will use public endpoints.')
+    print('Warning: Binance API keys not configured or python-binance not installed. Price data will use public endpoints.')
 
 
 @app.route('/')
@@ -123,6 +168,9 @@ def get_price():
 def get_ml_prediction():
     """Get ML model predictions."""
     try:
+        if not ml_model:
+            return jsonify({'status': 'error', 'message': 'ML model not initialized'}), 500
+        
         symbol = request.args.get('symbol', 'BTCUSDT')
         
         ml_model_instance = CryptoEntryModel(symbol, '1h')
@@ -160,6 +208,9 @@ def get_ml_prediction():
 def get_sentiment():
     """Get market sentiment data."""
     try:
+        if not sentiment_analyzer:
+            return jsonify({'status': 'error', 'message': 'Sentiment analyzer not initialized'}), 500
+        
         fgi_data = sentiment_analyzer.get_fear_greed_index()
         funding_data = sentiment_analyzer.get_funding_rates()
         
@@ -177,6 +228,9 @@ def get_sentiment():
 def get_on_chain_data():
     """Get on-chain data."""
     try:
+        if not on_chain_provider:
+            return jsonify({'status': 'error', 'message': 'On-chain provider not initialized'}), 500
+        
         on_chain_data = on_chain_provider.get_all_on_chain_data()
         
         return jsonify({
@@ -192,6 +246,9 @@ def get_on_chain_data():
 def open_position():
     """Open a new position."""
     try:
+        if not paper_trading:
+            return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
+        
         data = request.json
         
         result = paper_trading.open_position(
@@ -213,6 +270,9 @@ def open_position():
 def close_position():
     """Close a position."""
     try:
+        if not paper_trading:
+            return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
+        
         data = request.json
         
         result = paper_trading.close_position(
@@ -230,6 +290,9 @@ def close_position():
 def get_account_summary():
     """Get trading account summary."""
     try:
+        if not paper_trading:
+            return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
+        
         summary = paper_trading.get_account_summary()
         positions = paper_trading.get_positions()
         trade_history = paper_trading.get_trade_history(limit=20)
@@ -248,6 +311,9 @@ def get_account_summary():
 def update_price():
     """Update market price for positions."""
     try:
+        if not paper_trading:
+            return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
+        
         data = request.json
         paper_trading.update_market_price(
             symbol=data.get('symbol', 'BTCUSDT'),
@@ -266,10 +332,11 @@ def health_check():
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
         'services': {
-            'whale_tracker': 'enabled' if whale_tracker.api_key else 'using_mock_data',
-            'exchange_analyzer': 'enabled' if exchange_analyzer.api_key else 'using_mock_data',
-            'ml_model': 'loaded',
-            'paper_trading': 'enabled'
+            'whale_tracker': 'enabled' if whale_tracker else 'disabled',
+            'exchange_analyzer': 'enabled' if exchange_analyzer else 'disabled',
+            'ml_model': 'loaded' if ml_model else 'not_loaded',
+            'paper_trading': 'enabled' if paper_trading else 'disabled',
+            'binance_client': 'connected' if client else 'using_public_endpoints'
         }
     })
 
