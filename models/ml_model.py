@@ -18,22 +18,30 @@ except ImportError:
 from models.config import ML_CONFIG, MODEL_CONFIG, DEFAULT_SYMBOL, DEFAULT_TIMEFRAME, TIMEFRAME_CONFIGS
 from models.data_processor import DataProcessor
 from models.feature_engineer import FeatureEngineer
+from models.multi_timeframe_engineer import MultiTimeframeEngineer
 from models.signal_evaluator import SignalEvaluator
 
 
 class CryptoEntryModel:
-    """ML model for BB channel bounce prediction with optimization levels."""
+    """ML model for BB channel bounce prediction with multi-timeframe features."""
 
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
-                 model_type: str = 'xgboost', optimization_level: str = 'balanced'):
+                 model_type: str = 'xgboost', optimization_level: str = 'balanced',
+                 use_multi_timeframe: bool = True):
         self.symbol = symbol
         self.timeframe = timeframe
         self.model_type = model_type
         self.optimization_level = optimization_level
+        self.use_multi_timeframe = use_multi_timeframe
         
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
         self.signal_evaluator = SignalEvaluator()
+        
+        if self.use_multi_timeframe:
+            self.multi_tf_engineer = MultiTimeframeEngineer(symbol, timeframe)
+        else:
+            self.multi_tf_engineer = None
 
         self.timeframe_config = TIMEFRAME_CONFIGS.get(timeframe, TIMEFRAME_CONFIGS['15m'])
         self._apply_optimization_config()
@@ -93,12 +101,22 @@ class CryptoEntryModel:
         return self.raw_data
 
     def engineer_features(self) -> pd.DataFrame:
-        """Engineer technical features including BB indicators."""
+        """Engineer technical features including BB indicators and multi-timeframe data."""
         if self.raw_data is None:
             self.load_data()
 
         print("Engineering features...")
         self.feature_data = self.feature_engineer.engineer_features(self.raw_data)
+        
+        if self.use_multi_timeframe:
+            print("Integrating multi-timeframe features...")
+            try:
+                self.feature_data = self.multi_tf_engineer.engineer_comprehensive_features(self.feature_data)
+                print("Multi-timeframe features integrated successfully")
+            except Exception as e:
+                print(f"Warning: Multi-timeframe feature engineering failed: {str(e)}")
+                print("Continuing with base timeframe features only")
+        
         return self.feature_data
 
     def calculate_bb_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
@@ -200,7 +218,7 @@ class CryptoEntryModel:
         df = self.calculate_bb_metrics(self.feature_data.copy())
         df['bounce_target'] = self.calculate_bounce_target(df)
 
-        feature_names = [
+        base_features = [
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
             'rsi', 'macd', 'macd_signal', 'macd_histogram', 'momentum', 'volatility',
             'bb_basis', 'bb_middle', 'bb_width', 'bb_position', 'basis_slope',
@@ -210,7 +228,15 @@ class CryptoEntryModel:
             'multi_timeframe_strength'
         ]
 
-        feature_cols = [col for col in feature_names if col in df.columns]
+        multi_tf_features = [
+            'timeframe_confirmation', 'trend_alignment', 'high_volatility_context',
+            'momentum_divergence_multi'
+        ]
+        
+        feature_cols = [col for col in base_features if col in df.columns]
+        if self.use_multi_timeframe:
+            multi_tf_cols = [col for col in multi_tf_features if col in df.columns]
+            feature_cols.extend(multi_tf_cols)
 
         valid_mask = (
             (df['touched_lower'] | df['touched_upper'] | df['broke_lower'] | df['broke_upper']) &
@@ -345,6 +371,7 @@ class CryptoEntryModel:
             'symbol': self.symbol,
             'timeframe': self.timeframe,
             'optimization': self.optimization_level,
+            'multi_timeframe': self.use_multi_timeframe,
         }
 
     def _train_ensemble(self):
@@ -415,7 +442,7 @@ class CryptoEntryModel:
         df = self.calculate_bb_metrics(self.feature_data.copy())
         recent_df = df.tail(lookback).copy()
 
-        feature_names = [
+        base_features = [
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
             'rsi', 'macd', 'macd_signal', 'macd_histogram', 'momentum', 'volatility',
             'bb_basis', 'bb_middle', 'bb_width', 'bb_position', 'basis_slope',
@@ -425,7 +452,16 @@ class CryptoEntryModel:
             'multi_timeframe_strength'
         ]
 
-        feature_cols = [col for col in feature_names if col in recent_df.columns]
+        multi_tf_features = [
+            'timeframe_confirmation', 'trend_alignment', 'high_volatility_context',
+            'momentum_divergence_multi'
+        ]
+        
+        feature_cols = [col for col in base_features if col in recent_df.columns]
+        if self.use_multi_timeframe:
+            multi_tf_cols = [col for col in multi_tf_features if col in recent_df.columns]
+            feature_cols.extend(multi_tf_cols)
+        
         valid_mask = recent_df[feature_cols].notna().all(axis=1)
         recent_df_valid = recent_df[valid_mask].copy()
 
@@ -468,6 +504,7 @@ class CryptoEntryModel:
             'timeframe': self.timeframe,
             'model_type': self.model_type,
             'optimization_level': self.optimization_level,
+            'use_multi_timeframe': self.use_multi_timeframe,
         }, self.model_path)
         print(f"Model saved to {self.model_path}")
 
@@ -509,5 +546,6 @@ class CryptoEntryModel:
                 'optimization': self.optimization_level,
                 'trained': self.model is not None or self.ensemble_models is not None,
                 'path': str(self.model_path) if self.model_path else None,
+                'multi_timeframe': self.use_multi_timeframe,
             }
         }
