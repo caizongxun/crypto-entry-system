@@ -25,6 +25,13 @@ from models.signal_evaluator import SignalEvaluator
 class CryptoEntryModel:
     """ML model for BB channel bounce prediction with multi-timeframe features."""
 
+    TIMEFRAME_HIERARCHY = {
+        '15m': '1h',
+        '1h': '4h',
+        '4h': '1d',
+        '1d': None
+    }
+
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
                  model_type: str = 'xgboost', optimization_level: str = 'balanced',
                  use_multi_timeframe: bool = True):
@@ -47,6 +54,7 @@ class CryptoEntryModel:
         self._apply_optimization_config()
 
         self.raw_data = None
+        self.higher_tf_data = None
         self.feature_data = None
         self.X_train = None
         self.X_test = None
@@ -91,13 +99,35 @@ class CryptoEntryModel:
         
         self.timeframe_config['bounce_threshold'] *= self.bounce_threshold_multiplier
 
+    def _get_higher_timeframe(self) -> Optional[str]:
+        """Get immediate higher timeframe."""
+        return self.TIMEFRAME_HIERARCHY.get(self.timeframe)
+
     def load_data(self) -> pd.DataFrame:
-        """Load and prepare data."""
+        """Load base timeframe and higher timeframe data if available."""
         print(f"Loading data for {self.symbol} ({self.timeframe})...")
         self.raw_data = self.data_processor.load_data()
         self.raw_data = self.data_processor.prepare_data(self.raw_data)
         self.data_processor.validate_data_integrity(self.raw_data)
         print(f"Data loaded: {len(self.raw_data)} candles")
+        
+        if self.use_multi_timeframe:
+            higher_tf = self._get_higher_timeframe()
+            if higher_tf:
+                print(f"Preloading {higher_tf} data for multi-timeframe features...")
+                try:
+                    higher_processor = DataProcessor(self.symbol, higher_tf)
+                    self.higher_tf_data = higher_processor.load_data()
+                    self.higher_tf_data = higher_processor.prepare_data(self.higher_tf_data)
+                    higher_processor.validate_data_integrity(self.higher_tf_data)
+                    print(f"Higher timeframe data loaded: {len(self.higher_tf_data)} candles")
+                except Exception as e:
+                    print(f"Warning: Failed to load {higher_tf} data: {str(e)}")
+                    self.higher_tf_data = None
+            else:
+                print(f"No higher timeframe available for {self.timeframe}")
+                self.higher_tf_data = None
+        
         return self.raw_data
 
     def engineer_features(self) -> pd.DataFrame:
@@ -108,14 +138,21 @@ class CryptoEntryModel:
         print("Engineering features...")
         self.feature_data = self.feature_engineer.engineer_features(self.raw_data)
         
-        if self.use_multi_timeframe:
+        if self.use_multi_timeframe and self.higher_tf_data is not None:
             print("Integrating multi-timeframe features...")
             try:
-                self.feature_data = self.multi_tf_engineer.engineer_comprehensive_features(self.feature_data)
+                higher_tf_features = self.feature_engineer.engineer_features(self.higher_tf_data)
+                self.feature_data = self.multi_tf_engineer.engineer_comprehensive_features(
+                    self.feature_data,
+                    higher_tf_features
+                )
                 print("Multi-timeframe features integrated successfully")
             except Exception as e:
                 print(f"Warning: Multi-timeframe feature engineering failed: {str(e)}")
                 print("Continuing with base timeframe features only")
+        else:
+            if self.use_multi_timeframe:
+                print("No higher timeframe data available, using base features only")
         
         return self.feature_data
 
