@@ -1,4 +1,5 @@
 import numpy as np
+import pandas as pd
 from typing import Dict, Tuple, List, Callable
 from dataclasses import dataclass
 from enum import Enum
@@ -10,11 +11,13 @@ from lightgbm import LGBMClassifier
 from sklearn.ensemble import RandomForestClassifier
 
 try:
-    from optuna import create_study, Trial
+    from optuna import create_study
     from optuna.samplers import TPESampler
+    from optuna.trial import Trial
     OPTUNA_AVAILABLE = True
 except ImportError:
     OPTUNA_AVAILABLE = False
+    Trial = None
 
 
 class OptimizationMetric(Enum):
@@ -97,7 +100,7 @@ class HyperparameterOptimizer:
             return 0.0
         return true_positives / (true_positives + false_negatives)
 
-    def _objective_function(self, trial: Trial, X: np.ndarray, y: np.ndarray,
+    def _objective_function(self, trial, X: np.ndarray, y: np.ndarray,
                            scale_pos_weight: float) -> float:
         """Objective function for Optuna optimization."""
         max_depth = trial.suggest_int('max_depth', self.search_space.max_depth[0], 
@@ -274,7 +277,7 @@ class HyperparameterOptimizer:
             'best_score': float(self.best_score),
             'metric': self.metric.value,
             'model_type': self.model_type,
-            'timestamp': pd.Timestamp.now().isoformat() if 'pd' in dir() else str(pd.Timestamp.now()),
+            'timestamp': pd.Timestamp.now().isoformat(),
         }
 
         path = Path(filepath)
@@ -322,6 +325,3 @@ class HyperparameterOptimizer:
         print(f"  Test Recall: {result.test_recall:.4f}")
         print(f"  Test F1 Score: {result.test_f1:.4f}")
         print("="*60)
-
-
-import pandas as pd
