@@ -1,67 +1,45 @@
 //@version=5
 indicator("Crypto Entry Signal v1.0", overlay=true, max_bars_back=500)
 
-rsi_period = input.int(14, title="RSI Period", minval=1)
-sma_fast_period = input.int(20, title="SMA Fast Period")
-sma_slow_period = input.int(50, title="SMA Slow Period")
-macd_fast = input.int(12, title="MACD Fast Length")
-macd_slow = input.int(26, title="MACD Slow Length")
-macd_signal_length = input.int(9, title="MACD Signal Length")
-bb_period = input.int(20, title="Bollinger Bands Period")
-bb_std_dev = input.float(2.0, title="Bollinger Bands Std Dev")
-
+bb_period = input.int(20, title="BB Period")
+bb_std = input.float(2.0, title="BB Standard Deviation")
 volume_threshold = input.float(1.2, title="Volume Threshold Multiplier")
 
-rsi = ta.rsi(close, rsi_period)
-sma_fast = ta.sma(close, sma_fast_period)
-sma_slow = ta.sma(close, sma_slow_period)
-
-[macd_line, macd_signal, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal_length)
-
-bb_middle = ta.sma(close, bb_period)
+bb_basis = ta.sma(close, bb_period)
 bb_dev = ta.stdev(close, bb_period)
-bb_upper = bb_middle + (bb_dev * bb_std_dev)
-bb_lower = bb_middle - (bb_dev * bb_std_dev)
+bb_upper = bb_basis + (bb_dev * bb_std)
+bb_lower = bb_basis - (bb_dev * bb_std)
 
 avg_volume = ta.sma(volume, 20)
-volume_confirmation = volume > (avg_volume * volume_threshold)
+volume_high = volume > (avg_volume * volume_threshold)
 
-trend_direction = close > sma_slow
+basis_slope = bb_basis - bb_basis[1]
 
-rsi_buy = rsi < 40 and rsi > rsi[1]
-rsi_sell = rsi > 60 and rsi < rsi[1]
+upper_touch = close >= bb_upper * 0.98 and close <= bb_upper
+lower_touch = close <= bb_lower * 1.02 and close >= bb_lower
 
-macd_buy = ta.crossover(macd_line, macd_signal) and macd_histogram > 0
-macd_sell = ta.crossunder(macd_line, macd_signal) and macd_histogram < 0
-
-sma_buy = ta.crossover(sma_fast, sma_slow)
-sma_sell = ta.crossunder(sma_fast, sma_slow)
-
-bb_buy = close < bb_lower and trend_direction
-bb_sell = close > bb_upper and not trend_direction
+upper_break = close > bb_upper and high[1] <= bb_upper[1]
+lower_break = close < bb_lower and low[1] >= bb_lower[1]
 
 buy_signal = false
 sell_signal = false
 
-if trend_direction
-    if volume_confirmation
-        if (rsi_buy or macd_buy) or (sma_buy and close > sma_fast)
-            if macd_histogram > 0 and close > bb_lower
-                buy_signal := true
-else
-    if volume_confirmation
-        if (rsi_sell or macd_sell) or (sma_sell and close < sma_fast)
-            if macd_histogram < 0 and close < bb_upper
-                sell_signal := true
+if volume_high and basis_slope > 0
+    if lower_touch or (lower_break and close > bb_basis)
+        buy_signal := true
+
+if volume_high and basis_slope < 0
+    if upper_touch or (upper_break and close < bb_basis)
+        sell_signal := true
 
 plotshape(buy_signal, title="Buy Signal", style=shape.triangleup, location=location.belowbar, color=color.green, size=size.small)
 plotshape(sell_signal, title="Sell Signal", style=shape.triangledown, location=location.abovebar, color=color.red, size=size.small)
 
-plot(sma_fast, title="SMA Fast", color=color.orange, linewidth=2)
-plot(sma_slow, title="SMA Slow", color=color.blue, linewidth=2)
+plot(bb_basis, title="BB Basis", color=color.blue, linewidth=2)
 plot(bb_upper, title="BB Upper", color=color.gray, linewidth=1)
-plot(bb_middle, title="BB Middle", color=color.gray, linewidth=1)
 plot(bb_lower, title="BB Lower", color=color.gray, linewidth=1)
 
-alertcondition(buy_signal, title="Buy Signal Alert", message="BUY signal generated")
-alertcondition(sell_signal, title="Sell Signal Alert", message="SELL signal generated")
+fill(plot(bb_upper), plot(bb_lower), title="BB Fill", color=color.new(color.blue, 85))
+
+alertcondition(buy_signal, title="Buy Signal Alert", message="BUY signal - BB lower touch/break with trend")
+alertcondition(sell_signal, title="Sell Signal Alert", message="SELL signal - BB upper touch/break with trend")
