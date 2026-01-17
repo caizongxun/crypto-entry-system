@@ -1,57 +1,35 @@
 //@version=5
 indicator("Signal Confirmation Filter v1.0", overlay=true, max_bars_back=500)
 
-stoch_k_period = input.int(14, title="Stochastic K Period")
-stoch_k_smooth = input.int(3, title="Stochastic K Smoothing")
-stoch_d_smooth = input.int(3, title="Stochastic D Smoothing")
+rsi_period = input.int(14, title="RSI Period")
+macd_fast = input.int(12, title="MACD Fast")
+macd_slow = input.int(26, title="MACD Slow")
+macd_signal = input.int(9, title="MACD Signal")
 
-stoch_overbought = input.int(80, title="Stochastic Overbought Level")
-stoch_oversold = input.int(20, title="Stochastic Oversold Level")
+rsi = ta.rsi(close, rsi_period)
+[macd_line, macd_signal_line, macd_hist] = ta.macd(close, macd_fast, macd_slow, macd_signal)
 
-atr_period = input.int(14, title="ATR Period")
-cci_period = input.int(20, title="CCI Period")
-cci_threshold = input.float(100, title="CCI Threshold")
+rsi_buy_zone = rsi < 50 and rsi > rsi[1]
+rsi_sell_zone = rsi > 50 and rsi < rsi[1]
 
-lowest_low = ta.lowest(low, stoch_k_period)
-highest_high = ta.highest(high, stoch_k_period)
-k_raw = 100.0 * (close - lowest_low) / (highest_high - lowest_low)
-k = ta.sma(k_raw, stoch_k_smooth)
-d = ta.sma(k, stoch_d_smooth)
+macd_buy_signal = macd_hist > 0 and macd_line > macd_signal_line
+macd_sell_signal = macd_hist < 0 and macd_line < macd_signal_line
 
-atr = ta.atr(atr_period)
-cci = ta.cci(close, cci_period)
+buy_confirm = rsi_buy_zone and macd_buy_signal
+sell_confirm = rsi_sell_zone and macd_sell_signal
 
-stoch_in_range = k > stoch_oversold and k < stoch_overbought
-k_crosses_d_up = ta.crossover(k, d)
-k_crosses_d_down = ta.crossunder(k, d)
-
-cci_weak_buy = cci > 0 and cci < cci_threshold
-cci_weak_sell = cci < 0 and cci > -cci_threshold
-
-atr_normal = atr > ta.sma(atr, 20) * 0.8 and atr < ta.sma(atr, 20) * 1.5
-
-buy_strong_confirm = false
-sell_strong_confirm = false
-
-if stoch_in_range and k_crosses_d_up and cci_weak_buy and atr_normal
-    buy_strong_confirm := true
-
-if stoch_in_range and k_crosses_d_down and cci_weak_sell and atr_normal
-    sell_strong_confirm := true
-
-plot(k, title="Stochastic K", color=color.blue, linewidth=2)
-plot(d, title="Stochastic D", color=color.red, linewidth=2)
-hline(stoch_overbought, linestyle=hline.style_dashed, color=color.orange, title="Overbought")
-hline(stoch_oversold, linestyle=hline.style_dashed, color=color.orange, title="Oversold")
+plot(rsi, title="RSI", color=color.blue, linewidth=2)
+hline(70, linestyle=hline.style_dashed, color=color.red, title="Overbought")
+hline(30, linestyle=hline.style_dashed, color=color.green, title="Oversold")
 hline(50, linestyle=hline.style_dotted, color=color.gray, title="Middle")
 
-plot(cci, title="CCI", color=color.purple, linewidth=2)
-hline(cci_threshold, linestyle=hline.style_dotted, color=color.gray)
-hline(-cci_threshold, linestyle=hline.style_dotted, color=color.gray)
+plot(macd_line, title="MACD", color=color.orange, linewidth=2)
+plot(macd_signal_line, title="MACD Signal", color=color.red, linewidth=2)
+plot(macd_hist, title="MACD Histogram", color=color.new(color.gray, 50), style=plot.style_columns)
 hline(0, linestyle=hline.style_dashed, color=color.black)
 
-plotshape(buy_strong_confirm, title="Buy Confirmed", style=shape.circle, location=location.bottom, color=color.green, size=size.small)
-plotshape(sell_strong_confirm, title="Sell Confirmed", style=shape.circle, location=location.top, color=color.red, size=size.small)
+plotshape(buy_confirm, title="Buy Confirm", style=shape.circle, location=location.bottom, color=color.green, size=size.small)
+plotshape(sell_confirm, title="Sell Confirm", style=shape.circle, location=location.top, color=color.red, size=size.small)
 
-alertcondition(buy_strong_confirm, title="Buy Confirmation Alert", message="STRONG BUY CONFIRMATION")
-alertcondition(sell_strong_confirm, title="Sell Confirmation Alert", message="STRONG SELL CONFIRMATION")
+alertcondition(buy_confirm, title="Buy Confirmation", message="BUY CONFIRMED - RSI + MACD alignment")
+alertcondition(sell_confirm, title="Sell Confirmation", message="SELL CONFIRMED - RSI + MACD alignment")
