@@ -2,8 +2,8 @@
 indicator("Signal Confirmation Filter v1.0", overlay=true, max_bars_back=500)
 
 stoch_k_period = input.int(14, title="Stochastic K Period")
-stoch_d_period = input.int(3, title="Stochastic D Period")
-stoch_smooth = input.int(3, title="Stochastic Smooth")
+stoch_k_smooth = input.int(3, title="Stochastic K Smoothing")
+stoch_d_smooth = input.int(3, title="Stochastic D Smoothing")
 
 stoch_overbought = input.int(80, title="Stochastic Overbought Level")
 stoch_oversold = input.int(20, title="Stochastic Oversold Level")
@@ -18,9 +18,11 @@ use_stochastic = input.bool(true, title="Use Stochastic Filter")
 use_cci = input.bool(true, title="Use CCI Filter")
 use_atr_volatility = input.bool(true, title="Use ATR Volatility Filter")
 
-[k, d] = ta.stoch(close, high, low, stoch_k_period)
-k_smoothed = ta.sma(k, stoch_smooth)
-d_smoothed = ta.sma(d, stoch_smooth)
+lowest_low = ta.lowest(low, stoch_k_period)
+highest_high = ta.highest(high, stoch_k_period)
+k_raw = 100.0 * (close - lowest_low) / (highest_high - lowest_low)
+k = ta.sma(k_raw, stoch_k_smooth)
+d = ta.sma(k, stoch_d_smooth)
 
 atr = ta.atr(atr_period)
 atr_upper = high + (atr * atr_multiplier)
@@ -28,8 +30,8 @@ atr_lower = low - (atr * atr_multiplier)
 
 cci = ta.cci(close, cci_period)
 
-stoch_buy_confirmed = k_smoothed > d_smoothed and k_smoothed < stoch_oversold
-stoch_sell_confirmed = k_smoothed < d_smoothed and k_smoothed > stoch_overbought
+stoch_buy_confirmed = k > d and k < stoch_oversold
+stoch_sell_confirmed = k < d and k > stoch_overbought
 
 cci_buy_confirmed = cci > 0 and cci < cci_threshold
 cci_sell_confirmed = cci < 0 and cci > -cci_threshold
@@ -61,8 +63,8 @@ if use_atr_volatility
     if volatility_medium
         confirm_strength += 0.5
 
-plot(k_smoothed, title="Stochastic K", color=color.blue, linewidth=2)
-plot(d_smoothed, title="Stochastic D", color=color.red, linewidth=2)
+plot(k, title="Stochastic K", color=color.blue, linewidth=2)
+plot(d, title="Stochastic D", color=color.red, linewidth=2)
 hline(stoch_overbought, linestyle=hline.style_dashed, color=color.orange, title="Overbought")
 hline(stoch_oversold, linestyle=hline.style_dashed, color=color.orange, title="Oversold")
 
