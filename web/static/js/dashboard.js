@@ -129,30 +129,53 @@ function initializePriceChart() {
     if (priceChart) priceChart.destroy();
     
     priceChart = new Chart(ctx, {
-        type: 'candlestick',
+        type: 'line',
         data: {
             labels: [],
             datasets: [{
-                label: 'Price',
+                label: currentSymbol,
                 data: [],
-                borderColor: chartColors.upCandle,
-                backgroundColor: chartColors.upCandle,
-                borderWidth: 1
+                borderColor: chartColors.volume,
+                backgroundColor: 'rgba(31, 111, 235, 0.05)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.3,
+                pointRadius: 0,
+                pointHoverRadius: 5
             }]
         },
         options: {
             responsive: true,
             maintainAspectRatio: false,
+            interaction: {
+                mode: 'index',
+                intersect: false
+            },
             plugins: {
                 legend: {
                     display: true,
-                    labels: { color: chartColors.text }
+                    labels: {
+                        color: chartColors.text,
+                        font: { size: 12 }
+                    }
+                },
+                tooltip: {
+                    backgroundColor: 'rgba(0,0,0,0.8)',
+                    titleColor: chartColors.text,
+                    bodyColor: chartColors.text,
+                    borderColor: chartColors.gridLine,
+                    borderWidth: 1,
+                    callbacks: {
+                        label: function(context) {
+                            return 'Price: ' + context.parsed.y.toFixed(2);
+                        }
+                    }
                 }
             },
             scales: {
                 x: {
                     grid: { color: chartColors.gridLine, drawBorder: false },
-                    ticks: { color: chartColors.text }
+                    ticks: { color: chartColors.text, maxRotation: 45, minRotation: 0 }
                 },
                 y: {
                     grid: { color: chartColors.gridLine, drawBorder: false },
@@ -180,7 +203,8 @@ function initializePriceMovementChart() {
                 backgroundColor: 'rgba(31, 111, 235, 0.1)',
                 borderWidth: 2,
                 fill: true,
-                tension: 0.4
+                tension: 0.4,
+                pointRadius: 2
             }]
         },
         options: {
@@ -320,17 +344,29 @@ function initializeEventListeners() {
         settingsBtn.addEventListener('click', openSettingsModal);
     }
 
-    document.getElementById('notificationClose').addEventListener('click', closeNotificationsModal);
-    document.getElementById('settingsClose').addEventListener('click', closeSettingsModal);
-    document.getElementById('saveSettings').addEventListener('click', saveSettings);
+    if (document.getElementById('notificationClose')) {
+        document.getElementById('notificationClose').addEventListener('click', closeNotificationsModal);
+    }
+    if (document.getElementById('settingsClose')) {
+        document.getElementById('settingsClose').addEventListener('click', closeSettingsModal);
+    }
+    if (document.getElementById('saveSettings')) {
+        document.getElementById('saveSettings').addEventListener('click', saveSettings);
+    }
 
-    document.getElementById('notificationModal').addEventListener('click', (e) => {
-        if (e.target.id === 'notificationModal') closeNotificationsModal();
-    });
+    const notifModal = document.getElementById('notificationModal');
+    if (notifModal) {
+        notifModal.addEventListener('click', (e) => {
+            if (e.target.id === 'notificationModal') closeNotificationsModal();
+        });
+    }
 
-    document.getElementById('settingsModal').addEventListener('click', (e) => {
-        if (e.target.id === 'settingsModal') closeSettingsModal();
-    });
+    const settingsModal = document.getElementById('settingsModal');
+    if (settingsModal) {
+        settingsModal.addEventListener('click', (e) => {
+            if (e.target.id === 'settingsModal') closeSettingsModal();
+        });
+    }
 }
 
 function openNotificationsModal() {
@@ -428,18 +464,13 @@ function updatePriceChart(klines) {
     
     const labels = klines.map(k => {
         const date = new Date(k.timestamp || k.open_time);
-        return date.toLocaleTimeString();
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     });
     
-    const data = klines.map(k => ({
-        o: parseFloat(k.open),
-        h: parseFloat(k.high),
-        l: parseFloat(k.low),
-        c: parseFloat(k.close)
-    }));
+    const prices = klines.map(k => parseFloat(k.close));
     
     priceChart.data.labels = labels;
-    priceChart.data.datasets[0].data = data;
+    priceChart.data.datasets[0].data = prices;
     priceChart.update('none');
 }
 
@@ -497,7 +528,7 @@ function updateMarketCharts(klines) {
     
     const labels = klines.map(k => {
         const date = new Date(k.timestamp || k.open_time);
-        return date.toLocaleTimeString();
+        return date.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
     });
     
     const prices = klines.map(k => parseFloat(k.close));
