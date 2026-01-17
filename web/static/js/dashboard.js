@@ -1,7 +1,9 @@
 const API_BASE = 'http://localhost:5000/api';
 let currentSymbol = 'BTCUSDT';
-let tvChart = null;
-let tvLiveChart = null;
+let priceChart = null;
+let priceMovementChart = null;
+let volumeChart = null;
+let fgiChart = null;
 let mlPredictions = [];
 let onChainData = {};
 let currentTimeframe = '60';
@@ -11,14 +13,23 @@ let refreshInterval = 15000;
 let enableOnChainFilter = true;
 
 const timeframeMap = {
-    '1': { minutes: 1, interval: '1m', tvInterval: '1' },
-    '3': { minutes: 3, interval: '3m', tvInterval: '3' },
-    '5': { minutes: 5, interval: '5m', tvInterval: '5' },
-    '15': { minutes: 15, interval: '15m', tvInterval: '15' },
-    '30': { minutes: 30, interval: '30m', tvInterval: '30' },
-    '60': { minutes: 60, interval: '1h', tvInterval: '60' },
-    '240': { minutes: 240, interval: '4h', tvInterval: '240' },
-    '1440': { minutes: 1440, interval: '1d', tvInterval: '1D' }
+    '1': { minutes: 1, interval: '1m', label: '1m' },
+    '3': { minutes: 3, interval: '3m', label: '3m' },
+    '5': { minutes: 5, interval: '5m', label: '5m' },
+    '15': { minutes: 15, interval: '15m', label: '15m' },
+    '30': { minutes: 30, interval: '30m', label: '30m' },
+    '60': { minutes: 60, interval: '1h', label: '1h' },
+    '240': { minutes: 240, interval: '4h', label: '4h' },
+    '1440': { minutes: 1440, interval: '1d', label: '1d' }
+};
+
+const chartColors = {
+    upCandle: '#00c853',
+    downCandle: '#ff3860',
+    volume: '#1f6feb',
+    gridLine: '#3a4556',
+    text: '#b0b8c8',
+    background: '#0d1117'
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -26,9 +37,9 @@ document.addEventListener('DOMContentLoaded', () => {
     loadSettings();
     initializeEventListeners();
     initializeResizeHandles();
-    initializeChart();
-    initializeLiveChart();
+    initializeCharts();
     loadDashboardData();
+    setupTimeframeButtons();
     setInterval(loadDashboardData, refreshInterval);
 });
 
@@ -56,6 +67,18 @@ function loadSettings() {
     }
 }
 
+function setupTimeframeButtons() {
+    const buttons = document.querySelectorAll('.timeframe-btn');
+    buttons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            buttons.forEach(b => b.classList.remove('active'));
+            btn.classList.add('active');
+            currentTimeframe = btn.dataset.timeframe;
+            loadPriceData();
+        });
+    });
+}
+
 function initializeResizeHandles() {
     const handles = document.querySelectorAll('.chart-resize-handle');
     let isResizing = false;
@@ -80,6 +103,7 @@ function initializeResizeHandles() {
         const delta = e.clientY - startY;
         const wrapper = currentHandle.previousElementSibling;
         wrapper.style.minHeight = (startHeight + delta) + 'px';
+        if (priceChart) priceChart.resize();
     });
 
     document.addEventListener('mouseup', () => {
@@ -91,73 +115,165 @@ function initializeResizeHandles() {
     });
 }
 
-function initializeChart() {
-    const container = document.getElementById('priceChart');
-    if (!container) return;
+function initializeCharts() {
+    initializePriceChart();
+    initializePriceMovementChart();
+    initializeVolumeChart();
+    initializeFGIChart();
+}
+
+function initializePriceChart() {
+    const ctx = document.getElementById('priceChart');
+    if (!ctx) return;
     
-    const symbol = 'BINANCE:' + currentSymbol.replace('USDT', '') + 'USDT';
-    const interval = timeframeMap[currentTimeframe]?.tvInterval || '60';
+    if (priceChart) priceChart.destroy();
     
-    tvChart = new TradingView.widget({
-        autosize: false,
-        width: '100%',
-        height: chartHeight,
-        symbol: symbol,
-        interval: interval,
-        timezone: 'Etc/UTC',
-        theme: 'dark',
-        style: '1',
-        locale: 'en',
-        toolbar_bg: '#1e2139',
-        enable_publishing: false,
-        allow_symbol_change: false,
-        container_id: 'priceChart',
-        hide_side_toolbar: false,
-        hide_top_toolbar: false,
-        withdateranges: true,
-        studies: ['MAExp@tv-basicstudies', 'Volume@tv-basicstudies'],
-        overrides: {
-            'mainSeriesProperties.candleStyle.upColor': '#00c853',
-            'mainSeriesProperties.candleStyle.downColor': '#ff3860',
-            'mainSeriesProperties.candleStyle.borderUpColor': '#00c853',
-            'mainSeriesProperties.candleStyle.borderDownColor': '#ff3860',
-            'mainSeriesProperties.candleStyle.wickUpColor': '#00c853',
-            'mainSeriesProperties.candleStyle.wickDownColor': '#ff3860',
-            'volumePaneSize': 'small',
+    priceChart = new Chart(ctx, {
+        type: 'candlestick',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Price',
+                data: [],
+                borderColor: chartColors.upCandle,
+                backgroundColor: chartColors.upCandle,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: chartColors.text }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                },
+                y: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                }
+            }
         }
     });
 }
 
-function initializeLiveChart() {
-    const container = document.getElementById('liveChart');
-    if (!container) return;
+function initializePriceMovementChart() {
+    const ctx = document.getElementById('priceMovementChart');
+    if (!ctx) return;
     
-    const symbol = 'BINANCE:' + currentSymbol.replace('USDT', '') + 'USDT';
+    if (priceMovementChart) priceMovementChart.destroy();
     
-    tvLiveChart = new TradingView.widget({
-        autosize: true,
-        symbol: symbol,
-        interval: '60',
-        timezone: 'Etc/UTC',
-        theme: 'dark',
-        style: '1',
-        locale: 'en',
-        toolbar_bg: '#1e2139',
-        enable_publishing: false,
-        allow_symbol_change: true,
-        container_id: 'liveChart',
-        hide_side_toolbar: false,
-        hide_top_toolbar: false,
-        withdateranges: true,
-        studies: [],
-        overrides: {
-            'mainSeriesProperties.candleStyle.upColor': '#00c853',
-            'mainSeriesProperties.candleStyle.downColor': '#ff3860',
-            'mainSeriesProperties.candleStyle.borderUpColor': '#00c853',
-            'mainSeriesProperties.candleStyle.borderDownColor': '#ff3860',
-            'mainSeriesProperties.candleStyle.wickUpColor': '#00c853',
-            'mainSeriesProperties.candleStyle.wickDownColor': '#ff3860',
-            'volumePaneSize': 'small',
+    priceMovementChart = new Chart(ctx, {
+        type: 'line',
+        data: {
+            labels: [],
+            datasets: [{
+                label: '24h Price',
+                data: [],
+                borderColor: chartColors.volume,
+                backgroundColor: 'rgba(31, 111, 235, 0.1)',
+                borderWidth: 2,
+                fill: true,
+                tension: 0.4
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: chartColors.text }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                },
+                y: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                }
+            }
+        }
+    });
+}
+
+function initializeVolumeChart() {
+    const ctx = document.getElementById('volumeChart');
+    if (!ctx) return;
+    
+    if (volumeChart) volumeChart.destroy();
+    
+    volumeChart = new Chart(ctx, {
+        type: 'bar',
+        data: {
+            labels: [],
+            datasets: [{
+                label: 'Volume',
+                data: [],
+                backgroundColor: chartColors.volume,
+                borderColor: chartColors.upCandle,
+                borderWidth: 1
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: false,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: chartColors.text }
+                }
+            },
+            scales: {
+                x: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                },
+                y: {
+                    grid: { color: chartColors.gridLine, drawBorder: false },
+                    ticks: { color: chartColors.text }
+                }
+            }
+        }
+    });
+}
+
+function initializeFGIChart() {
+    const ctx = document.getElementById('fgiChart');
+    if (!ctx) return;
+    
+    if (fgiChart) fgiChart.destroy();
+    
+    fgiChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: {
+            labels: ['Fear', 'Greed'],
+            datasets: [{
+                data: [50, 50],
+                backgroundColor: ['#ff3860', '#00c853'],
+                borderColor: chartColors.background,
+                borderWidth: 2
+            }]
+        },
+        options: {
+            responsive: true,
+            maintainAspectRatio: true,
+            plugins: {
+                legend: {
+                    display: true,
+                    labels: { color: chartColors.text },
+                    position: 'bottom'
+                }
+            }
         }
     });
 }
@@ -178,8 +294,8 @@ function initializeEventListeners() {
             if (!currentSymbol.endsWith('USDT')) {
                 currentSymbol = currentSymbol + 'USDT';
             }
-            updateChart();
-            updateLiveChart();
+            document.getElementById('chartTitle').textContent = currentSymbol.replace('USDT', ' / USDT');
+            loadPriceData();
             loadDashboardData();
         });
     }
@@ -279,22 +395,6 @@ function saveSettings() {
     closeSettingsModal();
 }
 
-function updateChart() {
-    if (tvChart) {
-        tvChart.remove();
-        tvChart = null;
-    }
-    setTimeout(() => initializeChart(), 100);
-}
-
-function updateLiveChart() {
-    if (tvLiveChart) {
-        tvLiveChart.remove();
-        tvLiveChart = null;
-    }
-    setTimeout(() => initializeLiveChart(), 100);
-}
-
 function switchSection(section) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -310,6 +410,39 @@ function switchSection(section) {
     }
 }
 
+async function loadPriceData() {
+    try {
+        const response = await fetch(`${API_BASE}/market/kline?symbol=${currentSymbol}&interval=${timeframeMap[currentTimeframe].interval}&limit=50`);
+        const data = await response.json();
+        
+        if (data.status === 'success') {
+            updatePriceChart(data.klines);
+        }
+    } catch (error) {
+        console.error('Error loading price data:', error);
+    }
+}
+
+function updatePriceChart(klines) {
+    if (!priceChart || !klines || klines.length === 0) return;
+    
+    const labels = klines.map(k => {
+        const date = new Date(k.timestamp || k.open_time);
+        return date.toLocaleTimeString();
+    });
+    
+    const data = klines.map(k => ({
+        o: parseFloat(k.open),
+        h: parseFloat(k.high),
+        l: parseFloat(k.low),
+        c: parseFloat(k.close)
+    }));
+    
+    priceChart.data.labels = labels;
+    priceChart.data.datasets[0].data = data;
+    priceChart.update('none');
+}
+
 async function loadDashboardData() {
     try {
         console.log('Loading dashboard data...');
@@ -318,10 +451,11 @@ async function loadDashboardData() {
             fetch(`${API_BASE}/ml-prediction?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/sentiment`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/trading/account-summary`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
-            fetch(`${API_BASE}/on-chain?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
+            fetch(`${API_BASE}/on-chain?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
+            fetch(`${API_BASE}/market/kline?symbol=${currentSymbol}&interval=${timeframeMap[currentTimeframe].interval}&limit=24`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
         ];
         
-        const [predictions, sentiment, accountData, onChain] = await Promise.all(promises);
+        const [predictions, sentiment, accountData, onChain, marketData] = await Promise.all(promises);
         
         if (predictions.status === 'success') {
             updateMLPredictions(predictions);
@@ -349,8 +483,36 @@ async function loadDashboardData() {
         } else {
             console.error('On-chain data error:', onChain.message);
         }
+        
+        if (marketData.status === 'success') {
+            updateMarketCharts(marketData.klines);
+        }
     } catch (error) {
         console.error('Error loading dashboard data:', error);
+    }
+}
+
+function updateMarketCharts(klines) {
+    if (!klines || klines.length === 0) return;
+    
+    const labels = klines.map(k => {
+        const date = new Date(k.timestamp || k.open_time);
+        return date.toLocaleTimeString();
+    });
+    
+    const prices = klines.map(k => parseFloat(k.close));
+    const volumes = klines.map(k => parseFloat(k.volume));
+    
+    if (priceMovementChart) {
+        priceMovementChart.data.labels = labels;
+        priceMovementChart.data.datasets[0].data = prices;
+        priceMovementChart.update('none');
+    }
+    
+    if (volumeChart) {
+        volumeChart.data.labels = labels;
+        volumeChart.data.datasets[0].data = volumes;
+        volumeChart.update('none');
     }
 }
 
@@ -384,7 +546,7 @@ function updateOnChainData(data) {
         
         if (whaleNetFlow && summary.inflow !== undefined) {
             const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
-            whaleNetFlow.textContent = `$${netFlow.toFixed(0)}`;
+            whaleNetFlow.textContent = `${netFlow.toFixed(0)}`;
             whaleNetFlow.style.color = netFlow >= 0 ? '#00c853' : '#ff3860';
         }
         
@@ -393,7 +555,7 @@ function updateOnChainData(data) {
         if (whaleHoldings) whaleHoldings.textContent = `${summary.whale_holdings || '--'}%`;
         if (netFlow24h && summary.inflow !== undefined) {
             const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
-            netFlow24h.textContent = `${netFlow >= 0 ? '+' : ''}$${netFlow.toFixed(0)}`;
+            netFlow24h.textContent = `${netFlow >= 0 ? '+' : ''}${netFlow.toFixed(0)}`;
         }
         
         const transactions = data.large_transactions || [];
@@ -408,7 +570,7 @@ function updateOnChainData(data) {
                             <span class="whale-amount ${tx.type === 'inflow' ? 'inflow' : 'outflow'}">${tx.type === 'inflow' ? 'IN' : 'OUT'}</span>
                         </div>
                         <div class="whale-info">${tx.from_address} ${tx.type === 'inflow' ? '->' : '<-'} ${tx.to_address}</div>
-                        <div class="whale-info">Value: $${tx.value_usd || 'N/A'}</div>
+                        <div class="whale-info">Value: ${tx.value_usd || 'N/A'}</div>
                     </div>
                 `).join('');
             }
@@ -445,10 +607,10 @@ function checkWhaleAlerts(data) {
     let alerts = [];
     if (netFlow < -1000) {
         alerts.push('Major whale outflow detected - High selling pressure');
-        addNotification('Whale Alert', 'Major outflow: $' + Math.abs(netFlow).toFixed(0) + ' - Caution advised');
+        addNotification('Whale Alert', 'Major outflow: ' + Math.abs(netFlow).toFixed(0) + ' - Caution advised');
     } else if (netFlow > 1000) {
         alerts.push('Large whale inflow detected - Buying accumulation');
-        addNotification('Whale Alert', 'Major inflow: $' + netFlow.toFixed(0) + ' - Bullish signal');
+        addNotification('Whale Alert', 'Major inflow: ' + netFlow.toFixed(0) + ' - Bullish signal');
     }
     
     if (alerts.length === 0) {
@@ -468,7 +630,7 @@ function checkSignalNotifications(data) {
         if (latestSignal.signal_type && latestSignal.bounce_probability > 60) {
             addNotification(
                 'Strong Trading Signal',
-                `${latestSignal.signal_type} signal detected at $${latestSignal.price} with ${latestSignal.bounce_probability.toFixed(1)}% probability`
+                `${latestSignal.signal_type} signal detected at ${latestSignal.price} with ${latestSignal.bounce_probability.toFixed(1)}% probability`
             );
         }
     }
@@ -522,7 +684,6 @@ function updateMLPredictions(data) {
     mlPredictions = data.predictions || [];
     const container = document.getElementById('mlPredictionsList');
     const table = document.getElementById('mlSignalsTable');
-    const dashboardTable = document.getElementById('dashboardTradeHistory');
 
     if (!container) {
         console.error('ML predictions container not found');
@@ -547,7 +708,7 @@ function updateMLPredictions(data) {
                 <span style="font-weight: 600; color: #00c853;">${pred.bounce_probability ? pred.bounce_probability.toFixed(1) : '--'}%</span>
             </div>
             <div style="font-size: 12px; color: #b0b8c8;">
-                Price: $${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'} | BB Position: ${pred.bb_position ? pred.bb_position.toFixed(3) : 'N/A'}
+                Price: ${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'} | BB Position: ${pred.bb_position ? pred.bb_position.toFixed(3) : 'N/A'}
             </div>
         </div>
     `).join('');
@@ -557,7 +718,7 @@ function updateMLPredictions(data) {
             <tr>
                 <td>${formatTimestamp(pred.timestamp)}</td>
                 <td><span style="color: ${pred.signal_type && pred.signal_type.includes('lower') ? '#00c853' : '#ff3860'};">${pred.signal_type || 'N/A'}</span></td>
-                <td>$${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'}</td>
+                <td>${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'}</td>
                 <td style="color: ${pred.bounce_probability > 60 ? '#00c853' : pred.bounce_probability > 40 ? '#ffc107' : '#ff3860'};">${pred.bounce_probability ? pred.bounce_probability.toFixed(1) : '--'}%</td>
                 <td>${pred.bb_position ? pred.bb_position.toFixed(3) : 'N/A'}</td>
                 <td>
@@ -574,13 +735,13 @@ function updateSentiment(data) {
             const fgi = data.fear_greed_index.index_value;
             const fgiValue = document.getElementById('fgiValue');
             const fgiLabel = document.getElementById('fgiLabel');
-            const fgiIndicator = document.getElementById('fgiIndicator');
             
             if (fgiValue) fgiValue.textContent = fgi;
             if (fgiLabel) fgiLabel.textContent = data.fear_greed_index.interpretation || 'N/A';
-            if (fgiIndicator) {
-                const percentage = (fgi / 100) * 282;
-                fgiIndicator.style.strokeDashoffset = 282 - percentage;
+            
+            if (fgiChart) {
+                fgiChart.data.datasets[0].data = [100 - fgi, fgi];
+                fgiChart.update('none');
             }
         }
 
@@ -606,7 +767,7 @@ function updateAccountInfo(data) {
         
         const accountBalance = document.getElementById('accountBalance');
         if (accountBalance) {
-            accountBalance.textContent = `$${(summary.total_balance || 0).toFixed(2)}`;
+            accountBalance.textContent = (summary.total_balance || 0).toFixed(2);
         }
         
         const balanceChange = document.getElementById('balanceChange');
@@ -624,7 +785,7 @@ function updateAccountInfo(data) {
         
         const unrealizedPnl = document.getElementById('unrealizedPnl');
         if (unrealizedPnl) {
-            unrealizedPnl.textContent = `$${(summary.unrealized_pnl || 0).toFixed(2)}`;
+            unrealizedPnl.textContent = (summary.unrealized_pnl || 0).toFixed(2);
         }
         
         const totalTrades = document.getElementById('totalTrades');
@@ -648,10 +809,10 @@ function updateAccountInfo(data) {
                     <div class="position-item">
                         <div class="position-info">
                             <h4>${pos.position_type} ${pos.quantity} ${pos.symbol}</h4>
-                            <p>Entry: $${pos.entry_price.toFixed(2)} | Current: $${pos.current_price.toFixed(2)}</p>
+                            <p>Entry: ${pos.entry_price.toFixed(2)} | Current: ${pos.current_price.toFixed(2)}</p>
                         </div>
                         <div class="position-pnl ${pos.unrealized_pnl >= 0 ? 'positive' : 'negative'}">
-                            ${pos.unrealized_pnl >= 0 ? '+' : ''}$${pos.unrealized_pnl.toFixed(2)}
+                            ${pos.unrealized_pnl >= 0 ? '+' : ''}${pos.unrealized_pnl.toFixed(2)}
                             <div style="font-size: 12px;">(${pos.pnl_percentage >= 0 ? '+' : ''}${pos.pnl_percentage.toFixed(2)}%)</div>
                         </div>
                         <button class="btn btn-secondary" style="margin-left: 15px; padding: 8px 12px; font-size: 12px;" onclick="closePositionUI('${pos.position_id}', ${pos.current_price})">Close</button>
@@ -662,7 +823,6 @@ function updateAccountInfo(data) {
 
         const tradeHistory = data.trade_history || [];
         const historyTable = document.getElementById('tradeHistoryTable');
-        const dashboardTable = document.getElementById('dashboardTradeHistory');
         
         if (historyTable) {
             if (tradeHistory.length === 0) {
@@ -673,27 +833,11 @@ function updateAccountInfo(data) {
                         <td>${formatTimestamp(trade.entry_time)}</td>
                         <td>${formatTimestamp(trade.close_time)}</td>
                         <td>${trade.position_type || 'N/A'}</td>
-                        <td>$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'N/A'}</td>
-                        <td>$${trade.close_price ? parseFloat(trade.close_price).toFixed(2) : 'N/A'}</td>
+                        <td>${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'N/A'}</td>
+                        <td>${trade.close_price ? parseFloat(trade.close_price).toFixed(2) : 'N/A'}</td>
                         <td>${trade.quantity ? parseFloat(trade.quantity).toFixed(4) : 'N/A'}</td>
-                        <td style="color: ${(trade.pnl || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</td>
+                        <td style="color: ${(trade.pnl || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl || 0) >= 0 ? '+' : ''}${(trade.pnl || 0).toFixed(2)}</td>
                         <td style="color: ${(trade.pnl_percentage || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl_percentage || 0) >= 0 ? '+' : ''}${(trade.pnl_percentage || 0).toFixed(2)}%</td>
-                    </tr>
-                `).join('');
-            }
-        }
-
-        if (dashboardTable) {
-            const recentTrades = tradeHistory.slice(-5);
-            if (recentTrades.length === 0) {
-                dashboardTable.innerHTML = '<tr><td colspan="4" class="empty-state">No trades</td></tr>';
-            } else {
-                dashboardTable.innerHTML = recentTrades.reverse().map(trade => `
-                    <tr>
-                        <td>${trade.position_type || 'N/A'}</td>
-                        <td>$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'N/A'}</td>
-                        <td>$${trade.close_price ? parseFloat(trade.close_price).toFixed(2) : 'N/A'}</td>
-                        <td style="color: ${(trade.pnl || 0) >= 0 ? '#00c853' : '#ff3860'};">${(trade.pnl || 0) >= 0 ? '+' : ''}$${(trade.pnl || 0).toFixed(2)}</td>
                     </tr>
                 `).join('');
             }
