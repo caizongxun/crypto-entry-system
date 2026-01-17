@@ -1,7 +1,9 @@
 const API_BASE = 'http://localhost:5000/api';
 let currentSymbol = 'BTCUSDT';
-let priceChart = null;
+let tvChart = null;
+let tvLiveChart = null;
 let mlPredictions = [];
+let currentTimeframe = '60';
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Dashboard initialized');
@@ -21,8 +23,14 @@ function initializeEventListeners() {
 
     document.querySelectorAll('.tf-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
-            document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+            const container = e.target.closest('.card-header');
+            if (!container) return;
+            
+            container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
+            
+            currentTimeframe = e.target.dataset.tf;
+            console.log('Timeframe changed to:', currentTimeframe);
         });
     });
 
@@ -61,6 +69,12 @@ function switchSection(section) {
     if (navItem) {
         navItem.classList.add('active');
     }
+    
+    setTimeout(() => {
+        if (section === 'market' && tvLiveChart) {
+            tvLiveChart.applyOptions({ width: document.getElementById('liveChart')?.clientWidth || 800 });
+        }
+    }, 100);
 }
 
 async function loadDashboardData() {
@@ -110,9 +124,9 @@ function updatePriceChart(data) {
         return;
     }
 
-    const canvasElement = document.getElementById('priceChart');
-    if (!canvasElement) {
-        console.error('Chart canvas not found');
+    const container = document.getElementById('priceChart');
+    if (!container) {
+        console.error('Chart container not found');
         return;
     }
 
@@ -121,89 +135,60 @@ function updatePriceChart(data) {
         return;
     }
 
-    const ctx = canvasElement.getContext('2d');
-    if (!ctx) {
-        console.error('Failed to get canvas context');
-        return;
-    }
-
-    const chartData = {
-        labels: data.data.timestamps || [],
-        datasets: [{
-            label: currentSymbol,
-            data: data.data.closes || [],
-            borderColor: '#00d4ff',
-            backgroundColor: 'rgba(0, 212, 255, 0.1)',
-            fill: true,
-            tension: 0.4,
-            borderWidth: 2,
-            pointRadius: 0,
-            pointHoverRadius: 5,
-            pointBackgroundColor: '#00d4ff'
-        }]
-    };
-
-    const chartOptions = {
-        responsive: true,
-        maintainAspectRatio: false,
-        interaction: {
-            intersect: false,
-            mode: 'index'
-        },
-        plugins: {
-            legend: {
-                display: true,
-                labels: {
-                    color: '#b0b8c8',
-                    font: { size: 12 }
-                }
-            },
-            filler: {
-                propagate: true
-            }
-        },
-        scales: {
-            y: {
-                beginAtZero: false,
-                grid: {
-                    color: 'rgba(255, 255, 255, 0.05)',
-                    drawBorder: false
-                },
-                ticks: {
-                    color: '#b0b8c8',
-                    font: { size: 12 },
-                    padding: 8
-                }
-            },
-            x: {
-                grid: {
-                    display: false,
-                    color: 'rgba(255, 255, 255, 0.05)'
-                },
-                ticks: {
-                    color: '#b0b8c8',
-                    font: { size: 12 },
-                    maxTicksLimit: 10
-                }
-            }
+    try {
+        const LWC = window.LightweightCharts;
+        if (!LWC) {
+            console.error('LightweightCharts library not loaded');
+            return;
         }
-    };
 
-    if (priceChart) {
-        priceChart.data = chartData;
-        priceChart.options = chartOptions;
-        priceChart.update();
-    } else {
-        try {
-            priceChart = new Chart(ctx, {
-                type: 'line',
-                data: chartData,
-                options: chartOptions
+        if (!tvChart) {
+            tvChart = LWC.createChart(container, {
+                layout: {
+                    textColor: '#b0b8c8',
+                    background: { color: '#1e2139' }
+                },
+                width: container.clientWidth,
+                height: 400,
+                timeScale: {
+                    timeVisible: true,
+                    secondsVisible: false
+                },
+                localization: {
+                    priceFormatter: price => '$' + price.toFixed(2)
+                }
             });
-            console.log('Chart initialized successfully');
-        } catch (err) {
-            console.error('Failed to create chart:', err);
+
+            const candlestickSeries = tvChart.addCandlestickSeries({
+                upColor: '#00c853',
+                downColor: '#ff3860',
+                borderVisible: false,
+                wickUpColor: '#00c853',
+                wickDownColor: '#ff3860'
+            });
+
+            tvChart.candlestickSeries = candlestickSeries;
         }
+
+        const candleData = [];
+        const baseTime = Math.floor(Date.now() / 1000);
+        const interval = 3600;
+
+        for (let i = 0; i < data.data.closes.length; i++) {
+            candleData.push({
+                time: baseTime - (data.data.closes.length - i) * interval,
+                open: parseFloat(data.data.opens[i]),
+                high: parseFloat(data.data.highs[i]),
+                low: parseFloat(data.data.lows[i]),
+                close: parseFloat(data.data.closes[i])
+            });
+        }
+
+        tvChart.candlestickSeries.setData(candleData);
+        tvChart.timeScale().fitContent();
+        console.log('TradingView chart updated successfully');
+    } catch (err) {
+        console.error('Failed to create TradingView chart:', err);
     }
 
     const currentPriceElement = document.getElementById('currentPrice');
