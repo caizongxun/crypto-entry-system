@@ -1,8 +1,9 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple
+from typing import Dict, Tuple, List
 from models.data_processor import DataProcessor
 from models.feature_engineer import FeatureEngineer
+from pathlib import Path
 
 
 class MultiTimeframeEngineer:
@@ -21,16 +22,29 @@ class MultiTimeframeEngineer:
         self.base_minutes = self.TIMEFRAME_MINUTES[base_timeframe]
         self.feature_engineer = FeatureEngineer()
         self.data_processor = DataProcessor(symbol, base_timeframe)
+        self.available_timeframes = self._detect_available_timeframes()
+
+    def _detect_available_timeframes(self) -> List[str]:
+        """Detect which timeframes have cached data."""
+        all_timeframes = ['15m', '1h', '4h', '1d']
+        available = []
+        cache_dir = Path(__file__).parent / 'cache' / 'data'
+        
+        for tf in all_timeframes:
+            cache_file = cache_dir / f"{self.symbol}_{tf}.parquet"
+            if cache_file.exists():
+                available.append(tf)
+        
+        return available
 
     def get_higher_timeframes(self) -> list:
         """Get list of higher timeframes relative to base timeframe."""
         higher_tf = []
-        if self.base_timeframe == '15m':
-            higher_tf = ['1h', '4h', '1d']
-        elif self.base_timeframe == '1h':
-            higher_tf = ['4h', '1d']
-        elif self.base_timeframe == '4h':
-            higher_tf = ['1d']
+        base_idx = self.available_timeframes.index(self.base_timeframe) if self.base_timeframe in self.available_timeframes else -1
+        
+        if base_idx >= 0:
+            higher_tf = self.available_timeframes[base_idx + 1:]
+        
         return higher_tf
 
     def load_timeframe_data(self, timeframe: str) -> pd.DataFrame:
@@ -61,6 +75,7 @@ class MultiTimeframeEngineer:
                 print(f"Warning: {higher_tf} is not higher than {base_tf}")
                 return None
             
+            ratio = higher_minutes // base_minutes
             aligned_data = pd.DataFrame(index=base_df.index)
             
             numeric_cols = higher_df.select_dtypes(include=[np.number]).columns.tolist()
@@ -87,6 +102,11 @@ class MultiTimeframeEngineer:
         df_features = base_df.copy()
         higher_timeframes = self.get_higher_timeframes()
         
+        if len(higher_timeframes) == 0:
+            print(f"  No higher timeframes available. Only {self.base_timeframe} data exists.")
+            return df_features
+        
+        print(f"  Available higher timeframes: {higher_timeframes}")
         added_features_count = 0
 
         for higher_tf in higher_timeframes:
@@ -127,7 +147,7 @@ class MultiTimeframeEngineer:
                 print(f"  Failed to process {higher_tf}: {str(e)}")
                 continue
 
-        print(f"Multi-timeframe feature engineering: {added_features_count} features added")
+        print(f"Multi-timeframe features: {added_features_count} features added")
         return df_features
 
     def calculate_multi_timeframe_signals(self, base_df: pd.DataFrame) -> pd.DataFrame:
@@ -178,12 +198,15 @@ class MultiTimeframeEngineer:
         higher_timeframes = self.get_higher_timeframes()
 
         if 'rsi' not in df_result.columns:
+            df_result['timeframe_confirmation'] = 0.5
             return df_result
 
-        df_result['timeframe_confirmation'] = 0.5
+        if len(higher_timeframes) == 0:
+            df_result['timeframe_confirmation'] = 0.5
+            return df_result
 
-        base_rsi = df_result['rsi']
         confirmation_cols = []
+        base_rsi = df_result['rsi']
 
         if base_rsi is not None:
             df_result['base_is_bullish'] = (base_rsi > 50).astype(int)
@@ -246,6 +269,10 @@ class MultiTimeframeEngineer:
         df_result = df.copy()
         higher_timeframes = self.get_higher_timeframes()
 
+        if 'volatility' not in df_result.columns:
+            df_result['high_volatility_context'] = 0
+            return df_result
+
         volatility_cols = []
 
         if 'volatility' in df_result.columns:
@@ -283,10 +310,14 @@ class MultiTimeframeEngineer:
             df_result['momentum_divergence_multi'] = 0
             return df_result
 
-        base_momentum = df_result['momentum']
-        df_result['momentum_divergence_multi'] = 0
+        if len(higher_timeframes) == 0:
+            df_result['momentum_divergence_multi'] = 0
+            return df_result
 
+        base_momentum = df_result['momentum']
         divergence_count = 0
+        divergence_sum = 0
+        
         for higher_tf in higher_timeframes:
             momentum_col = f"momentum_{higher_tf}"
             if momentum_col in df_result.columns:
@@ -294,14 +325,15 @@ class MultiTimeframeEngineer:
                     higher_momentum = df_result[momentum_col]
                     divergence = abs(base_momentum - higher_momentum)
                     df_result[f"divergence_{higher_tf}"] = divergence
+                    divergence_sum += divergence
                     divergence_count += 1
                 except:
                     continue
 
         if divergence_count > 0:
-            div_cols = [col for col in df_result.columns if col.startswith('divergence_')]
-            if len(div_cols) > 0:
-                df_result['momentum_divergence_multi'] = df_result[div_cols].mean(axis=1)
+            df_result['momentum_divergence_multi'] = divergence_sum / divergence_count
+        else:
+            df_result['momentum_divergence_multi'] = 0
 
         return df_result
 
@@ -314,7 +346,8 @@ class MultiTimeframeEngineer:
             return base_df
 
         print(f"  Base timeframe: {self.base_timeframe}")
-        print(f"  Available data: {len(base_df)} rows")
+        print(f"  Available timeframes: {self.available_timeframes}")
+        print(f"  Base data: {len(base_df)} rows")
 
         try:
             df_features = self.engineer_higher_timeframe_features(base_df)
@@ -357,5 +390,5 @@ class MultiTimeframeEngineer:
         final_cols = len(df_features.columns)
         new_cols = final_cols - initial_cols
         
-        print(f"Multi-timeframe feature engineering complete: {new_cols} features added (total: {final_cols})")
+        print(f"Multi-timeframe engineering complete: {new_cols} features added (total: {final_cols})")
         return df_features
