@@ -163,7 +163,7 @@ class FeatureEngineer:
         df_features['obv'] = self.calculate_obv(df_features)
         df_features['trend_strength'] = self.calculate_trend_strength(df_features)
 
-        df_features = df_features.fillna(method='bfill').fillna(method='ffill')
+        df_features = df_features.bfill().ffill()
         print(f"Features engineered: {len(df_features)} rows, {len(df_features.columns)} columns")
         return df_features
 
