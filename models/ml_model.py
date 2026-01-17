@@ -255,14 +255,17 @@ class CryptoEntryModel:
                     eval_metric='logloss',
                     scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
                 )
+                self.model.fit(self.X_train, self.y_train, verbose=0)
             elif self.model_type == 'lightgbm':
                 self.model = LGBMClassifier(
                     n_estimators=self.hyperparams['n_estimators'],
                     max_depth=self.hyperparams['max_depth'],
                     learning_rate=self.hyperparams['learning_rate'],
                     random_state=42,
+                    verbose=-1,
                     scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
                 )
+                self.model.fit(self.X_train, self.y_train)
             elif self.model_type == 'random_forest':
                 self.model = RandomForestClassifier(
                     n_estimators=150,
@@ -272,10 +275,10 @@ class CryptoEntryModel:
                     random_state=42,
                     class_weight='balanced'
                 )
+                self.model.fit(self.X_train, self.y_train)
             else:
                 raise ValueError(f"Unknown model type: {self.model_type}")
 
-            self.model.fit(self.X_train, self.y_train, verbose=0)
             predictions_train = self.model.predict(self.X_train)
             predictions_test = self.model.predict(self.X_test)
 
@@ -316,6 +319,7 @@ class CryptoEntryModel:
                 learning_rate=self.hyperparams['learning_rate'],
                 random_state=42,
                 eval_metric='logloss',
+                verbose=0,
             ),
             RandomForestClassifier(
                 n_estimators=150,
@@ -329,11 +333,12 @@ class CryptoEntryModel:
                 max_depth=self.hyperparams['max_depth'],
                 learning_rate=self.hyperparams['learning_rate'],
                 random_state=42,
+                verbose=-1,
             )
         ]
         
         for model in models:
-            model.fit(self.X_train, self.y_train, verbose=0)
+            model.fit(self.X_train, self.y_train)
         
         return models
 
