@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>Advanced Chart - Crypto Trading System</title>
-    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.1.0/dist/lightweight-charts.standalone.production.js"></script>
     <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <script src="https://s3.tradingview.com/tv.js"></script>
     <style>
         * {
             margin: 0;
@@ -126,57 +126,11 @@
             background: #161b22;
         }
 
-        .timeframe-buttons {
-            display: flex;
-            gap: 4px;
-        }
-
-        .tf-btn {
-            padding: 6px 12px;
-            background: #0e1117;
-            border: 1px solid #30363d;
-            color: #8b949e;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            font-weight: 500;
-            transition: all 0.2s;
-        }
-
-        .tf-btn:hover {
-            background: #1c2128;
-            color: #c9d1d9;
-        }
-
-        .tf-btn.active {
-            background: #1f6feb;
-            border-color: #1f6feb;
+        .symbol-display {
+            font-size: 16px;
+            font-weight: 600;
             color: #f0f6fc;
-        }
-
-        .chart-tools {
-            display: flex;
-            gap: 8px;
-            margin-left: auto;
-        }
-
-        .tool-btn {
-            padding: 6px 12px;
-            background: #0e1117;
-            border: 1px solid #30363d;
-            color: #8b949e;
-            border-radius: 4px;
-            cursor: pointer;
-            font-size: 13px;
-            transition: all 0.2s;
-            display: flex;
-            align-items: center;
-            gap: 6px;
-        }
-
-        .tool-btn:hover {
-            background: #1c2128;
-            color: #c9d1d9;
+            min-width: 100px;
         }
 
         .chart-area {
@@ -186,7 +140,7 @@
             background: #0e1117;
         }
 
-        #chart {
+        #tradingview-chart {
             width: 100%;
             height: 100%;
         }
@@ -198,85 +152,6 @@
             display: flex;
             flex-direction: column;
             overflow-y: auto;
-        }
-
-        .indicators-menu {
-            position: absolute;
-            top: 50px;
-            right: 100px;
-            width: 320px;
-            background: #161b22;
-            border: 1px solid #30363d;
-            border-radius: 6px;
-            box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5);
-            z-index: 1000;
-            display: none;
-            flex-direction: column;
-            max-height: 70vh;
-            overflow-y: auto;
-        }
-
-        .indicators-menu.open {
-            display: flex;
-        }
-
-        .indicators-menu-header {
-            padding: 12px 16px;
-            border-bottom: 1px solid #30363d;
-            font-weight: 600;
-            font-size: 13px;
-        }
-
-        .indicators-search {
-            padding: 8px 12px;
-            border-bottom: 1px solid #30363d;
-        }
-
-        .indicators-search input {
-            width: 100%;
-            padding: 6px 8px;
-            background: #0e1117;
-            border: 1px solid #30363d;
-            border-radius: 4px;
-            color: #c9d1d9;
-            font-size: 12px;
-        }
-
-        .indicator-category {
-            border-bottom: 1px solid #30363d;
-        }
-
-        .indicator-category-title {
-            padding: 8px 16px;
-            background: #0e1117;
-            font-size: 12px;
-            font-weight: 600;
-            text-transform: uppercase;
-            color: #8b949e;
-        }
-
-        .indicator-item {
-            padding: 10px 16px;
-            cursor: pointer;
-            transition: background 0.2s;
-            font-size: 13px;
-            color: #c9d1d9;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-        }
-
-        .indicator-item:hover {
-            background: #1c2128;
-        }
-
-        .indicator-item.active .indicator-check {
-            color: #1f6feb;
-        }
-
-        .indicator-check {
-            font-size: 14px;
-            color: #30363d;
         }
 
         .right-panel-content {
@@ -353,21 +228,25 @@
             </div>
             <div class="favorites">
                 <div class="favorites-title">Favorites</div>
-                <div class="symbol-item active" data-symbol="BTCUSDT">
+                <div class="symbol-item active" data-symbol="BINANCE:BTCUSDT">
                     <div class="symbol-item-name">BTC/USDT</div>
                     <div class="symbol-item-price" id="btc-price">$45,000.00</div>
                 </div>
-                <div class="symbol-item" data-symbol="ETHUSDT">
+                <div class="symbol-item" data-symbol="BINANCE:ETHUSDT">
                     <div class="symbol-item-name">ETH/USDT</div>
                     <div class="symbol-item-price" id="eth-price">$2,500.00</div>
                 </div>
-                <div class="symbol-item" data-symbol="BNBUSDT">
+                <div class="symbol-item" data-symbol="BINANCE:BNBUSDT">
                     <div class="symbol-item-name">BNB/USDT</div>
                     <div class="symbol-item-price" id="bnb-price">$350.00</div>
                 </div>
-                <div class="symbol-item" data-symbol="SOLUSDT">
+                <div class="symbol-item" data-symbol="BINANCE:SOLUSDT">
                     <div class="symbol-item-name">SOL/USDT</div>
                     <div class="symbol-item-price" id="sol-price">$100.00</div>
+                </div>
+                <div class="symbol-item" data-symbol="BINANCE:ADAUSDT">
+                    <div class="symbol-item-name">ADA/USDT</div>
+                    <div class="symbol-item-price" id="ada-price">$1.00</div>
                 </div>
             </div>
         </div>
@@ -376,103 +255,12 @@
         <div class="main-content">
             <!-- Top Toolbar -->
             <div class="top-toolbar">
-                <div class="timeframe-buttons">
-                    <button class="tf-btn" data-tf="1">1m</button>
-                    <button class="tf-btn" data-tf="3">3m</button>
-                    <button class="tf-btn" data-tf="5">5m</button>
-                    <button class="tf-btn" data-tf="15">15m</button>
-                    <button class="tf-btn" data-tf="30">30m</button>
-                    <button class="tf-btn" data-tf="60">1h</button>
-                    <button class="tf-btn" data-tf="240">4h</button>
-                    <button class="tf-btn" data-tf="1440">1d</button>
-                    <button class="tf-btn" data-tf="10080">1w</button>
-                    <button class="tf-btn" data-tf="43200">1mo</button>
-                </div>
-                <div class="chart-tools">
-                    <button class="tool-btn" id="indicatorsBtn">
-                        <i class="fas fa-chart-line"></i> Indicators
-                    </button>
-                </div>
-            </div>
-
-            <!-- Indicators Menu -->
-            <div class="indicators-menu" id="indicatorsMenu">
-                <div class="indicators-menu-header">Add Indicator</div>
-                <div class="indicators-search">
-                    <input type="text" id="indicatorSearch" placeholder="Search...">
-                </div>
-                <div class="indicator-category">
-                    <div class="indicator-category-title">Moving Averages</div>
-                    <div class="indicator-item" data-indicator="sma20">
-                        <span>Simple Moving Average (20)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="sma50">
-                        <span>Simple Moving Average (50)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="ema20">
-                        <span>Exponential Moving Average (20)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="ema50">
-                        <span>Exponential Moving Average (50)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                </div>
-                <div class="indicator-category">
-                    <div class="indicator-category-title">Momentum</div>
-                    <div class="indicator-item" data-indicator="rsi14">
-                        <span>RSI (14)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="macd">
-                        <span>MACD</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="stoch">
-                        <span>Stochastic</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                </div>
-                <div class="indicator-category">
-                    <div class="indicator-category-title">Volatility</div>
-                    <div class="indicator-item" data-indicator="bb20">
-                        <span>Bollinger Bands (20)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="atr14">
-                        <span>Average True Range (14)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                </div>
-                <div class="indicator-category">
-                    <div class="indicator-category-title">Volume</div>
-                    <div class="indicator-item" data-indicator="obv">
-                        <span>On Balance Volume</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="vpt">
-                        <span>Volume Price Trend</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                </div>
-                <div class="indicator-category">
-                    <div class="indicator-category-title">Trend</div>
-                    <div class="indicator-item" data-indicator="adx">
-                        <span>ADX (14)</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                    <div class="indicator-item" data-indicator="psar">
-                        <span>Parabolic SAR</span>
-                        <span class="indicator-check">✓</span>
-                    </div>
-                </div>
+                <div class="symbol-display" id="symbolDisplay">BINANCE:BTCUSDT</div>
             </div>
 
             <!-- Chart Area -->
             <div class="chart-area">
-                <div id="chart"></div>
+                <div id="tradingview-chart"></div>
             </div>
         </div>
 
@@ -480,301 +268,112 @@
         <div class="right-panel">
             <div class="right-panel-content">
                 <div class="right-panel-section">
-                    <div class="right-panel-section-title">Current Price</div>
+                    <div class="right-panel-section-title">Market Info</div>
                     <div class="stat-item">
-                        <span class="stat-label">Price</span>
-                        <span class="stat-value" id="currentPrice">$45,000.00</span>
+                        <span class="stat-label">Symbol</span>
+                        <span class="stat-value" id="infoSymbol">BTC/USDT</span>
                     </div>
                     <div class="stat-item">
-                        <span class="stat-label">24h Change</span>
-                        <span class="stat-value positive" id="priceChange">+5.25%</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">24h High</span>
-                        <span class="stat-value" id="high24">$46,500.00</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">24h Low</span>
-                        <span class="stat-value" id="low24">$43,000.00</span>
+                        <span class="stat-label">Exchange</span>
+                        <span class="stat-value">Binance</span>
                     </div>
                 </div>
                 <div class="right-panel-section">
-                    <div class="right-panel-section-title">Trading Info</div>
-                    <div class="stat-item">
-                        <span class="stat-label">24h Volume</span>
-                        <span class="stat-value" id="volume24">$25.5B</span>
-                    </div>
-                    <div class="stat-item">
-                        <span class="stat-label">Market Cap</span>
-                        <span class="stat-value" id="marketCap">$950B</span>
-                    </div>
+                    <div class="right-panel-section-title">About TradingView</div>
+                    <p style="font-size: 12px; color: #8b949e; line-height: 1.5;">
+                        Chart powered by TradingView - professional charting platform with advanced tools and indicators.
+                    </p>
                 </div>
             </div>
         </div>
     </div>
 
-    <script>
-        const API_BASE = 'http://localhost:5000/api';
-        let currentSymbol = 'BTCUSDT';
-        let currentTimeframe = '60';
-        let chart = null;
-        let candlestickSeries = null;
-        let activeIndicators = {};
-        let chartData = { opens: [], highs: [], lows: [], closes: [] };
+    <script type="text/javascript">
+        let currentSymbol = 'BINANCE:BTCUSDT';
+        let widget = null;
 
-        const timeframeMap = {
-            '1': { minutes: 1, interval: '1m' },
-            '3': { minutes: 3, interval: '3m' },
-            '5': { minutes: 5, interval: '5m' },
-            '15': { minutes: 15, interval: '15m' },
-            '30': { minutes: 30, interval: '30m' },
-            '60': { minutes: 60, interval: '1h' },
-            '240': { minutes: 240, interval: '4h' },
-            '1440': { minutes: 1440, interval: '1d' },
-            '10080': { minutes: 10080, interval: '1w' },
-            '43200': { minutes: 43200, interval: '1mo' }
-        };
+        function initializeTradingViewChart(symbol) {
+            // Remove existing widget if any
+            if (widget) {
+                widget.remove();
+            }
 
-        // Initialize
-        document.addEventListener('DOMContentLoaded', () => {
-            initializeChart();
-            setupEventListeners();
-            loadChartData();
-            setInterval(loadChartData, 15000);
-        });
-
-        function initializeChart() {
-            const container = document.getElementById('chart');
-            chart = window.LightweightCharts.createChart(container, {
-                layout: {
-                    textColor: '#c9d1d9',
-                    background: { color: '#0e1117' },
-                },
-                width: container.clientWidth,
-                height: container.clientHeight,
-                timeScale: {
-                    timeVisible: true,
-                    secondsVisible: false,
-                    fixLeftEdge: true,
-                },
-                rightPriceScale: {
-                    autoScale: true,
-                },
-                localization: {
-                    priceFormatter: price => '$' + price.toFixed(2),
-                },
-            });
-
-            candlestickSeries = chart.addCandlestickSeries({
-                upColor: '#3fb950',
-                downColor: '#f85149',
-                borderVisible: false,
-                wickUpColor: '#3fb950',
-                wickDownColor: '#f85149',
-                openClose: true,
-            });
-
-            // Resize on window resize
-            window.addEventListener('resize', () => {
-                if (chart) {
-                    chart.applyOptions({ width: container.clientWidth, height: container.clientHeight });
+            const container = document.getElementById('tradingview-chart');
+            
+            widget = new TradingView.widget({
+                autosize: true,
+                symbol: symbol,
+                interval: '60',
+                timezone: 'Etc/UTC',
+                theme: 'dark',
+                style: '1',
+                locale: 'en',
+                toolbar_bg: '#161b22',
+                enable_publishing: false,
+                allow_symbol_change: true,
+                container_id: 'tradingview-chart',
+                studies: [
+                    'MASimple@tv-basicstudies',
+                    'RSI@tv-basicstudies',
+                    'MACD@tv-basicstudies',
+                    'BB@tv-basicstudies'
+                ],
+                overrides: {
+                    'mainSeriesProperties.candleStyle.upColor': '#3fb950',
+                    'mainSeriesProperties.candleStyle.downColor': '#f85149',
+                    'mainSeriesProperties.candleStyle.borderUpColor': '#3fb950',
+                    'mainSeriesProperties.candleStyle.borderDownColor': '#f85149',
+                    'mainSeriesProperties.candleStyle.wickUpColor': '#3fb950',
+                    'mainSeriesProperties.candleStyle.wickDownColor': '#f85149',
+                    'volumePaneSize': 'medium',
                 }
             });
         }
 
+        // Initialize with default symbol
+        document.addEventListener('DOMContentLoaded', () => {
+            initializeTradingViewChart(currentSymbol);
+            setupEventListeners();
+        });
+
         function setupEventListeners() {
-            // Timeframe buttons
-            document.querySelectorAll('.tf-btn').forEach(btn => {
-                btn.addEventListener('click', (e) => {
-                    document.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-                    e.target.classList.add('active');
-                    currentTimeframe = e.target.dataset.tf;
-                    loadChartData();
-                });
-            });
-
-            // Set active timeframe
-            document.querySelector('[data-tf="60"]').classList.add('active');
-
-            // Symbol items
+            // Symbol items click
             document.querySelectorAll('.symbol-item').forEach(item => {
                 item.addEventListener('click', () => {
                     document.querySelectorAll('.symbol-item').forEach(i => i.classList.remove('active'));
                     item.classList.add('active');
+                    
                     currentSymbol = item.dataset.symbol;
-                    loadChartData();
+                    document.getElementById('symbolDisplay').textContent = currentSymbol;
+                    
+                    const symbolName = item.querySelector('.symbol-item-name').textContent;
+                    document.getElementById('infoSymbol').textContent = symbolName;
+                    
+                    initializeTradingViewChart(currentSymbol);
                 });
             });
 
-            // Indicators button
-            document.getElementById('indicatorsBtn').addEventListener('click', () => {
-                document.getElementById('indicatorsMenu').classList.toggle('open');
-            });
-
-            // Indicator items
-            document.querySelectorAll('.indicator-item').forEach(item => {
-                item.addEventListener('click', () => {
-                    item.classList.toggle('active');
-                    const indicator = item.dataset.indicator;
-                    activeIndicators[indicator] = item.classList.contains('active');
-                    updateChartIndicators();
-                });
-            });
-
-            // Close menu when clicking outside
-            document.addEventListener('click', (e) => {
-                const menu = document.getElementById('indicatorsMenu');
-                const btn = document.getElementById('indicatorsBtn');
-                if (!menu.contains(e.target) && !btn.contains(e.target)) {
-                    menu.classList.remove('open');
+            // Symbol search input
+            document.getElementById('symbolSearch').addEventListener('keypress', (e) => {
+                if (e.key === 'Enter') {
+                    let symbol = e.target.value.toUpperCase();
+                    
+                    // If doesn't contain exchange prefix, add Binance
+                    if (!symbol.includes(':')) {
+                        symbol = 'BINANCE:' + symbol;
+                    }
+                    
+                    // If doesn't end with USDT, add it
+                    if (!symbol.includes('USDT')) {
+                        symbol = symbol + 'USDT';
+                    }
+                    
+                    currentSymbol = symbol;
+                    document.getElementById('symbolDisplay').textContent = currentSymbol;
+                    document.getElementById('infoSymbol').textContent = symbol.split(':')[1];
+                    initializeTradingViewChart(currentSymbol);
                 }
             });
-        }
-
-        async function loadChartData() {
-            try {
-                const interval = timeframeMap[currentTimeframe]?.interval || '1h';
-                const limit = Math.min(200, currentTimeframe < 60 ? 200 : 100);
-
-                const response = await fetch(`${API_BASE}/price?symbol=${currentSymbol}&interval=${interval}&limit=${limit}`);
-                const data = await response.json();
-
-                if (data.status === 'success') {
-                    chartData = data.data;
-                    updateChart(data);
-                }
-            } catch (error) {
-                console.error('Error loading chart data:', error);
-            }
-        }
-
-        function updateChart(data) {
-            if (!data.data || !data.data.closes) return;
-
-            const candleData = [];
-            const baseTime = Math.floor(Date.now() / 1000);
-            const timeframeConfig = timeframeMap[currentTimeframe];
-            const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
-
-            for (let i = 0; i < data.data.closes.length; i++) {
-                candleData.push({
-                    time: baseTime - (data.data.closes.length - i) * intervalSeconds,
-                    open: parseFloat(data.data.opens[i]),
-                    high: parseFloat(data.data.highs[i]),
-                    low: parseFloat(data.data.lows[i]),
-                    close: parseFloat(data.data.closes[i]),
-                });
-            }
-
-            candlestickSeries.setData(candleData);
-            chart.timeScale().fitContent();
-            updateChartIndicators();
-
-            // Update right panel
-            if (data.latest) {
-                document.getElementById('currentPrice').textContent = '$' + parseFloat(data.latest.price).toFixed(2);
-            }
-        }
-
-        function updateChartIndicators() {
-            // Remove existing indicator series
-            const series = chart.series || [];
-            for (let i = series.length - 1; i >= 1; i--) {
-                chart.removeSeries(series[i]);
-            }
-
-            if (!chartData.closes || chartData.closes.length === 0) return;
-
-            const closes = chartData.closes.map(v => parseFloat(v));
-            const baseTime = Math.floor(Date.now() / 1000);
-            const timeframeConfig = timeframeMap[currentTimeframe];
-            const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
-
-            // Add SMA
-            if (activeIndicators.sma20) {
-                addMovingAverage(closes, 20, '#FFD700', baseTime, intervalSeconds);
-            }
-            if (activeIndicators.sma50) {
-                addMovingAverage(closes, 50, '#FF6B6B', baseTime, intervalSeconds);
-            }
-
-            // Add EMA
-            if (activeIndicators.ema20) {
-                addEMA(closes, 20, '#00D4FF', baseTime, intervalSeconds);
-            }
-            if (activeIndicators.ema50) {
-                addEMA(closes, 50, '#00FF88', baseTime, intervalSeconds);
-            }
-
-            // Add Bollinger Bands
-            if (activeIndicators.bb20) {
-                addBollingerBands(closes, 20, baseTime, intervalSeconds);
-            }
-        }
-
-        function addMovingAverage(prices, period, color, baseTime, intervalSeconds) {
-            const sma = [];
-            for (let i = period - 1; i < prices.length; i++) {
-                const sum = prices.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-                sma.push(sum / period);
-            }
-
-            const data = sma.map((val, idx) => ({
-                time: baseTime - (prices.length - (idx + prices.length - sma.length)) * intervalSeconds,
-                value: val,
-            }));
-
-            const series = chart.addLineSeries({ color, lineWidth: 1 });
-            series.setData(data);
-        }
-
-        function addEMA(prices, period, color, baseTime, intervalSeconds) {
-            const multiplier = 2 / (period + 1);
-            const ema = [];
-            let emaValue = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-            ema.push(emaValue);
-
-            for (let i = period; i < prices.length; i++) {
-                emaValue = (prices[i] - emaValue) * multiplier + emaValue;
-                ema.push(emaValue);
-            }
-
-            const data = ema.map((val, idx) => ({
-                time: baseTime - (prices.length - (idx + prices.length - ema.length + 1)) * intervalSeconds,
-                value: val,
-            }));
-
-            const series = chart.addLineSeries({ color, lineWidth: 2 });
-            series.setData(data);
-        }
-
-        function addBollingerBands(prices, period, baseTime, intervalSeconds) {
-            const result = { upper: [], middle: [], lower: [] };
-
-            for (let i = period - 1; i < prices.length; i++) {
-                const values = prices.slice(i - period + 1, i + 1);
-                const mean = values.reduce((a, b) => a + b, 0) / period;
-                const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-                const std = Math.sqrt(variance);
-                result.middle.push(mean);
-                result.upper.push(mean + std * 2);
-                result.lower.push(mean - std * 2);
-            }
-
-            const upperData = result.upper.map((val, idx) => ({
-                time: baseTime - (prices.length - (idx + prices.length - result.upper.length)) * intervalSeconds,
-                value: val,
-            }));
-
-            const lowerData = result.lower.map((val, idx) => ({
-                time: baseTime - (prices.length - (idx + prices.length - result.lower.length)) * intervalSeconds,
-                value: val,
-            }));
-
-            const upperSeries = chart.addLineSeries({ color: '#00FF88', lineWidth: 1, lineStyle: 2 });
-            const lowerSeries = chart.addLineSeries({ color: '#00FF88', lineWidth: 1, lineStyle: 2 });
-            upperSeries.setData(upperData);
-            lowerSeries.setData(lowerData);
         }
     </script>
 </body>
