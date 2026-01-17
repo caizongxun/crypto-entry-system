@@ -8,7 +8,7 @@ from sklearn.ensemble import RandomForestClassifier
 import joblib
 from pathlib import Path
 
-from models.config import ML_CONFIG, MODEL_CONFIG, DEFAULT_SYMBOL, DEFAULT_TIMEFRAME
+from models.config import ML_CONFIG, MODEL_CONFIG, DEFAULT_SYMBOL, DEFAULT_TIMEFRAME, TIMEFRAME_CONFIGS
 from models.data_processor import DataProcessor
 from models.feature_engineer import FeatureEngineer
 from models.signal_evaluator import SignalEvaluator
@@ -25,6 +25,8 @@ class CryptoEntryModel:
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
         self.signal_evaluator = SignalEvaluator()
+
+        self.timeframe_config = TIMEFRAME_CONFIGS.get(timeframe, TIMEFRAME_CONFIGS['15m'])
 
         self.raw_data = None
         self.feature_data = None
@@ -54,9 +56,12 @@ class CryptoEntryModel:
         self.feature_data = self.feature_engineer.engineer_features(self.raw_data)
         return self.feature_data
 
-    def calculate_bb_metrics(self, df: pd.DataFrame, bb_period: int = 20, bb_std: float = 2.0) -> pd.DataFrame:
-        """Calculate Bollinger Bands metrics for bounce detection."""
+    def calculate_bb_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate Bollinger Bands metrics for bounce detection using timeframe config."""
         df_bb = df.copy()
+
+        bb_period = self.timeframe_config['bb_period']
+        bb_std = self.timeframe_config['bb_std']
 
         bb_basis = df_bb['close'].rolling(window=bb_period).mean()
         bb_dev = df_bb['close'].rolling(window=bb_period).std()
@@ -70,20 +75,23 @@ class CryptoEntryModel:
         df_bb['bb_position'] = (df_bb['close'] - bb_lower) / (bb_upper - bb_lower)
         df_bb['basis_slope'] = bb_basis.diff()
 
-        df_bb['touched_upper'] = (df_bb['close'] >= bb_upper * 0.98) & (df_bb['close'] <= bb_upper)
-        df_bb['touched_lower'] = (df_bb['close'] <= bb_lower * 1.02) & (df_bb['close'] >= bb_lower)
-        df_bb['broke_upper'] = (df_bb['close'] > bb_upper) & (df_bb['high'].shift(1) <= bb_upper.shift(1))
-        df_bb['broke_lower'] = (df_bb['close'] < bb_lower) & (df_bb['low'].shift(1) >= bb_lower.shift(1))
+        df_bb['touched_upper'] = (df_bb['close'] >= bb_upper * 0.98) and (df_bb['close'] <= bb_upper)
+        df_bb['touched_lower'] = (df_bb['close'] <= bb_lower * 1.02) and (df_bb['close'] >= bb_lower)
+        df_bb['broke_upper'] = (df_bb['close'] > bb_upper) and (df_bb['high'].shift(1) <= bb_upper.shift(1))
+        df_bb['broke_lower'] = (df_bb['close'] < bb_lower) and (df_bb['low'].shift(1) >= bb_lower.shift(1))
 
         return df_bb
 
-    def calculate_bounce_target(self, df: pd.DataFrame, lookforward: int = 5, bounce_threshold: float = 0.005) -> np.ndarray:
+    def calculate_bounce_target(self, df: pd.DataFrame) -> np.ndarray:
         """Calculate if BB touch/break resulted in effective bounce.
         
         Bounce is effective if:
         1. Price reversed from BB edge within lookforward candles
-        2. Minimum 0.5% move in bounce direction
+        2. Minimum move in bounce direction meets threshold
         """
+        lookforward = self.timeframe_config['lookforward']
+        bounce_threshold = self.timeframe_config['bounce_threshold']
+
         bounce_signal = np.zeros(len(df))
 
         for i in range(len(df) - lookforward):
@@ -140,6 +148,7 @@ class CryptoEntryModel:
         y = df_valid['bounce_target'].values.astype(int)
 
         print(f"Training data prepared: {X.shape[0]} BB touch/break events, {X.shape[1]} features")
+        print(f"Timeframe: {self.timeframe}")
         print(f"Effective bounces: {(y == 1).sum()}, Ineffective: {(y == 0).sum()}")
         print(f"Bounce rate: {(y == 1).sum() / len(y) * 100:.2f}%")
 
@@ -165,7 +174,7 @@ class CryptoEntryModel:
         self.y_train = y_train
         self.y_test = y_test
 
-        print(f"Training {self.model_type} model...")
+        print(f"Training {self.model_type} model for {self.timeframe}...")
 
         if self.model_type == 'xgboost':
             self.model = XGBClassifier(
@@ -199,7 +208,7 @@ class CryptoEntryModel:
         train_precision = self._calculate_precision(self.model.predict(self.X_train), self.y_train)
         test_precision = self._calculate_precision(self.model.predict(self.X_test), self.y_test)
 
-        print(f"Model training completed:")
+        print(f"Model training completed for {self.timeframe}:")
         print(f"  Train accuracy: {train_score:.4f}, Precision: {train_precision:.4f}")
         print(f"  Test accuracy: {test_score:.4f}, Precision: {test_precision:.4f}")
 
@@ -231,7 +240,7 @@ class CryptoEntryModel:
         if self.model is None:
             self.load_model()
             if self.model is None:
-                print("Warning: No model available. Training new model...")
+                print(f"Warning: No model available for {self.timeframe}. Training new model...")
                 self.train()
 
         df = self.calculate_bb_metrics(self.feature_data.copy())
@@ -264,7 +273,7 @@ class CryptoEntryModel:
         recent_df_valid.loc[recent_df_valid['broke_lower'], 'signal_type'] = 'lower_break'
         recent_df_valid.loc[recent_df_valid['broke_upper'], 'signal_type'] = 'upper_break'
 
-        print(f"Entry evaluation complete: {len(recent_df_valid)} candles analyzed")
+        print(f"Entry evaluation complete for {self.timeframe}: {len(recent_df_valid)} candles analyzed")
         return recent_df_valid
 
     def save_model(self) -> None:
