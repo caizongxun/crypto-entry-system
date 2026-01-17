@@ -46,6 +46,12 @@ def index():
     return render_template('dashboard.html')
 
 
+@app.route('/chart')
+def advanced_chart():
+    """Render advanced TradingView-style chart."""
+    return render_template('chart.html')
+
+
 @app.route('/api/price', methods=['GET'])
 def get_price():
     """Get current price data from Binance."""
