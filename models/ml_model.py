@@ -3,10 +3,17 @@ import numpy as np
 from typing import Tuple, Dict, Optional
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
-from xgboost import XGBClassifier
 from sklearn.ensemble import RandomForestClassifier
+from xgboost import XGBClassifier
+from lightgbm import LGBMClassifier
 import joblib
 from pathlib import Path
+
+try:
+    from imblearn.over_sampling import SMOTE
+    SMOTE_AVAILABLE = True
+except ImportError:
+    SMOTE_AVAILABLE = False
 
 from models.config import ML_CONFIG, MODEL_CONFIG, DEFAULT_SYMBOL, DEFAULT_TIMEFRAME, TIMEFRAME_CONFIGS
 from models.data_processor import DataProcessor
@@ -15,18 +22,21 @@ from models.signal_evaluator import SignalEvaluator
 
 
 class CryptoEntryModel:
-    """ML model for BB channel bounce prediction."""
+    """ML model for BB channel bounce prediction with optimization levels."""
 
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
-                 model_type: str = 'xgboost'):
+                 model_type: str = 'xgboost', optimization_level: str = 'balanced'):
         self.symbol = symbol
         self.timeframe = timeframe
         self.model_type = model_type
+        self.optimization_level = optimization_level
+        
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
         self.signal_evaluator = SignalEvaluator()
 
         self.timeframe_config = TIMEFRAME_CONFIGS.get(timeframe, TIMEFRAME_CONFIGS['15m'])
+        self._apply_optimization_config()
 
         self.raw_data = None
         self.feature_data = None
@@ -36,7 +46,42 @@ class CryptoEntryModel:
         self.y_test = None
         self.scaler = StandardScaler()
         self.model = None
+        self.ensemble_models = None
         self.model_path = Path(__file__).parent / f"cache/{symbol}_{timeframe}_{model_type}.joblib"
+
+    def _apply_optimization_config(self):
+        """Apply optimization-specific configuration."""
+        if self.optimization_level == 'conservative':
+            self.use_smote = True
+            self.smote_ratio = 0.7
+            self.bounce_threshold_multiplier = 1.2
+            self.use_ensemble = True
+            self.hyperparams = {
+                'max_depth': 6,
+                'learning_rate': 0.05,
+                'n_estimators': 200,
+            }
+        elif self.optimization_level == 'aggressive':
+            self.use_smote = False
+            self.bounce_threshold_multiplier = 0.8
+            self.use_ensemble = False
+            self.hyperparams = {
+                'max_depth': 8,
+                'learning_rate': 0.1,
+                'n_estimators': 100,
+            }
+        else:
+            self.use_smote = True
+            self.smote_ratio = 0.5
+            self.bounce_threshold_multiplier = 1.0
+            self.use_ensemble = False
+            self.hyperparams = {
+                'max_depth': 7,
+                'learning_rate': 0.08,
+                'n_estimators': 150,
+            }
+        
+        self.timeframe_config['bounce_threshold'] *= self.bounce_threshold_multiplier
 
     def load_data(self) -> pd.DataFrame:
         """Load and prepare data."""
@@ -83,12 +128,7 @@ class CryptoEntryModel:
         return df_bb
 
     def calculate_bounce_target(self, df: pd.DataFrame) -> np.ndarray:
-        """Calculate if BB touch/break resulted in effective bounce.
-        
-        Bounce is effective if:
-        1. Price reversed from BB edge within lookforward candles
-        2. Minimum move in bounce direction meets threshold
-        """
+        """Calculate if BB touch/break resulted in effective bounce."""
         lookforward = self.timeframe_config['lookforward']
         bounce_threshold = self.timeframe_config['bounce_threshold']
 
@@ -154,13 +194,34 @@ class CryptoEntryModel:
 
         return X, y
 
+    def _apply_smote(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Apply SMOTE balancing to training data."""
+        if not SMOTE_AVAILABLE:
+            print("Warning: imbalanced-learn not installed. Skipping SMOTE.")
+            print("Install with: pip install imbalanced-learn")
+            return X, y
+        
+        print(f"Applying SMOTE balancing (ratio={self.smote_ratio})...")
+        try:
+            smote = SMOTE(sampling_strategy=self.smote_ratio, random_state=42)
+            X_smote, y_smote = smote.fit_resample(X, y)
+            print(f"SMOTE completed: {X_smote.shape[0]} samples (from {X.shape[0]})")
+            print(f"Class distribution: {(y_smote == 0).sum()} negative, {(y_smote == 1).sum()} positive")
+            return X_smote, y_smote
+        except Exception as e:
+            print(f"SMOTE error: {str(e)}. Continuing without SMOTE.")
+            return X, y
+
     def train(self, epochs: int = None) -> Dict:
-        """Train the BB bounce prediction model."""
+        """Train the BB bounce prediction model with optimization."""
         X, y = self.prepare_training_data()
 
         if len(X) < 100:
             print("Warning: Not enough training data. Need at least 100 samples.")
             return {}
+
+        if self.use_smote:
+            X, y = self._apply_smote(X, y)
 
         X_train, X_test, y_train, y_test = train_test_split(
             X, y,
@@ -175,42 +236,60 @@ class CryptoEntryModel:
         self.y_test = y_test
 
         print(f"Training {self.model_type} model for {self.timeframe}...")
+        print(f"Hyperparameters: {self.hyperparams}")
 
-        if self.model_type == 'xgboost':
-            self.model = XGBClassifier(
-                n_estimators=150,
-                max_depth=7,
-                learning_rate=0.08,
-                subsample=0.9,
-                colsample_bytree=0.9,
-                min_child_weight=3,
-                random_state=42,
-                eval_metric='logloss',
-                scale_pos_weight=(y_train == 0).sum() / (y_train == 1).sum()
-            )
-        elif self.model_type == 'random_forest':
-            self.model = RandomForestClassifier(
-                n_estimators=150,
-                max_depth=15,
-                min_samples_split=10,
-                min_samples_leaf=5,
-                random_state=42,
-                class_weight='balanced'
-            )
+        if self.use_ensemble:
+            self.ensemble_models = self._train_ensemble()
+            predictions_train = self._ensemble_predict(self.X_train)
+            predictions_test = self._ensemble_predict(self.X_test)
         else:
-            raise ValueError(f"Unknown model type: {self.model_type}")
+            if self.model_type == 'xgboost':
+                self.model = XGBClassifier(
+                    n_estimators=self.hyperparams['n_estimators'],
+                    max_depth=self.hyperparams['max_depth'],
+                    learning_rate=self.hyperparams['learning_rate'],
+                    subsample=0.9,
+                    colsample_bytree=0.9,
+                    min_child_weight=3,
+                    random_state=42,
+                    eval_metric='logloss',
+                    scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
+                )
+            elif self.model_type == 'lightgbm':
+                self.model = LGBMClassifier(
+                    n_estimators=self.hyperparams['n_estimators'],
+                    max_depth=self.hyperparams['max_depth'],
+                    learning_rate=self.hyperparams['learning_rate'],
+                    random_state=42,
+                    scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
+                )
+            elif self.model_type == 'random_forest':
+                self.model = RandomForestClassifier(
+                    n_estimators=150,
+                    max_depth=15,
+                    min_samples_split=10,
+                    min_samples_leaf=5,
+                    random_state=42,
+                    class_weight='balanced'
+                )
+            else:
+                raise ValueError(f"Unknown model type: {self.model_type}")
 
-        self.model.fit(self.X_train, self.y_train, verbose=0)
+            self.model.fit(self.X_train, self.y_train, verbose=0)
+            predictions_train = self.model.predict(self.X_train)
+            predictions_test = self.model.predict(self.X_test)
 
-        train_score = self.model.score(self.X_train, self.y_train)
-        test_score = self.model.score(self.X_test, self.y_test)
+        train_score = (predictions_train == self.y_train).mean()
+        test_score = (predictions_test == self.y_test).mean()
 
-        train_precision = self._calculate_precision(self.model.predict(self.X_train), self.y_train)
-        test_precision = self._calculate_precision(self.model.predict(self.X_test), self.y_test)
+        train_precision = self._calculate_precision(predictions_train, self.y_train)
+        test_precision = self._calculate_precision(predictions_test, self.y_test)
+        train_recall = self._calculate_recall(predictions_train, self.y_train)
+        test_recall = self._calculate_recall(predictions_test, self.y_test)
 
         print(f"Model training completed for {self.timeframe}:")
-        print(f"  Train accuracy: {train_score:.4f}, Precision: {train_precision:.4f}")
-        print(f"  Test accuracy: {test_score:.4f}, Precision: {test_precision:.4f}")
+        print(f"  Train accuracy: {train_score:.4f}, Precision: {train_precision:.4f}, Recall: {train_recall:.4f}")
+        print(f"  Test accuracy: {test_score:.4f}, Precision: {test_precision:.4f}, Recall: {test_recall:.4f}")
 
         self.save_model()
 
@@ -219,10 +298,49 @@ class CryptoEntryModel:
             'test_accuracy': test_score,
             'train_precision': train_precision,
             'test_precision': test_precision,
+            'train_recall': train_recall,
+            'test_recall': test_recall,
             'model_type': self.model_type,
             'symbol': self.symbol,
             'timeframe': self.timeframe,
+            'optimization': self.optimization_level,
         }
+
+    def _train_ensemble(self):
+        """Train ensemble of multiple models."""
+        print("Training ensemble models...")
+        models = [
+            XGBClassifier(
+                n_estimators=self.hyperparams['n_estimators'],
+                max_depth=self.hyperparams['max_depth'],
+                learning_rate=self.hyperparams['learning_rate'],
+                random_state=42,
+                eval_metric='logloss',
+            ),
+            RandomForestClassifier(
+                n_estimators=150,
+                max_depth=15,
+                min_samples_split=10,
+                random_state=42,
+                class_weight='balanced'
+            ),
+            LGBMClassifier(
+                n_estimators=self.hyperparams['n_estimators'],
+                max_depth=self.hyperparams['max_depth'],
+                learning_rate=self.hyperparams['learning_rate'],
+                random_state=42,
+            )
+        ]
+        
+        for model in models:
+            model.fit(self.X_train, self.y_train, verbose=0)
+        
+        return models
+
+    def _ensemble_predict(self, X: np.ndarray) -> np.ndarray:
+        """Make ensemble predictions with voting."""
+        predictions = np.array([model.predict(X) for model in self.ensemble_models])
+        return (predictions.sum(axis=0) >= 2).astype(int)
 
     def _calculate_precision(self, y_pred: np.ndarray, y_true: np.ndarray) -> float:
         """Calculate precision score."""
@@ -232,14 +350,22 @@ class CryptoEntryModel:
             return 0.0
         return true_positives / (true_positives + false_positives)
 
+    def _calculate_recall(self, y_pred: np.ndarray, y_true: np.ndarray) -> float:
+        """Calculate recall score."""
+        true_positives = ((y_pred == 1) & (y_true == 1)).sum()
+        false_negatives = ((y_pred == 0) & (y_true == 1)).sum()
+        if true_positives + false_negatives == 0:
+            return 0.0
+        return true_positives / (true_positives + false_negatives)
+
     def evaluate_entries(self, lookback: int = 50) -> pd.DataFrame:
         """Evaluate current BB touch/break for bounce probability."""
         if self.feature_data is None:
             self.engineer_features()
 
-        if self.model is None:
+        if self.model is None and self.ensemble_models is None:
             self.load_model()
-            if self.model is None:
+            if self.model is None and self.ensemble_models is None:
                 print(f"Warning: No model available for {self.timeframe}. Training new model...")
                 self.train()
 
@@ -259,8 +385,12 @@ class CryptoEntryModel:
         X_recent = recent_df_valid[feature_cols].values
         X_scaled = self.scaler.transform(X_recent)
 
-        predictions = self.model.predict(X_scaled)
-        probabilities = self.model.predict_proba(X_scaled)[:, 1] * 100 if hasattr(self.model, 'predict_proba') else predictions * 100
+        if self.ensemble_models is not None:
+            predictions = self._ensemble_predict(X_scaled)
+            probabilities = np.mean([m.predict_proba(X_scaled)[:, 1] for m in self.ensemble_models], axis=0) * 100
+        else:
+            predictions = self.model.predict(X_scaled)
+            probabilities = self.model.predict_proba(X_scaled)[:, 1] * 100 if hasattr(self.model, 'predict_proba') else predictions * 100
 
         recent_df_valid['bounce_prediction'] = predictions
         recent_df_valid['bounce_probability'] = probabilities
@@ -278,17 +408,19 @@ class CryptoEntryModel:
 
     def save_model(self) -> None:
         """Save trained model to disk."""
-        if self.model is None:
+        if self.model is None and self.ensemble_models is None:
             print("No model to save")
             return
 
         self.model_path.parent.mkdir(parents=True, exist_ok=True)
         joblib.dump({
             'model': self.model,
+            'ensemble_models': self.ensemble_models,
             'scaler': self.scaler,
             'symbol': self.symbol,
             'timeframe': self.timeframe,
             'model_type': self.model_type,
+            'optimization_level': self.optimization_level,
         }, self.model_path)
         print(f"Model saved to {self.model_path}")
 
@@ -300,7 +432,8 @@ class CryptoEntryModel:
 
         try:
             checkpoint = joblib.load(self.model_path)
-            self.model = checkpoint['model']
+            self.model = checkpoint.get('model')
+            self.ensemble_models = checkpoint.get('ensemble_models')
             self.scaler = checkpoint['scaler']
             print(f"Model loaded from {self.model_path}")
             return True
@@ -326,7 +459,8 @@ class CryptoEntryModel:
             },
             'model_info': {
                 'type': self.model_type,
-                'trained': self.model is not None,
+                'optimization': self.optimization_level,
+                'trained': self.model is not None or self.ensemble_models is not None,
                 'path': str(self.model_path) if self.model_path else None,
             }
         }
