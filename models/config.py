@@ -67,6 +67,12 @@ MODEL_CONFIG = {
         'colsample_bytree': 0.8,
         'random_state': 42,
     },
+    'lightgbm': {
+        'n_estimators': 100,
+        'max_depth': 8,
+        'learning_rate': 0.1,
+        'random_state': 42,
+    },
     'random_forest': {
         'n_estimators': 100,
         'max_depth': 15,
