@@ -57,7 +57,7 @@ class MultiTimeframeEngineer:
             if len(aligned_data.columns) == 0:
                 return None
             
-            aligned_data = aligned_data.fillna(method='ffill').fillna(method='bfill').fillna(0)
+            aligned_data = aligned_data.ffill().bfill().fillna(0)
             return aligned_data
         except Exception as e:
             print(f"Warning: Timeframe alignment failed for {higher_tf}: {str(e)}")
