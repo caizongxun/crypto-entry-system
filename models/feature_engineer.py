@@ -26,7 +26,7 @@ class FeatureEngineer:
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
         rs = gain / loss
         rsi = 100 - (100 / (1 + rs))
-        return rsi
+        return rsi.fillna(50)
 
     def calculate_macd(self, df: pd.DataFrame, fast: int = 12,
                       slow: int = 26, signal: int = 9,
@@ -37,7 +37,7 @@ class FeatureEngineer:
         macd_line = ema_fast - ema_slow
         signal_line = macd_line.ewm(span=signal, adjust=False).mean()
         histogram = macd_line - signal_line
-        return macd_line, signal_line, histogram
+        return macd_line.fillna(0), signal_line.fillna(0), histogram.fillna(0)
 
     def calculate_bollinger_bands(self, df: pd.DataFrame, period: int = 20,
                                  std_dev: int = 2, column: str = 'close') -> Tuple[pd.Series, pd.Series, pd.Series]:
@@ -46,7 +46,7 @@ class FeatureEngineer:
         std = df[column].rolling(window=period).std()
         bb_upper = sma + (std * std_dev)
         bb_lower = sma - (std * std_dev)
-        return bb_upper, sma, bb_lower
+        return bb_upper.fillna(0), sma.fillna(0), bb_lower.fillna(0)
 
     def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate Average True Range."""
@@ -56,39 +56,45 @@ class FeatureEngineer:
 
         true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
         atr = true_range.rolling(window=period).mean()
-        return atr
+        return atr.fillna(0)
 
     def calculate_momentum(self, df: pd.DataFrame, period: int = 14,
                           column: str = 'close') -> pd.Series:
         """Calculate Price Momentum (Rate of Change)."""
-        return ((df[column] - df[column].shift(period)) / df[column].shift(period)) * 100
+        momentum = ((df[column] - df[column].shift(period)) / df[column].shift(period)) * 100
+        return momentum.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_obv(self, df: pd.DataFrame) -> pd.Series:
         """Calculate On-Balance Volume."""
         obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
-        return obv
+        return obv.replace([np.inf, -np.inf], 0)
 
     def calculate_volatility(self, df: pd.DataFrame, period: int = 20,
                             column: str = 'close') -> pd.Series:
         """Calculate Price Volatility (Standard Deviation)."""
         returns = df[column].pct_change()
         volatility = returns.rolling(window=period).std() * 100
-        return volatility
+        return volatility.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_volume_profile(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
         """Calculate Volume-weighted price profile."""
         typical_price = (df['high'] + df['low'] + df['close']) / 3
         volume_weighted = (typical_price * df['volume']).rolling(window=period).sum()
-        return volume_weighted
+        return volume_weighted.fillna(0)
 
     def calculate_divergence(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate Price-RSI Divergence indicator."""
         rsi = self.calculate_rsi(df, period)
         price_range = df['close'].rolling(window=period).apply(
-            lambda x: (x.max() - x.min()) / x.mean() if x.mean() != 0 else 0
+            lambda x: (x.max() - x.min()) / x.mean() if x.mean() != 0 else 0,
+            raw=False
         )
-        divergence = (rsi / 100) - (price_range / price_range.max())
-        return divergence
+        price_range = price_range.replace([np.inf, -np.inf], 0).fillna(0)
+        price_range_max = price_range.max()
+        if price_range_max == 0:
+            price_range_max = 1
+        divergence = (rsi / 100) - (price_range / price_range_max)
+        return divergence.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_trend_strength(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate trend strength using ADX-like calculation."""
@@ -110,52 +116,64 @@ class FeatureEngineer:
             else:
                 minus_dm.iloc[i] = 0
 
-        plus_di = 100 * (plus_dm.rolling(window=period).mean() / tr.rolling(window=period).mean())
-        minus_di = 100 * (minus_dm.rolling(window=period).mean() / tr.rolling(window=period).mean())
-        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        tr_rolling = tr.rolling(window=period).mean()
+        tr_rolling = tr_rolling.replace(0, 1)
+        
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / tr_rolling)
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / tr_rolling)
+        
+        denominator = plus_di + minus_di
+        denominator = denominator.replace(0, 1)
+        dx = 100 * abs(plus_di - minus_di) / denominator
         adx = dx.rolling(window=period).mean()
 
-        return adx
+        return adx.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_volume_momentum(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate Volume Momentum - rate of change of OBV."""
         obv = self.calculate_obv(df)
-        volume_momentum = ((obv - obv.shift(period)) / obv.shift(period).abs() + 1) * 100
-        return volume_momentum.fillna(0)
+        obv_shift = obv.shift(period)
+        obv_shift_abs = obv_shift.abs()
+        obv_shift_abs = obv_shift_abs.replace(0, 1)
+        volume_momentum = ((obv - obv_shift) / obv_shift_abs + 1) * 100
+        return volume_momentum.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_price_position_in_range(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
         """Calculate where price sits in its range (0-100)."""
         highest = df['high'].rolling(window=period).max()
         lowest = df['low'].rolling(window=period).min()
         price_range = highest - lowest
+        price_range = price_range.replace(0, 1)
         position = ((df['close'] - lowest) / price_range) * 100
-        return position.fillna(50)
+        return position.fillna(50).replace([np.inf, -np.inf], 50)
 
     def calculate_volume_relative_strength(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate relative strength of trading volume."""
         avg_volume = df['volume'].rolling(window=period).mean()
+        avg_volume = avg_volume.replace(0, 1)
         volume_ratio = df['volume'] / avg_volume
-        return volume_ratio.fillna(1.0)
+        return volume_ratio.fillna(1.0).replace([np.inf, -np.inf], 1.0)
 
     def calculate_close_location(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
         """Calculate close location relative to high-low range (0-1)."""
         high_low_diff = df['high'] - df['low']
+        high_low_diff = high_low_diff.replace(0, 1)
         close_high_diff = df['high'] - df['close']
         close_location = (high_low_diff - close_high_diff) / high_low_diff
-        return close_location.fillna(0.5)
+        return close_location.fillna(0.5).replace([np.inf, -np.inf], 0.5)
 
     def calculate_momentum_divergence(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate divergence between price momentum and volume momentum."""
         price_momentum = self.calculate_momentum(df, period)
         volume_momentum = self.calculate_volume_momentum(df, period)
         divergence = (price_momentum - volume_momentum) / 100
-        return divergence.fillna(0)
+        return divergence.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_volatility_acceleration(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
         """Calculate rate of change of volatility."""
         volatility = self.calculate_volatility(df, period)
-        vol_acceleration = volatility.diff(period) / volatility.shift(period)
-        return vol_acceleration.fillna(0)
+        vol_acceleration = volatility.diff(period) / volatility.shift(period).replace(0, 1)
+        return vol_acceleration.fillna(0).replace([np.inf, -np.inf], 0)
 
     def calculate_multi_timeframe_strength(self, df: pd.DataFrame) -> pd.Series:
         """Combine multiple timeframe signals (simple multi-TF indicator)."""
@@ -224,6 +242,13 @@ class FeatureEngineer:
         df_features['multi_timeframe_strength'] = self.calculate_multi_timeframe_strength(df_features)
 
         df_features = df_features.bfill().ffill()
+        
+        for col in df_features.select_dtypes(include=[np.number]).columns:
+            df_features[col] = df_features[col].replace([np.inf, -np.inf], 0)
+            df_features[col] = df_features[col].fillna(0)
+            if df_features[col].max() > 1e10:
+                df_features[col] = df_features[col].clip(lower=-1e10, upper=1e10)
+        
         print(f"Features engineered: {len(df_features)} rows, {len(df_features.columns)} columns")
         return df_features
 
