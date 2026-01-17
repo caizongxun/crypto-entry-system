@@ -7,25 +7,18 @@ import os
 import sys
 from dotenv import load_dotenv
 
-# Add the project root to Python path
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 load_dotenv()
 
-# Import models
 from models.ml_model import CryptoEntryModel
 from models.on_chain_data import OnChainDataProvider
 from models.market_sentiment import MarketSentimentAnalyzer
 from models.paper_trading import PaperTradingEngine
-
-# Import services
 from app.services.whale_tracking import WhaleTracker
 from app.services.exchange_flow import ExchangeFlowAnalyzer
-
-# Import routes
 from app.routes.on_chain import on_chain_bp
 
-# Try to import Binance client, but handle if not installed
 try:
     from binance.client import Client
 except ImportError:
@@ -35,18 +28,22 @@ except ImportError:
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 CORS(app)
 
-# Register blueprints
 app.register_blueprint(on_chain_bp)
 
-# Initialize ML model
 try:
-    ml_model = CryptoEntryModel('BTCUSDT', '1h')
-    ml_model.load_model()
+    ml_model_1h = CryptoEntryModel('BTCUSDT', '1h')
+    ml_model_1h.load_model()
 except Exception as e:
-    print(f'Warning: Could not load ML model: {str(e)}')
-    ml_model = None
+    print(f'Warning: Could not load 1h ML model: {str(e)}')
+    ml_model_1h = None
 
-# Initialize on-chain data provider
+try:
+    ml_model_15m = CryptoEntryModel('BTCUSDT', '15m')
+    ml_model_15m.load_model()
+except Exception as e:
+    print(f'Warning: Could not load 15m ML model: {str(e)}')
+    ml_model_15m = None
+
 try:
     on_chain_provider = OnChainDataProvider('BTCUSDT')
     on_chain_provider.set_api_keys(
@@ -57,21 +54,18 @@ except Exception as e:
     print(f'Warning: Could not initialize on-chain provider: {str(e)}')
     on_chain_provider = None
 
-# Initialize sentiment analyzer
 try:
     sentiment_analyzer = MarketSentimentAnalyzer('BTC')
 except Exception as e:
     print(f'Warning: Could not initialize sentiment analyzer: {str(e)}')
     sentiment_analyzer = None
 
-# Initialize paper trading engine
 try:
     paper_trading = PaperTradingEngine(initial_balance=10000.0)
 except Exception as e:
     print(f'Warning: Could not initialize paper trading: {str(e)}')
     paper_trading = None
 
-# Initialize new services
 try:
     whale_tracker = WhaleTracker(api_key=os.getenv('GLASSNODE_API_KEY'))
     exchange_analyzer = ExchangeFlowAnalyzer(api_key=os.getenv('GLASSNODE_API_KEY'))
@@ -80,7 +74,6 @@ except Exception as e:
     whale_tracker = None
     exchange_analyzer = None
 
-# Initialize Binance client
 binance_api_key = os.getenv('BINANCE_API_KEY')
 binance_api_secret = os.getenv('BINANCE_API_SECRET')
 
@@ -166,9 +159,9 @@ def get_price():
 
 @app.route('/api/ml-prediction', methods=['GET'])
 def get_ml_prediction():
-    """Get ML model predictions."""
+    """Get ML model predictions for 1h timeframe."""
     try:
-        if not ml_model:
+        if not ml_model_1h:
             return jsonify({'status': 'error', 'message': 'ML model not initialized'}), 500
         
         symbol = request.args.get('symbol', 'BTCUSDT')
@@ -197,8 +190,74 @@ def get_ml_prediction():
         return jsonify({
             'status': 'success',
             'symbol': symbol,
+            'timeframe': '1h',
             'predictions': predictions,
             'total_events': len(bb_events)
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/ml-prediction-15m', methods=['GET'])
+def get_ml_prediction_15m():
+    """Get ML model predictions for 15m timeframe."""
+    try:
+        if not ml_model_15m:
+            return jsonify({'status': 'error', 'message': '15m ML model not initialized'}), 500
+        
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        lookback = int(request.args.get('lookback', 50))
+        
+        eval_results = ml_model_15m.evaluate_entries(lookback=lookback)
+        
+        bb_events = eval_results[
+            (eval_results['is_bb_touch'] | eval_results['is_bb_break']) &
+            (eval_results['signal_type'] != 'none')
+        ]
+        
+        predictions = []
+        for idx, row in bb_events.tail(20).iterrows():
+            predictions.append({
+                'timestamp': str(row['open_time']),
+                'signal_type': row['signal_type'],
+                'price': float(row['close']),
+                'bounce_probability': float(row['bounce_probability']),
+                'bb_position': float(row['bb_position']),
+                'bb_width': float(row['bb_width']),
+                'bb_upper': float(row['bb_upper']),
+                'bb_lower': float(row['bb_lower']),
+                'bb_basis': float(row['bb_basis'])
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'timeframe': '15m',
+            'predictions': predictions,
+            'total_events': len(bb_events),
+            'model_trained': ml_model_15m.model is not None
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/train-model-15m', methods=['POST'])
+def train_model_15m():
+    """Train 15m BB model."""
+    try:
+        global ml_model_15m
+        
+        symbol = request.json.get('symbol', 'BTCUSDT') if request.json else 'BTCUSDT'
+        
+        print(f"Starting training for {symbol} 15m model...")
+        
+        ml_model_15m = CryptoEntryModel(symbol, '15m', 'xgboost')
+        training_results = ml_model_15m.train()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'15m model training completed for {symbol}',
+            'results': training_results
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
@@ -334,7 +393,8 @@ def health_check():
         'services': {
             'whale_tracker': 'enabled' if whale_tracker else 'disabled',
             'exchange_analyzer': 'enabled' if exchange_analyzer else 'disabled',
-            'ml_model': 'loaded' if ml_model else 'not_loaded',
+            'ml_model_1h': 'loaded' if ml_model_1h else 'not_loaded',
+            'ml_model_15m': 'loaded' if ml_model_15m else 'not_loaded',
             'paper_trading': 'enabled' if paper_trading else 'disabled',
             'binance_client': 'connected' if client else 'using_public_endpoints'
         }
