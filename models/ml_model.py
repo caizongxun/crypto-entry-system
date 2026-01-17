@@ -4,7 +4,7 @@ from typing import Tuple, Dict, Optional
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from xgboost import XGBClassifier, XGBRegressor
-from sklearn.ensemble import RandomForestClassifier
+from sklearn.ensemble import RandomForestClassifier, RandomForestRegressor
 import joblib
 from pathlib import Path
 
@@ -55,33 +55,29 @@ class CryptoEntryModel:
         self.feature_data = self.feature_engineer.engineer_features(self.raw_data)
         return self.feature_data
 
-    def prepare_training_data(self, target_variable: str = 'future_return') -> Tuple[np.ndarray, np.ndarray]:
-        """Prepare data for model training."""
+    def prepare_training_data(self) -> Tuple[np.ndarray, np.ndarray]:
+        """Prepare data for model training with binary classification target."""
         if self.feature_data is None:
             self.engineer_features()
 
         print("Preparing training data...")
 
-        lookback = ML_CONFIG.get('lookback_period', 50)
         df = self.feature_data.copy()
 
         df['future_return'] = df['close'].shift(-1) / df['close'] - 1
-        df['future_return_signal'] = (df['future_return'] > 0).astype(int)
-        df['target_quality'] = pd.cut(df['close'].pct_change().rolling(20).mean() * 100,
-                                      bins=[0, 0.5, 1, 2, 5],
-                                      labels=[0, 1, 2, 3]).astype(float)
+        df['buy_signal'] = (df['future_return'] > 0.0005).astype(int)
 
         feature_names = self.feature_engineer.get_feature_names()
         feature_cols = [col for col in feature_names if col in df.columns]
 
-        X = df[feature_cols].dropna().values
-        y = df[target_variable].loc[df[feature_cols].index].values
+        valid_mask = df['buy_signal'].notna() & df[feature_cols].notna().all(axis=1)
+        df_valid = df[valid_mask].copy()
 
-        valid_idx = ~np.isnan(y)
-        X = X[valid_idx]
-        y = y[valid_idx]
+        X = df_valid[feature_cols].values
+        y = df_valid['buy_signal'].values
 
         print(f"Training data prepared: {X.shape[0]} samples, {X.shape[1]} features")
+        print(f"Class distribution - Buy (1): {(y == 1).sum()}, No-buy (0): {(y == 0).sum()}")
         return X, y
 
     def train(self, epochs: int = None) -> Dict:
@@ -91,7 +87,8 @@ class CryptoEntryModel:
         X_train, X_test, y_train, y_test = train_test_split(
             X, y,
             test_size=ML_CONFIG.get('test_size', 0.2),
-            random_state=ML_CONFIG.get('random_state', 42)
+            random_state=ML_CONFIG.get('random_state', 42),
+            stratify=y
         )
 
         self.X_train = self.scaler.fit_transform(X_train)
@@ -100,12 +97,26 @@ class CryptoEntryModel:
         self.y_test = y_test
 
         print(f"Training {self.model_type} model...")
-        model_config = MODEL_CONFIG.get(self.model_type, {})
+        model_config = MODEL_CONFIG.get(self.model_type, {}).copy()
+        model_config.pop('random_state', None)
 
         if self.model_type == 'xgboost':
-            self.model = XGBClassifier(**model_config)
+            self.model = XGBClassifier(
+                n_estimators=100,
+                max_depth=6,
+                learning_rate=0.1,
+                subsample=0.8,
+                colsample_bytree=0.8,
+                random_state=42,
+                eval_metric='logloss'
+            )
         elif self.model_type == 'random_forest':
-            self.model = RandomForestClassifier(**model_config)
+            self.model = RandomForestClassifier(
+                n_estimators=100,
+                max_depth=15,
+                min_samples_split=5,
+                random_state=42
+            )
         else:
             raise ValueError(f"Unknown model type: {self.model_type}")
 
@@ -145,16 +156,19 @@ class CryptoEntryModel:
         feature_names = self.feature_engineer.get_feature_names()
         feature_cols = [col for col in feature_names if col in recent_df.columns]
 
-        X_recent = recent_df[feature_cols].values
+        valid_mask = recent_df[feature_cols].notna().all(axis=1)
+        recent_df_valid = recent_df[valid_mask].copy()
+
+        X_recent = recent_df_valid[feature_cols].values
         X_scaled = self.scaler.transform(X_recent)
 
         predictions = self.model.predict(X_scaled)
-        probabilities = self.model.predict_proba(X_scaled)[:, 1] if hasattr(self.model, 'predict_proba') else predictions
+        probabilities = self.model.predict_proba(X_scaled)[:, 1] * 100 if hasattr(self.model, 'predict_proba') else predictions * 100
 
-        recent_df['ml_prediction'] = predictions
-        recent_df['ml_probability'] = probabilities * 100
+        recent_df_valid['ml_prediction'] = predictions
+        recent_df_valid['ml_probability'] = probabilities
 
-        quality_df = self.signal_evaluator.calculate_quality_score(recent_df)
+        quality_df = self.signal_evaluator.calculate_quality_score(recent_df_valid)
         quality_df['combined_score'] = (
             quality_df['quality_score'] * 0.4 +
             quality_df['ml_probability'] * 0.6
