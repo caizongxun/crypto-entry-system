@@ -371,6 +371,21 @@ function updateNotificationBadge() {
     badge.style.display = unreadCount > 0 ? 'inline-flex' : 'none';
 }
 
+function formatTimestamp(timestamp) {
+    if (!timestamp) return 'N/A';
+    try {
+        const date = new Date(timestamp);
+        const hours = String(date.getHours()).padStart(2, '0');
+        const minutes = String(date.getMinutes()).padStart(2, '0');
+        const seconds = String(date.getSeconds()).padStart(2, '0');
+        const month = String(date.getMonth() + 1).padStart(2, '0');
+        const day = String(date.getDate()).padStart(2, '0');
+        return `${month}/${day} ${hours}:${minutes}:${seconds}`;
+    } catch (error) {
+        return 'N/A';
+    }
+}
+
 function updateMLPredictions(data) {
     if (data.status === 'error') {
         console.error('ML predictions error:', data.message);
@@ -402,11 +417,14 @@ function updateMLPredictions(data) {
     container.innerHTML = mlPredictions.slice(-5).reverse().map(pred => `
         <div class="prediction-item" style="padding: 12px; border-bottom: 1px solid #3a4556;">
             <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
-                <span style="font-size: 13px; color: #00d4ff;">${pred.signal_type || 'N/A'}</span>
+                <div>
+                    <span style="font-size: 13px; color: #00d4ff;">${pred.signal_type || 'N/A'}</span>
+                    <span style="font-size: 11px; color: #8b949e; margin-left: 8px;">${formatTimestamp(pred.timestamp)}</span>
+                </div>
                 <span style="font-weight: 600; color: #00c853;">${pred.bounce_probability ? pred.bounce_probability.toFixed(1) : '--'}%</span>
             </div>
             <div style="font-size: 12px; color: #b0b8c8;">
-                $${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'}
+                Price: $${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'} | BB Position: ${pred.bb_position ? pred.bb_position.toFixed(3) : 'N/A'}
             </div>
         </div>
     `).join('');
@@ -414,7 +432,7 @@ function updateMLPredictions(data) {
     if (table) {
         table.innerHTML = mlPredictions.map(pred => `
             <tr>
-                <td>${pred.timestamp ? pred.timestamp.slice(-8) : 'N/A'}</td>
+                <td>${formatTimestamp(pred.timestamp)}</td>
                 <td><span style="color: ${pred.signal_type && pred.signal_type.includes('lower') ? '#00c853' : '#ff3860'};">${pred.signal_type || 'N/A'}</span></td>
                 <td>$${pred.price ? parseFloat(pred.price).toFixed(2) : 'N/A'}</td>
                 <td style="color: ${pred.bounce_probability > 60 ? '#00c853' : pred.bounce_probability > 40 ? '#ffc107' : '#ff3860'};">${pred.bounce_probability ? pred.bounce_probability.toFixed(1) : '--'}%</td>
@@ -529,8 +547,8 @@ function updateAccountInfo(data) {
             } else {
                 historyTable.innerHTML = tradeHistory.map(trade => `
                     <tr>
-                        <td>${trade.entry_time ? trade.entry_time.slice(-16) : 'N/A'}</td>
-                        <td>${trade.close_time ? trade.close_time.slice(-16) : 'N/A'}</td>
+                        <td>${formatTimestamp(trade.entry_time)}</td>
+                        <td>${formatTimestamp(trade.close_time)}</td>
                         <td>${trade.position_type || 'N/A'}</td>
                         <td>$${trade.entry_price ? parseFloat(trade.entry_price).toFixed(2) : 'N/A'}</td>
                         <td>$${trade.close_price ? parseFloat(trade.close_price).toFixed(2) : 'N/A'}</td>
