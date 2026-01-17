@@ -1,0 +1,78 @@
+//@version=5
+indicator("Signal Confirmation Filter v1.0", overlay=true, max_bars_back=500)
+
+stoch_k_period = input.int(14, title="Stochastic K Period")
+stoch_d_period = input.int(3, title="Stochastic D Period")
+stoch_smooth = input.int(3, title="Stochastic Smooth")
+
+stoch_overbought = input.int(80, title="Stochastic Overbought Level")
+stoch_oversold = input.int(20, title="Stochastic Oversold Level")
+
+atr_period = input.int(14, title="ATR Period")
+atr_multiplier = input.float(1.5, title="ATR Multiplier for Levels")
+
+cci_period = input.int(20, title="CCI Period")
+cci_threshold = input.float(100, title="CCI Threshold")
+
+use_stochastic = input.bool(true, title="Use Stochastic Filter")
+use_cci = input.bool(true, title="Use CCI Filter")
+use_atr_volatility = input.bool(true, title="Use ATR Volatility Filter")
+
+k, d = ta.stoch(close, high, low, stoch_k_period)
+k_smoothed = ta.sma(k, stoch_smooth)
+d_smoothed = ta.sma(d, stoch_smooth)
+
+atr = ta.atr(atr_period)
+atr_upper = high + (atr * atr_multiplier)
+atr_lower = low - (atr * atr_multiplier)
+
+cci = ta.cci(close, cci_period)
+
+stoch_buy_confirmed = k_smoothed > d_smoothed and k_smoothed < stoch_oversold
+stoch_sell_confirmed = k_smoothed < d_smoothed and k_smoothed > stoch_overbought
+
+cci_buy_confirmed = cci > 0 and cci < cci_threshold
+cci_sell_confirmed = cci < 0 and cci > -cci_threshold
+
+volatility_low = atr < ta.sma(atr, 20)
+volatility_medium = atr >= ta.sma(atr, 20) and atr <= ta.sma(atr, 20) * 1.5
+
+buy_confirmed = false
+sell_confirmed = false
+confirm_strength = 0
+
+if use_stochastic
+    if stoch_buy_confirmed
+        buy_confirmed := true
+        confirm_strength += 1
+    if stoch_sell_confirmed
+        sell_confirmed := true
+        confirm_strength += 1
+
+if use_cci
+    if cci_buy_confirmed
+        buy_confirmed := buy_confirmed or true
+        confirm_strength += 1
+    if cci_sell_confirmed
+        sell_confirmed := sell_confirmed or true
+        confirm_strength += 1
+
+if use_atr_volatility
+    if volatility_medium
+        confirm_strength += 0.5
+
+plot(k_smoothed, title="Stochastic K", color=color.blue, linewidth=2)
+plot(d_smoothed, title="Stochastic D", color=color.red, linewidth=2)
+hline(stoch_overbought, linestyle=hline.style_dashed, color=color.orange, title="Overbought")
+hline(stoch_oversold, linestyle=hline.style_dashed, color=color.orange, title="Oversold")
+
+plot(cci, title="CCI", color=color.purple, linewidth=2)
+hline(cci_threshold, linestyle=hline.style_dotted, color=color.gray)
+hline(-cci_threshold, linestyle=hline.style_dotted, color=color.gray)
+hline(0, linestyle=hline.style_dashed, color=color.black)
+
+plot(atr_upper, title="ATR Upper", color=color.green, linewidth=1, transp=50)
+plot(atr_lower, title="ATR Lower", color=color.red, linewidth=1, transp=50)
+
+plotshape(buy_confirmed, title="Buy Confirmed", style=shape.circle, location=location.bottom, color=color.green, size=size.tiny)
+plotshape(sell_confirmed, title="Sell Confirmed", style=shape.circle, location=location.top, color=color.red, size=size.tiny)
