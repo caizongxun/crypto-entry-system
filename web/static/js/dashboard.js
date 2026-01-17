@@ -3,10 +3,12 @@ let currentSymbol = 'BTCUSDT';
 let tvChart = null;
 let tvLiveChart = null;
 let mlPredictions = [];
+let onChainData = {};
 let currentTimeframe = '60';
 let notifications = [];
 let chartHeight = 600;
 let refreshInterval = 15000;
+let enableOnChainFilter = true;
 
 const timeframeMap = {
     '1': { minutes: 1, interval: '1m', tvInterval: '1' },
@@ -37,9 +39,11 @@ function loadSettings() {
             const settings = JSON.parse(savedSettings);
             currentTimeframe = settings.defaultTimeframe || '60';
             refreshInterval = (settings.refreshInterval || 15) * 1000;
+            enableOnChainFilter = settings.enableOnChainFilter !== false;
             
             document.getElementById('themeSelect').value = settings.theme || 'dark';
             document.getElementById('defaultTimeframe').value = currentTimeframe;
+            document.getElementById('enableOnChainFilter').checked = enableOnChainFilter;
             document.getElementById('enableNotifications').checked = settings.enableNotifications !== false;
             document.getElementById('refreshInterval').value = refreshInterval / 1000;
             
@@ -252,6 +256,7 @@ function saveSettings() {
     const settings = {
         theme: document.getElementById('themeSelect').value,
         defaultTimeframe: document.getElementById('defaultTimeframe').value,
+        enableOnChainFilter: document.getElementById('enableOnChainFilter').checked,
         enableNotifications: document.getElementById('enableNotifications').checked,
         refreshInterval: parseInt(document.getElementById('refreshInterval').value),
         apiKey: document.getElementById('apiKey').value,
@@ -262,6 +267,7 @@ function saveSettings() {
     
     currentTimeframe = settings.defaultTimeframe;
     refreshInterval = settings.refreshInterval * 1000;
+    enableOnChainFilter = settings.enableOnChainFilter;
 
     if (settings.theme === 'light') {
         document.documentElement.style.colorScheme = 'light';
@@ -311,10 +317,11 @@ async function loadDashboardData() {
         const promises = [
             fetch(`${API_BASE}/ml-prediction?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/sentiment`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
-            fetch(`${API_BASE}/trading/account-summary`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
+            fetch(`${API_BASE}/trading/account-summary`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
+            fetch(`${API_BASE}/on-chain?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
         ];
         
-        const [predictions, sentiment, accountData] = await Promise.all(promises);
+        const [predictions, sentiment, accountData, onChain] = await Promise.all(promises);
         
         if (predictions.status === 'success') {
             updateMLPredictions(predictions);
@@ -334,8 +341,124 @@ async function loadDashboardData() {
         } else {
             console.error('Account data error:', accountData.message);
         }
+
+        if (onChain.status === 'success') {
+            onChainData = onChain;
+            updateOnChainData(onChain);
+            checkWhaleAlerts(onChain);
+        } else {
+            console.error('On-chain data error:', onChain.message);
+        }
     } catch (error) {
         console.error('Error loading dashboard data:', error);
+    }
+}
+
+function getOnChainRiskLevel() {
+    if (!onChainData.whale_summary) return 'Low';
+    
+    const summary = onChainData.whale_summary;
+    const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
+    
+    if (netFlow < -1000) return 'High';
+    if (netFlow < -100) return 'Medium';
+    return 'Low';
+}
+
+function updateOnChainData(data) {
+    try {
+        const summary = data.whale_summary || {};
+        
+        const onChainRisk = document.getElementById('onChainRisk');
+        const whaleNetFlow = document.getElementById('whaleNetFlow');
+        const networkActivity = document.getElementById('networkActivity');
+        const exchangeReserve = document.getElementById('exchangeReserve');
+        const whaleHoldings = document.getElementById('whaleHoldings');
+        const netFlow24h = document.getElementById('netFlow24h');
+        const whaleTransactionsList = document.getElementById('whaleTransactionsList');
+        const exchangeFlowList = document.getElementById('exchangeFlowList');
+        
+        if (onChainRisk) {
+            onChainRisk.textContent = getOnChainRiskLevel();
+        }
+        
+        if (whaleNetFlow && summary.inflow !== undefined) {
+            const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
+            whaleNetFlow.textContent = `$${netFlow.toFixed(0)}`;
+            whaleNetFlow.style.color = netFlow >= 0 ? '#00c853' : '#ff3860';
+        }
+        
+        if (networkActivity) networkActivity.textContent = summary.active_addresses || '--';
+        if (exchangeReserve) exchangeReserve.textContent = `${summary.exchange_holdings || '--'} BTC`;
+        if (whaleHoldings) whaleHoldings.textContent = `${summary.whale_holdings || '--'}%`;
+        if (netFlow24h && summary.inflow !== undefined) {
+            const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
+            netFlow24h.textContent = `${netFlow >= 0 ? '+' : ''}$${netFlow.toFixed(0)}`;
+        }
+        
+        const transactions = data.large_transactions || [];
+        if (whaleTransactionsList) {
+            if (transactions.length === 0) {
+                whaleTransactionsList.innerHTML = '<p class="empty-state">No large transactions</p>';
+            } else {
+                whaleTransactionsList.innerHTML = transactions.slice(0, 10).map(tx => `
+                    <div class="whale-activity-item">
+                        <div class="whale-flow">
+                            <span style="color: #f0f6fc; font-weight: 600;">${tx.amount} BTC</span>
+                            <span class="whale-amount ${tx.type === 'inflow' ? 'inflow' : 'outflow'}">${tx.type === 'inflow' ? 'IN' : 'OUT'}</span>
+                        </div>
+                        <div class="whale-info">${tx.from_address} ${tx.type === 'inflow' ? '->' : '<-'} ${tx.to_address}</div>
+                        <div class="whale-info">Value: $${tx.value_usd || 'N/A'}</div>
+                    </div>
+                `).join('');
+            }
+        }
+        
+        const exchangeFlow = data.exchange_flows || [];
+        if (exchangeFlowList) {
+            if (exchangeFlow.length === 0) {
+                exchangeFlowList.innerHTML = '<p class="empty-state">No exchange flow data</p>';
+            } else {
+                exchangeFlowList.innerHTML = exchangeFlow.slice(0, 10).map(flow => `
+                    <div class="whale-activity-item">
+                        <div class="whale-flow">
+                            <span style="color: #f0f6fc;">${flow.exchange_name}</span>
+                            <span class="whale-amount ${flow.flow_type === 'inflow' ? 'inflow' : 'outflow'}">${flow.amount} ${flow.flow_type === 'inflow' ? 'IN' : 'OUT'}</span>
+                        </div>
+                        <div class="whale-info">Total Reserve: ${flow.total_reserve} BTC</div>
+                    </div>
+                `).join('');
+            }
+        }
+    } catch (error) {
+        console.error('Error updating on-chain data:', error);
+    }
+}
+
+function checkWhaleAlerts(data) {
+    const summary = data.whale_summary || {};
+    const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
+    const whaleAlertsList = document.getElementById('whaleAlertsList');
+    
+    if (!whaleAlertsList) return;
+    
+    let alerts = [];
+    if (netFlow < -1000) {
+        alerts.push('Major whale outflow detected - High selling pressure');
+        addNotification('Whale Alert', 'Major outflow: $' + Math.abs(netFlow).toFixed(0) + ' - Caution advised');
+    } else if (netFlow > 1000) {
+        alerts.push('Large whale inflow detected - Buying accumulation');
+        addNotification('Whale Alert', 'Major inflow: $' + netFlow.toFixed(0) + ' - Bullish signal');
+    }
+    
+    if (alerts.length === 0) {
+        whaleAlertsList.innerHTML = '<p class="empty-state">No whale activity detected</p>';
+    } else {
+        whaleAlertsList.innerHTML = alerts.map(alert => `
+            <div class="whale-activity-item" style="border-left: 3px solid #ff3860;">
+                <p style="margin: 0; color: #f0f6fc;">${alert}</p>
+            </div>
+        `).join('');
     }
 }
 
@@ -583,13 +706,24 @@ function updateAccountInfo(data) {
 async function openPosition(e) {
     e.preventDefault();
     
+    const riskLevel = getOnChainRiskLevel();
+    const shouldBlock = enableOnChainFilter && riskLevel === 'High';
+    
+    if (shouldBlock) {
+        addNotification('Trade Blocked', 'High on-chain risk detected. Whale outflow warning active.');
+        alert('Trade blocked: High whale outflow detected. Disable on-chain filter in settings to override.');
+        return;
+    }
+    
     const formData = {
         symbol: currentSymbol,
         order_type: document.getElementById('orderType')?.value || 'BUY',
         quantity: parseFloat(document.getElementById('quantity')?.value || 0.1),
         entry_price: parseFloat(document.getElementById('entryPrice')?.value || 0),
         stop_loss: parseFloat(document.getElementById('stopLoss')?.value || 0),
-        take_profit: parseFloat(document.getElementById('takeProfit')?.value || 0)
+        take_profit: parseFloat(document.getElementById('takeProfit')?.value || 0),
+        ml_confidence: mlPredictions.length > 0 ? mlPredictions[0].bounce_probability : 0,
+        on_chain_risk: riskLevel
     };
 
     try {
@@ -601,7 +735,7 @@ async function openPosition(e) {
         const result = await response.json();
         
         if (result.status === 'success') {
-            addNotification('Position Opened', 'Position opened successfully: ' + result.message);
+            addNotification('Position Opened', 'Position opened successfully with on-chain confirmation: ' + result.message);
             document.getElementById('openPositionForm').reset();
             loadDashboardData();
         } else {
@@ -643,6 +777,21 @@ function quickTrade(signalType) {
         const orderType = signalType && signalType.includes('lower') ? 'BUY' : 'SHORT';
         orderTypeSelect.value = orderType;
     }
+    
+    const latestSignal = mlPredictions.length > 0 ? mlPredictions[0] : null;
+    if (latestSignal) {
+        document.getElementById('signalConfidence').textContent = latestSignal.bounce_probability.toFixed(1) + '%';
+    }
+    
+    const riskLevel = getOnChainRiskLevel();
+    document.getElementById('riskLevel').textContent = riskLevel;
+    document.getElementById('riskLevel').style.color = 
+        riskLevel === 'High' ? '#ff3860' : riskLevel === 'Medium' ? '#ffc107' : '#00c853';
+    
+    const summary = onChainData.whale_summary || {};
+    const netFlow = (summary.inflow || 0) - (summary.outflow || 0);
+    document.getElementById('whaleActivityStatus').textContent = Math.abs(netFlow) > 500 ? 'Active' : 'Normal';
+    
     switchSection('trading');
     document.getElementById('entryPrice')?.focus();
 }
