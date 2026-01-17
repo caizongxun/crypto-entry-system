@@ -1,0 +1,360 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Crypto Trading System - Dashboard</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/lightweight-charts@4.0.0"></script>
+    <link href="https://cdnjs.cloudflare.com/ajax/libs/font-awesome/6.4.0/css/all.min.css" rel="stylesheet">
+    <link rel="stylesheet" href="{{ url_for('static', filename='css/dashboard.css') }}">
+</head>
+<body>
+    <div class="app-container">
+        <aside class="sidebar">
+            <div class="sidebar-header">
+                <div class="logo">
+                    <i class="fas fa-chart-line"></i>
+                    <span>TradeBot</span>
+                </div>
+            </div>
+
+            <nav class="sidebar-nav">
+                <a href="#dashboard" class="nav-item active" data-section="dashboard">
+                    <i class="fas fa-home"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#market" class="nav-item" data-section="market">
+                    <i class="fas fa-chart-area"></i>
+                    <span>Market Data</span>
+                </a>
+                <a href="#ml-signals" class="nav-item" data-section="ml-signals">
+                    <i class="fas fa-brain"></i>
+                    <span>ML Signals</span>
+                </a>
+                <a href="#sentiment" class="nav-item" data-section="sentiment">
+                    <i class="fas fa-smile"></i>
+                    <span>Sentiment</span>
+                </a>
+                <a href="#on-chain" class="nav-item" data-section="on-chain">
+                    <i class="fas fa-link"></i>
+                    <span>On-Chain</span>
+                </a>
+                <a href="#trading" class="nav-item" data-section="trading">
+                    <i class="fas fa-exchange-alt"></i>
+                    <span>Trading</span>
+                </a>
+                <a href="#portfolio" class="nav-item" data-section="portfolio">
+                    <i class="fas fa-wallet"></i>
+                    <span>Portfolio</span>
+                </a>
+            </nav>
+
+            <div class="sidebar-footer">
+                <div class="user-info">
+                    <img src="https://ui-avatars.com/api/?name=Trader&background=1e3c72&color=00d4ff" alt="User">
+                    <div>
+                        <p>Trader</p>
+                        <small>Paper Trading</small>
+                    </div>
+                </div>
+            </div>
+        </aside>
+
+        <main class="main-content">
+            <header class="top-bar">
+                <div class="search-box">
+                    <i class="fas fa-search"></i>
+                    <input type="text" id="symbolInput" placeholder="Search symbol..." value="BTCUSDT">
+                </div>
+                <div class="header-right">
+                    <div class="notification-bell">
+                        <i class="fas fa-bell"></i>
+                        <span class="badge">3</span>
+                    </div>
+                    <div class="settings">
+                        <i class="fas fa-cog"></i>
+                    </div>
+                </div>
+            </header>
+
+            <div class="content-wrapper">
+                <section id="dashboard-section" class="section active">
+                    <div class="section-header">
+                        <h1>Trading Dashboard</h1>
+                        <div class="header-actions">
+                            <button class="btn btn-primary" id="refreshBtn">Refresh</button>
+                        </div>
+                    </div>
+
+                    <div class="grid-4">
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <span>Account Balance</span>
+                                <i class="fas fa-wallet"></i>
+                            </div>
+                            <div class="card-body">
+                                <h3 id="accountBalance">$10,000.00</h3>
+                                <p class="stat-change positive" id="balanceChange">+0.00%</p>
+                            </div>
+                        </div>
+
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <span>Active Positions</span>
+                                <i class="fas fa-chart-line"></i>
+                            </div>
+                            <div class="card-body">
+                                <h3 id="activePositions">0</h3>
+                                <p class="stat-sub">Unrealized P&L: <span id="unrealizedPnl">$0.00</span></p>
+                            </div>
+                        </div>
+
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <span>Total Trades</span>
+                                <i class="fas fa-exchange-alt"></i>
+                            </div>
+                            <div class="card-body">
+                                <h3 id="totalTrades">0</h3>
+                                <p class="stat-sub">Win Rate: <span id="winRate">0%</span></p>
+                            </div>
+                        </div>
+
+                        <div class="card stat-card">
+                            <div class="card-header">
+                                <span>Risk/Reward</span>
+                                <i class="fas fa-sliders-h"></i>
+                            </div>
+                            <div class="card-body">
+                                <h3 id="riskReward">1:1</h3>
+                                <p class="stat-sub">Sharpe Ratio: 0.00</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="grid-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Price Chart</h2>
+                                <div class="timeframe-selector">
+                                    <button class="tf-btn active" data-tf="1h">1H</button>
+                                    <button class="tf-btn" data-tf="4h">4H</button>
+                                    <button class="tf-btn" data-tf="1d">1D</button>
+                                </div>
+                            </div>
+                            <div class="card-body">
+                                <div id="priceChart" style="height: 400px;"></div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>ML Predictions (5 Latest)</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="mlPredictionsList" style="max-height: 400px; overflow-y: auto;">
+                                    <div class="loading-spinner"></div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="market-section" class="section">
+                    <div class="section-header">
+                        <h1>Market Data</h1>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Live Chart</h2>
+                        </div>
+                        <div class="card-body">
+                            <div id="liveChart" style="height: 600px;"></div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="ml-signals-section" class="section">
+                    <div class="section-header">
+                        <h1>ML Trading Signals</h1>
+                    </div>
+                    <div class="card">
+                        <div class="card-body">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Time</th>
+                                        <th>Signal Type</th>
+                                        <th>Price</th>
+                                        <th>Bounce Prob</th>
+                                        <th>BB Position</th>
+                                        <th>Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="mlSignalsTable">
+                                    <tr><td colspan="6" class="loading">Loading signals...</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="sentiment-section" class="section">
+                    <div class="section-header">
+                        <h1>Market Sentiment Analysis</h1>
+                    </div>
+                    <div class="grid-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Fear & Greed Index</h2>
+                            </div>
+                            <div class="card-body">
+                                <div class="sentiment-gauge">
+                                    <svg width="200" height="200" viewBox="0 0 200 200">
+                                        <circle cx="100" cy="100" r="90" fill="none" stroke="#2a2a3e" stroke-width="2"/>
+                                        <circle id="fgiIndicator" cx="100" cy="100" r="90" fill="none" stroke="#00d4ff" stroke-width="3" stroke-dasharray="282" stroke-dashoffset="282" transform="rotate(-90 100 100)"/>
+                                    </svg>
+                                    <div class="gauge-text">
+                                        <h3 id="fgiValue">--</h3>
+                                        <p id="fgiLabel">Loading...</p>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Market Metrics</h2>
+                            </div>
+                            <div class="card-body">
+                                <div class="metric-item">
+                                    <label>Funding Rate</label>
+                                    <span id="fundingRate" class="metric-value">--</span>
+                                </div>
+                                <div class="metric-item">
+                                    <label>Current Price</label>
+                                    <span id="currentPrice" class="metric-value">--</span>
+                                </div>
+                                <div class="metric-item">
+                                    <label>24h Change</label>
+                                    <span id="priceChange24h" class="metric-value">--</span>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="on-chain-section" class="section">
+                    <div class="section-header">
+                        <h1>On-Chain Analysis</h1>
+                    </div>
+                    <div class="grid-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Whale Activity</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="whaleActivityChart"></div>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Exchange Flows</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="exchangeFlowsChart"></div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="trading-section" class="section">
+                    <div class="section-header">
+                        <h1>Trading Panel</h1>
+                    </div>
+                    <div class="grid-2">
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Open Position</h2>
+                            </div>
+                            <div class="card-body">
+                                <form id="openPositionForm">
+                                    <div class="form-group">
+                                        <label>Order Type</label>
+                                        <select id="orderType">
+                                            <option value="BUY">Buy</option>
+                                            <option value="SHORT">Short</option>
+                                        </select>
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Quantity</label>
+                                        <input type="number" id="quantity" step="0.01" value="0.1" min="0.01">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Entry Price</label>
+                                        <input type="number" id="entryPrice" step="0.01" value="0" min="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Stop Loss</label>
+                                        <input type="number" id="stopLoss" step="0.01" value="0" min="0">
+                                    </div>
+                                    <div class="form-group">
+                                        <label>Take Profit</label>
+                                        <input type="number" id="takeProfit" step="0.01" value="0" min="0">
+                                    </div>
+                                    <button type="submit" class="btn btn-primary" style="width: 100%;">Open Position</button>
+                                </form>
+                            </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Active Positions</h2>
+                            </div>
+                            <div class="card-body">
+                                <div id="activePositionsList">
+                                    <p class="empty-state">No active positions</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="portfolio-section" class="section">
+                    <div class="section-header">
+                        <h1>Portfolio Performance</h1>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h2>Trade History</h2>
+                        </div>
+                        <div class="card-body">
+                            <table class="data-table">
+                                <thead>
+                                    <tr>
+                                        <th>Entry Time</th>
+                                        <th>Exit Time</th>
+                                        <th>Type</th>
+                                        <th>Entry</th>
+                                        <th>Exit</th>
+                                        <th>Quantity</th>
+                                        <th>P&L</th>
+                                        <th>P&L %</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="tradeHistoryTable">
+                                    <tr><td colspan="8" class="empty-state">No trades yet</td></tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </section>
+            </div>
+        </main>
+    </div>
+
+    <script src="{{ url_for('static', filename='js/dashboard.js') }}"></script>
+</body>
+</html>
