@@ -117,6 +117,58 @@ class FeatureEngineer:
 
         return adx
 
+    def calculate_volume_momentum(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Volume Momentum - rate of change of OBV."""
+        obv = self.calculate_obv(df)
+        volume_momentum = ((obv - obv.shift(period)) / obv.shift(period).abs() + 1) * 100
+        return volume_momentum.fillna(0)
+
+    def calculate_price_position_in_range(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
+        """Calculate where price sits in its range (0-100)."""
+        highest = df['high'].rolling(window=period).max()
+        lowest = df['low'].rolling(window=period).min()
+        price_range = highest - lowest
+        position = ((df['close'] - lowest) / price_range) * 100
+        return position.fillna(50)
+
+    def calculate_volume_relative_strength(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate relative strength of trading volume."""
+        avg_volume = df['volume'].rolling(window=period).mean()
+        volume_ratio = df['volume'] / avg_volume
+        return volume_ratio.fillna(1.0)
+
+    def calculate_close_location(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
+        """Calculate close location relative to high-low range (0-1)."""
+        high_low_diff = df['high'] - df['low']
+        close_high_diff = df['high'] - df['close']
+        close_location = (high_low_diff - close_high_diff) / high_low_diff
+        return close_location.fillna(0.5)
+
+    def calculate_momentum_divergence(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate divergence between price momentum and volume momentum."""
+        price_momentum = self.calculate_momentum(df, period)
+        volume_momentum = self.calculate_volume_momentum(df, period)
+        divergence = (price_momentum - volume_momentum) / 100
+        return divergence.fillna(0)
+
+    def calculate_volatility_acceleration(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate rate of change of volatility."""
+        volatility = self.calculate_volatility(df, period)
+        vol_acceleration = volatility.diff(period) / volatility.shift(period)
+        return vol_acceleration.fillna(0)
+
+    def calculate_multi_timeframe_strength(self, df: pd.DataFrame) -> pd.Series:
+        """Combine multiple timeframe signals (simple multi-TF indicator)."""
+        fast_ema = self.calculate_ema(df, 5)
+        medium_ema = self.calculate_ema(df, 13)
+        slow_ema = self.calculate_ema(df, 50)
+        
+        fast_signal = (df['close'] > fast_ema).astype(int)
+        medium_signal = (df['close'] > medium_ema).astype(int)
+        slow_signal = (df['close'] > slow_ema).astype(int)
+        
+        return (fast_signal + medium_signal + slow_signal) / 3
+
     def engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """Calculate all technical indicators and create feature matrix."""
         df_features = df.copy()
@@ -162,6 +214,14 @@ class FeatureEngineer:
         df_features['volatility'] = self.calculate_volatility(df_features)
         df_features['obv'] = self.calculate_obv(df_features)
         df_features['trend_strength'] = self.calculate_trend_strength(df_features)
+        
+        df_features['volume_momentum'] = self.calculate_volume_momentum(df_features)
+        df_features['price_position'] = self.calculate_price_position_in_range(df_features)
+        df_features['volume_relative_strength'] = self.calculate_volume_relative_strength(df_features)
+        df_features['close_location'] = self.calculate_close_location(df_features)
+        df_features['momentum_divergence'] = self.calculate_momentum_divergence(df_features)
+        df_features['volatility_acceleration'] = self.calculate_volatility_acceleration(df_features)
+        df_features['multi_timeframe_strength'] = self.calculate_multi_timeframe_strength(df_features)
 
         df_features = df_features.bfill().ffill()
         print(f"Features engineered: {len(df_features)} rows, {len(df_features.columns)} columns")
@@ -173,5 +233,8 @@ class FeatureEngineer:
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
             'rsi', 'macd', 'macd_signal', 'macd_histogram',
             'bb_upper', 'bb_middle', 'bb_lower', 'atr',
-            'momentum', 'volatility', 'obv', 'trend_strength'
+            'momentum', 'volatility', 'obv', 'trend_strength',
+            'volume_momentum', 'price_position', 'volume_relative_strength',
+            'close_location', 'momentum_divergence', 'volatility_acceleration',
+            'multi_timeframe_strength'
         ]
