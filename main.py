@@ -1,94 +1,120 @@
 import sys
+import argparse
 from pathlib import Path
-from models import CryptoEntryModel
+from datetime import datetime
+
+sys.path.insert(0, str(Path(__file__).parent))
+
+from models.ml_model import CryptoEntryModel
+
+
+def train_mode(symbol, timeframe, model_type):
+    print("="*60)
+    print(f"Training {timeframe.upper()} BB Model for {symbol}")
+    print("="*60)
+    
+    try:
+        print(f"\nStep 1: Loading data...")
+        model = CryptoEntryModel(symbol=symbol, timeframe=timeframe, model_type=model_type)
+        model.load_data()
+        
+        print(f"\nStep 2: Engineering features...")
+        model.engineer_features()
+        
+        print(f"\nStep 3: Training model...")
+        results = model.train()
+        
+        print(f"\n" + "="*60)
+        print(f"Training Results:")
+        print(f"="*60)
+        print(f"Symbol: {results['symbol']}")
+        print(f"Timeframe: {results['timeframe']}")
+        print(f"Model Type: {results['model_type']}")
+        print(f"Train Accuracy: {results['train_accuracy']:.4f}")
+        print(f"Test Accuracy: {results['test_accuracy']:.4f}")
+        print(f"Train Precision: {results['train_precision']:.4f}")
+        print(f"Test Precision: {results['test_precision']:.4f}")
+        
+        if 'bounce_rate' in results:
+            print(f"Bounce Rate: {results['bounce_rate']:.4f}")
+        
+        print(f"="*60)
+        print(f"\nTraining completed successfully!")
+        print(f"Model saved to: models/cache/{symbol}_{timeframe}_{model_type}.joblib")
+        return True
+        
+    except Exception as e:
+        print(f"\nError during training: {str(e)}")
+        import traceback
+        traceback.print_exc()
+        return False
+
+
+def server_mode():
+    from app import app
+    print("Starting Crypto Entry System server...")
+    print("Access at http://localhost:5000")
+    app.run(debug=True, host='0.0.0.0', port=5000)
 
 
 def main():
-    """Main execution function for BB bounce prediction model."""
-    print("="*70)
-    print("Cryptocurrency Entry System - BB Channel Bounce Prediction")
-    print("="*70)
-
-    symbol = 'BTCUSDT'
-    timeframe = '1h'
-    model_type = 'xgboost'
-
-    print(f"\nTarget: {symbol} at {timeframe} timeframe")
-    print(f"Model Type: {model_type}")
-    print("-"*70)
-
-    model = CryptoEntryModel(symbol=symbol, timeframe=timeframe, model_type=model_type)
-
-    print("\n[Step 1] Loading Data...")
-    raw_data = model.load_data()
-    print(f"Loaded {len(raw_data)} candles")
-
-    print("\n[Step 2] Engineering Features...")
-    feature_data = model.engineer_features()
-    print(f"Engineered features: {len(feature_data)} rows, {len(feature_data.columns)} columns")
-
-    print("\n[Step 3] Training ML Model for BB Bounce Prediction...")
-    training_results = model.train()
-    if training_results:
-        print(f"Train Accuracy: {training_results.get('train_accuracy', 0):.4f}")
-        print(f"Test Accuracy: {training_results.get('test_accuracy', 0):.4f}")
-        print(f"Train Precision: {training_results.get('train_precision', 0):.4f}")
-        print(f"Test Precision: {training_results.get('test_precision', 0):.4f}")
-
-    print("\n[Step 4] Evaluating Recent BB Touches/Breaks for Bounce Probability...")
-    eval_results = model.evaluate_entries(lookback=50)
-
-    if len(eval_results) > 0:
-        print(f"\nAnalyzed {len(eval_results)} candles")
-
-        bb_events = eval_results[
-            (eval_results['is_bb_touch'] | eval_results['is_bb_break']) &
-            (eval_results['signal_type'] != 'none')
-        ]
-
-        if len(bb_events) > 0:
-            print(f"\nBB Touch/Break Events Found: {len(bb_events)}")
-            print("-" * 70)
-            print(f"{'Timestamp':<20} {'Signal':<15} {'Price':<12} {'Bounce Prob':<15} {'Position':<10}")
-            print("-" * 70)
-
-            for idx, row in bb_events.tail(10).iterrows():
-                timestamp = str(row['open_time'])[:16]
-                signal_type = row['signal_type']
-                price = f"${row['close']:.2f}"
-                bounce_prob = f"{row['bounce_probability']:.1f}%"
-                position = f"{row['bb_position']:.2f}"
-
-                print(f"{timestamp:<20} {signal_type:<15} {price:<12} {bounce_prob:<15} {position:<10}")
-
-            print("-" * 70)
-            high_prob_events = bb_events[bb_events['bounce_probability'] >= 60]
-            if len(high_prob_events) > 0:
-                print(f"\nHigh Probability Events (>= 60%): {len(high_prob_events)}")
-                print("Recommended for entry consideration.")
-        else:
-            print("\nNo BB touch/break events in recent data.")
-
-        latest_signal = eval_results.iloc[-1]
-        print(f"\n" + "="*70)
-        print(f"Latest Candle Analysis:")
-        print(f"  Timestamp: {latest_signal['open_time']}")
-        print(f"  Price: ${latest_signal['close']:.2f}")
-        print(f"  BB Position: {latest_signal['bb_position']:.3f}")
-        print(f"  BB Width: ${latest_signal['bb_width']:.2f}")
-        print(f"  Bounce Prediction: {'Effective' if latest_signal['bounce_prediction'] == 1 else 'Ineffective'}")
-        print(f"  Bounce Probability: {latest_signal['bounce_probability']:.1f}%")
-        if 'rsi' in latest_signal.index:
-            print(f"  RSI: {latest_signal['rsi']:.2f}")
-        if 'macd_histogram' in latest_signal.index:
-            print(f"  MACD Histogram: {latest_signal['macd_histogram']:.4f}")
+    parser = argparse.ArgumentParser(
+        description='Crypto Entry System - ML-based Trading Signal Analysis',
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="""
+Examples:
+  python main.py                              Start web server
+  python main.py --train                      Train model in interactive mode
+  python main.py --symbol BTCUSDT --timeframe 15m             Train with parameters
+  python main.py --symbol ETHUSDT --timeframe 1h --model-type lightgbm
+  python main.py --symbol LTCUSDT --timeframe 4h --model-type random_forest
+        """
+    )
+    
+    parser.add_argument(
+        '--train',
+        action='store_true',
+        help='Enter training mode'
+    )
+    
+    parser.add_argument(
+        '--symbol',
+        type=str,
+        default='BTCUSDT',
+        help='Trading pair symbol (default: BTCUSDT)'
+    )
+    
+    parser.add_argument(
+        '--timeframe',
+        type=str,
+        default='1h',
+        choices=['15m', '1h', '4h', '1d'],
+        help='Timeframe for model training (default: 1h)'
+    )
+    
+    parser.add_argument(
+        '--model-type',
+        type=str,
+        default='xgboost',
+        choices=['xgboost', 'lightgbm', 'random_forest'],
+        help='Model algorithm type (default: xgboost)'
+    )
+    
+    args = parser.parse_args()
+    
+    if args.train or args.symbol != 'BTCUSDT' or args.timeframe != '1h' or args.model_type != 'xgboost':
+        symbol = args.symbol.upper()
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        success = train_mode(
+            symbol=symbol,
+            timeframe=args.timeframe,
+            model_type=args.model_type
+        )
+        sys.exit(0 if success else 1)
     else:
-        print("\nNo valid evaluation data available.")
-
-    print("\n" + "="*70)
-    print("System Status: Model training and evaluation completed")
-    print("Save the model with model.save_model() after training")
-    print("="*70)
+        server_mode()
 
 
 if __name__ == '__main__':
