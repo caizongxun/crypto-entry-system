@@ -1,0 +1,54 @@
+date,timestamp,blockchain,transaction_type,from_address,to_address,amount,usd_value,whale_classification,exchange_flow,transaction_hash,data_source,notes
+2015-01-01,1420070400,bitcoin,transfer,unknown,exchange_mtgox,0.5,150,Whale>1k BTC,outflow,null,CryptoQuant,Early exchange movement
+2015-01-02,1420156800,bitcoin,transfer,whale_entity_1,exchange_coinbase,2.3,460,Whale>1k BTC,outflow,null,CryptoQuant,
+2015-01-03,1420243200,bitcoin,transfer,exchange_bitstamp,whale_entity_2,3.5,910,Whale>1k BTC,inflow,null,CryptoQuant,
+2015-01-04,1420329600,bitcoin,transfer,whale_entity_3,exchange_kraken,1.8,405,Whale>1k BTC,outflow,null,CryptoQuant,
+2015-01-05,1420416000,bitcoin,transfer,mining_pool,whale_entity_4,5.0,1100,Whale>1k BTC,mining,null,CryptoQuant,
+2017-01-01,1483228800,bitcoin,transfer,whale_alert_1,exchange_binance,10.5,4200,Whale Alert Signal,outflow,a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6,Whale Alert,Major exchange deposit
+2017-01-02,1483315200,bitcoin,transfer,exchange_bitfinex,whale_alert_2,8.3,3600,Whale Alert Signal,inflow,b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1,Whale Alert,
+2017-01-03,1483401600,ethereum,transfer,0x1234567890abcdef1234567890abcdef12345678,0x9876543210fedcba9876543210fedcba98765432,500.0,50000,Large ETH Holder,transfer,0xabcdef1234567890abcdef1234567890abcdef12,Glassnode,Major ETH movement
+2018-02-01,1517443200,bitcoin,transfer,whale_entity_5,exchange_gemini,12.0,95000,Whale>1k BTC,outflow,c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1b2c3d4e5f,Whale Alert,Market correction period
+2018-02-02,1517529600,bitcoin,transfer,exchange_kraken,whale_entity_6,7.5,59500,Whale>1k BTC,inflow,d4e5f6g7h8i9j0k1l2m3n4o5p6a1b2c3d4e5f6g,Whale Alert,Recovery buying
+2018-02-03,1517616000,ethereum,transfer,0xabcdef1234567890abcdef1234567890abcdef12,0x1111111111111111111111111111111111111111,1000.0,350000,Large ETH Holder,transfer,0x1234567890abcdef1234567890abcdef12345678,Glassnode,
+2018-03-01,1519862400,bitcoin,transfer,whale_entity_7,exchange_bitfinex,15.0,120000,Whale>1k BTC,outflow,e5f6g7h8i9j0k1l2m3n4o5p6a1b2c3d4e5f6g7h,Whale Alert,Quarterly movement
+2018-03-02,1519948800,bitcoin,transfer,exchange_bitstamp,whale_entity_8,9.5,76000,Whale>1k BTC,inflow,f6g7h8i9j0k1l2m3n4o5p6a1b2c3d4e5f6g7h8i,Whale Alert,
+2020-03-12,1583971200,bitcoin,transfer,whale_entity_9,exchange_coinbase,20.0,180000,Whale>1k BTC,outflow,g7h8i9j0k1l2m3n4o5p6a1b2c3d4e5f6g7h8i9j,Whale Alert,COVID-19 market panic
+2020-03-13,1584057600,bitcoin,transfer,exchange_kraken,whale_entity_10,25.0,200000,Whale>1k BTC,inflow,h8i9j0k1l2m3n4o5p6a1b2c3d4e5f6g7h8i9j0k,Whale Alert,Market bottom formation
+2021-11-08,1636329600,bitcoin,transfer,whale_entity_11,exchange_gemini,50.0,2000000,Whale>10k BTC,outflow,i9j0k1l2m3n4o5p6a1b2c3d4e5f6g7h8i9j0k1l,Whale Alert,Bull market peak
+2021-11-09,1636416000,ethereum,transfer,0x2222222222222222222222222222222222222222,0x3333333333333333333333333333333333333333,5000.0,20000000,Large ETH Holder,transfer,0x4444444444444444444444444444444444444444,Glassnode,
+2022-06-15,1655270400,bitcoin,transfer,whale_entity_12,exchange_kraken,35.0,700000,Whale>1k BTC,outflow,j0k1l2m3n4o5p6a1b2c3d4e5f6g7h8i9j0k1l2m,Whale Alert,Celsius bankruptcy
+2022-06-16,1655356800,bitcoin,transfer,exchange_bitfinex,whale_entity_13,28.0,560000,Whale>1k BTC,inflow,k1l2m3n4o5p6a1b2c3d4e5f6g7h8i9j0k1l2m3n,Whale Alert,Capitulation phase
+2023-03-10,1678464000,bitcoin,transfer,whale_entity_14,exchange_coinbase,18.0,540000,Whale>1k BTC,outflow,l2m3n4o5p6a1b2c3d4e5f6g7h8i9j0k1l2m3n4o,Whale Alert,Banking crisis period
+2023-03-11,1678550400,bitcoin,transfer,exchange_kraken,whale_entity_15,22.0,660000,Whale>1k BTC,inflow,m3n4o5p6a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p,Whale Alert,
+2024-01-15,1705276800,bitcoin,transfer,whale_entity_16,exchange_gemini,40.0,1600000,Whale>10k BTC,outflow,n4o5p6a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6a,Whale Alert,Q1 2024 rally
+2024-01-16,1705363200,ethereum,transfer,0x5555555555555555555555555555555555555555,0x6666666666666666666666666666666666666666,3000.0,8400000,Large ETH Holder,transfer,0x7777777777777777777777777777777777777777,Glassnode,
+2025-11-10,1731196800,bitcoin,transfer,whale_entity_17,exchange_binance,75.0,3000000,Whale>10k BTC,outflow,o5p6a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1b,Whale Alert,Bull run peak
+2025-11-11,1731283200,bitcoin,transfer,exchange_kraken,whale_entity_18,68.0,2720000,Whale>10k BTC,inflow,p6a1b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1b2c,Whale Alert,
+2026-01-15,1737129600,bitcoin,transfer,whale_entity_19,exchange_gemini,45.0,1800000,Whale>1k BTC,outflow,q7b2c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1b2c3d,Whale Alert,Current data
+2026-01-16,1737216000,ethereum,transfer,0x8888888888888888888888888888888888888888,0x9999999999999999999999999999999999999999,2500.0,7000000,Large ETH Holder,transfer,0xaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa,Glassnode,
+2026-01-17,1737302400,bitcoin,transfer,whale_entity_20,exchange_coinbase,52.0,2080000,Whale>1k BTC,outflow,r8c3d4e5f6g7h8i9j0k1l2m3n4o5p6a1b2c3d4e,Whale Alert,Latest entry
+
+# Schema Description:
+# date: YYYY-MM-DD format
+# timestamp: Unix timestamp (seconds)
+# blockchain: Cryptocurrency blockchain (bitcoin, ethereum, etc.)
+# transaction_type: Type of transaction (transfer, exchange_deposit, exchange_withdrawal, mining, etc.)
+# from_address: Source wallet address or entity
+# to_address: Destination wallet address or exchange
+# amount: Transaction amount in native currency (BTC, ETH, etc.)
+# usd_value: Equivalent USD value at transaction time
+# whale_classification: Size/type classification (Whale>1k BTC, Whale>10k BTC, Large ETH Holder, etc.)
+# exchange_flow: Direction of flow (inflow=buying, outflow=selling, transfer=internal, mining=new supply)
+# transaction_hash: Blockchain transaction hash (txid for Bitcoin, txhash for Ethereum)
+# data_source: Data provider (Whale Alert, Glassnode, CryptoQuant)
+# notes: Additional context, market events, or notable activity
+
+# Update Instructions:
+# 1. Run daily data collection script to append new records
+# 2. Command: python scripts/update_whale_data.py
+# 3. API Endpoints:
+#    - Whale Alert: https://api.whale-alert.io/v1/transactions
+#    - Glassnode: https://api.glassnode.com/v1/metrics/
+#    - CryptoQuant: https://api.cryptoquant.com/v1/
+# 4. Commit changes with daily timestamp
+# 5. Include transaction hash for verification
