@@ -1,0 +1,177 @@
+import pandas as pd
+import numpy as np
+from typing import Dict, List, Tuple
+from models.config import TECHNICAL_INDICATORS_CONFIG
+
+
+class FeatureEngineer:
+    """Calculate technical indicators and engineer features from OHLCV data."""
+
+    def __init__(self, config: Dict = None):
+        self.config = config or TECHNICAL_INDICATORS_CONFIG
+        self.df = None
+
+    def calculate_sma(self, df: pd.DataFrame, period: int, column: str = 'close') -> pd.Series:
+        """Calculate Simple Moving Average."""
+        return df[column].rolling(window=period).mean()
+
+    def calculate_ema(self, df: pd.DataFrame, period: int, column: str = 'close') -> pd.Series:
+        """Calculate Exponential Moving Average."""
+        return df[column].ewm(span=period, adjust=False).mean()
+
+    def calculate_rsi(self, df: pd.DataFrame, period: int = 14, column: str = 'close') -> pd.Series:
+        """Calculate Relative Strength Index (0-100)."""
+        delta = df[column].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
+        rs = gain / loss
+        rsi = 100 - (100 / (1 + rs))
+        return rsi
+
+    def calculate_macd(self, df: pd.DataFrame, fast: int = 12,
+                      slow: int = 26, signal: int = 9,
+                      column: str = 'close') -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """Calculate MACD and Signal line."""
+        ema_fast = df[column].ewm(span=fast, adjust=False).mean()
+        ema_slow = df[column].ewm(span=slow, adjust=False).mean()
+        macd_line = ema_fast - ema_slow
+        signal_line = macd_line.ewm(span=signal, adjust=False).mean()
+        histogram = macd_line - signal_line
+        return macd_line, signal_line, histogram
+
+    def calculate_bollinger_bands(self, df: pd.DataFrame, period: int = 20,
+                                 std_dev: int = 2, column: str = 'close') -> Tuple[pd.Series, pd.Series, pd.Series]:
+        """Calculate Bollinger Bands."""
+        sma = df[column].rolling(window=period).mean()
+        std = df[column].rolling(window=period).std()
+        bb_upper = sma + (std * std_dev)
+        bb_lower = sma - (std * std_dev)
+        return bb_upper, sma, bb_lower
+
+    def calculate_atr(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Average True Range."""
+        high_low = df['high'] - df['low']
+        high_close = abs(df['high'] - df['close'].shift())
+        low_close = abs(df['low'] - df['close'].shift())
+
+        true_range = pd.concat([high_low, high_close, low_close], axis=1).max(axis=1)
+        atr = true_range.rolling(window=period).mean()
+        return atr
+
+    def calculate_momentum(self, df: pd.DataFrame, period: int = 14,
+                          column: str = 'close') -> pd.Series:
+        """Calculate Price Momentum (Rate of Change)."""
+        return ((df[column] - df[column].shift(period)) / df[column].shift(period)) * 100
+
+    def calculate_obv(self, df: pd.DataFrame) -> pd.Series:
+        """Calculate On-Balance Volume."""
+        obv = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
+        return obv
+
+    def calculate_volatility(self, df: pd.DataFrame, period: int = 20,
+                            column: str = 'close') -> pd.Series:
+        """Calculate Price Volatility (Standard Deviation)."""
+        returns = df[column].pct_change()
+        volatility = returns.rolling(window=period).std() * 100
+        return volatility
+
+    def calculate_volume_profile(self, df: pd.DataFrame, period: int = 20) -> pd.Series:
+        """Calculate Volume-weighted price profile."""
+        typical_price = (df['high'] + df['low'] + df['close']) / 3
+        volume_weighted = (typical_price * df['volume']).rolling(window=period).sum()
+        return volume_weighted
+
+    def calculate_divergence(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate Price-RSI Divergence indicator."""
+        rsi = self.calculate_rsi(df, period)
+        price_range = df['close'].rolling(window=period).apply(
+            lambda x: (x.max() - x.min()) / x.mean() if x.mean() != 0 else 0
+        )
+        divergence = (rsi / 100) - (price_range / price_range.max())
+        return divergence
+
+    def calculate_trend_strength(self, df: pd.DataFrame, period: int = 14) -> pd.Series:
+        """Calculate trend strength using ADX-like calculation."""
+        plus_dm = pd.Series(0.0, index=df.index)
+        minus_dm = pd.Series(0.0, index=df.index)
+        tr = self.calculate_atr(df, 1)
+
+        for i in range(1, len(df)):
+            up = df['high'].iloc[i] - df['high'].iloc[i-1]
+            down = df['low'].iloc[i-1] - df['low'].iloc[i]
+
+            if up > down and up > 0:
+                plus_dm.iloc[i] = up
+            else:
+                plus_dm.iloc[i] = 0
+
+            if down > up and down > 0:
+                minus_dm.iloc[i] = down
+            else:
+                minus_dm.iloc[i] = 0
+
+        plus_di = 100 * (plus_dm.rolling(window=period).mean() / tr.rolling(window=period).mean())
+        minus_di = 100 * (minus_dm.rolling(window=period).mean() / tr.rolling(window=period).mean())
+        dx = 100 * abs(plus_di - minus_di) / (plus_di + minus_di)
+        adx = dx.rolling(window=period).mean()
+
+        return adx
+
+    def engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Calculate all technical indicators and create feature matrix."""
+        df_features = df.copy()
+
+        sma_config = self.config.get('sma_fast', {})
+        sma_medium_config = self.config.get('sma_medium', {})
+        sma_slow_config = self.config.get('sma_slow', {})
+        ema_fast_config = self.config.get('ema_fast', {})
+        ema_slow_config = self.config.get('ema_slow', {})
+        rsi_config = self.config.get('rsi', {})
+        macd_config = self.config.get('macd', {})
+        bb_config = self.config.get('bb', {})
+        atr_config = self.config.get('atr', {})
+
+        df_features['sma_fast'] = self.calculate_sma(df_features, sma_config.get('period', 20))
+        df_features['sma_medium'] = self.calculate_sma(df_features, sma_medium_config.get('period', 50))
+        df_features['sma_slow'] = self.calculate_sma(df_features, sma_slow_config.get('period', 200))
+        df_features['ema_fast'] = self.calculate_ema(df_features, ema_fast_config.get('period', 12))
+        df_features['ema_slow'] = self.calculate_ema(df_features, ema_slow_config.get('period', 26))
+        df_features['rsi'] = self.calculate_rsi(df_features, rsi_config.get('period', 14))
+
+        macd_line, signal_line, histogram = self.calculate_macd(
+            df_features,
+            fast=macd_config.get('fast', 12),
+            slow=macd_config.get('slow', 26),
+            signal=macd_config.get('signal', 9)
+        )
+        df_features['macd'] = macd_line
+        df_features['macd_signal'] = signal_line
+        df_features['macd_histogram'] = histogram
+
+        bb_upper, bb_middle, bb_lower = self.calculate_bollinger_bands(
+            df_features,
+            period=bb_config.get('period', 20),
+            std_dev=bb_config.get('std_dev', 2)
+        )
+        df_features['bb_upper'] = bb_upper
+        df_features['bb_middle'] = bb_middle
+        df_features['bb_lower'] = bb_lower
+
+        df_features['atr'] = self.calculate_atr(df_features, atr_config.get('period', 14))
+        df_features['momentum'] = self.calculate_momentum(df_features)
+        df_features['volatility'] = self.calculate_volatility(df_features)
+        df_features['obv'] = self.calculate_obv(df_features)
+        df_features['trend_strength'] = self.calculate_trend_strength(df_features)
+
+        df_features = df_features.fillna(method='bfill').fillna(method='ffill')
+        print(f"Features engineered: {len(df_features)} rows, {len(df_features.columns)} columns")
+        return df_features
+
+    def get_feature_names(self) -> List[str]:
+        """Return list of engineered feature names."""
+        return [
+            'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
+            'rsi', 'macd', 'macd_signal', 'macd_histogram',
+            'bb_upper', 'bb_middle', 'bb_lower', 'atr',
+            'momentum', 'volatility', 'obv', 'trend_strength'
+        ]
