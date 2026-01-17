@@ -4,6 +4,13 @@ let tvChart = null;
 let tvLiveChart = null;
 let mlPredictions = [];
 let currentTimeframe = '60';
+const timeframeMap = {
+    '1': { minutes: 1, interval: '1m' },
+    '5': { minutes: 5, interval: '5m' },
+    '60': { minutes: 60, interval: '1h' },
+    '240': { minutes: 240, interval: '4h' },
+    '1440': { minutes: 1440, interval: '1d' }
+};
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Dashboard initialized');
@@ -23,14 +30,19 @@ function initializeEventListeners() {
 
     document.querySelectorAll('.tf-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
+            e.preventDefault();
             const container = e.target.closest('.card-header');
             if (!container) return;
             
             container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
             e.target.classList.add('active');
             
-            currentTimeframe = e.target.dataset.tf;
-            console.log('Timeframe changed to:', currentTimeframe);
+            const newTimeframe = e.target.dataset.tf;
+            if (newTimeframe !== currentTimeframe) {
+                currentTimeframe = newTimeframe;
+                console.log('Timeframe changed to:', currentTimeframe, timeframeMap[currentTimeframe]);
+                loadDashboardData();
+            }
         });
     });
 
@@ -79,10 +91,13 @@ function switchSection(section) {
 
 async function loadDashboardData() {
     try {
-        console.log('Loading dashboard data...');
+        console.log('Loading dashboard data with timeframe:', currentTimeframe);
+        
+        const interval = timeframeMap[currentTimeframe]?.interval || '1h';
+        const limit = currentTimeframe === '1' ? 200 : currentTimeframe === '5' ? 150 : 100;
         
         const promises = [
-            fetch(`${API_BASE}/price?symbol=${currentSymbol}&interval=1h&limit=100`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
+            fetch(`${API_BASE}/price?symbol=${currentSymbol}&interval=${interval}&limit=${limit}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/ml-prediction?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/sentiment`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/trading/account-summary`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
@@ -172,11 +187,12 @@ function updatePriceChart(data) {
 
         const candleData = [];
         const baseTime = Math.floor(Date.now() / 1000);
-        const interval = 3600;
+        const timeframeConfig = timeframeMap[currentTimeframe];
+        const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
 
         for (let i = 0; i < data.data.closes.length; i++) {
             candleData.push({
-                time: baseTime - (data.data.closes.length - i) * interval,
+                time: baseTime - (data.data.closes.length - i) * intervalSeconds,
                 open: parseFloat(data.data.opens[i]),
                 high: parseFloat(data.data.highs[i]),
                 low: parseFloat(data.data.lows[i]),
@@ -186,9 +202,9 @@ function updatePriceChart(data) {
 
         tvChart.candlestickSeries.setData(candleData);
         tvChart.timeScale().fitContent();
-        console.log('TradingView chart updated successfully');
+        console.log('TradingView chart updated with', candleData.length, 'candles');
     } catch (err) {
-        console.error('Failed to create TradingView chart:', err);
+        console.error('Failed to update TradingView chart:', err);
     }
 
     const currentPriceElement = document.getElementById('currentPrice');
