@@ -11,11 +11,17 @@ from models.ml_model import CryptoEntryModel
 from models.on_chain_data import OnChainDataProvider
 from models.market_sentiment import MarketSentimentAnalyzer
 from models.paper_trading import PaperTradingEngine
+from app.services.whale_tracking import WhaleTracker
+from app.services.exchange_flow import ExchangeFlowAnalyzer
+from app.routes.on_chain import on_chain_bp
 
 load_dotenv()
 
 app = Flask(__name__, template_folder='web/templates', static_folder='web/static')
 CORS(app)
+
+# Register blueprints
+app.register_blueprint(on_chain_bp)
 
 ml_model = CryptoEntryModel('BTCUSDT', '1h')
 ml_model.load_model()
@@ -29,6 +35,10 @@ on_chain_provider.set_api_keys(
 sentiment_analyzer = MarketSentimentAnalyzer('BTC')
 
 paper_trading = PaperTradingEngine(initial_balance=10000.0)
+
+# Initialize new services
+whale_tracker = WhaleTracker(api_key=os.getenv('GLASSNODE_API_KEY'))
+exchange_analyzer = ExchangeFlowAnalyzer(api_key=os.getenv('GLASSNODE_API_KEY'))
 
 binance_api_key = os.getenv('BINANCE_API_KEY')
 binance_api_secret = os.getenv('BINANCE_API_SECRET')
@@ -247,6 +257,21 @@ def update_price():
         return jsonify({'status': 'success', 'message': 'Price updated'})
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/health', methods=['GET'])
+def health_check():
+    """API health check endpoint."""
+    return jsonify({
+        'status': 'healthy',
+        'timestamp': datetime.now().isoformat(),
+        'services': {
+            'whale_tracker': 'enabled' if whale_tracker.api_key else 'using_mock_data',
+            'exchange_analyzer': 'enabled' if exchange_analyzer.api_key else 'using_mock_data',
+            'ml_model': 'loaded',
+            'paper_trading': 'enabled'
+        }
+    })
 
 
 if __name__ == '__main__':
