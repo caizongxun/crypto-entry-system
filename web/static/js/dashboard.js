@@ -1,8 +1,12 @@
 const API_BASE = 'http://localhost:5000/api';
 let currentSymbol = 'BTCUSDT';
 let tvChart = null;
+let tvLiveChart = null;
 let mlPredictions = [];
 let currentTimeframe = '60';
+let notifications = [];
+let chartHeight = 400;
+let refreshInterval = 15000;
 
 const timeframeMap = {
     '1': { minutes: 1, interval: '1m', tvInterval: '1' },
@@ -17,11 +21,71 @@ const timeframeMap = {
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Dashboard initialized');
+    loadSettings();
     initializeChart();
+    initializeLiveChart();
     initializeEventListeners();
+    initializeResizeHandles();
     loadDashboardData();
-    setInterval(loadDashboardData, 15000);
+    setInterval(loadDashboardData, refreshInterval);
 });
+
+function loadSettings() {
+    const savedSettings = localStorage.getItem('dashboardSettings');
+    if (savedSettings) {
+        try {
+            const settings = JSON.parse(savedSettings);
+            currentTimeframe = settings.defaultTimeframe || '60';
+            refreshInterval = (settings.refreshInterval || 15) * 1000;
+            
+            document.getElementById('themeSelect').value = settings.theme || 'dark';
+            document.getElementById('defaultTimeframe').value = currentTimeframe;
+            document.getElementById('enableNotifications').checked = settings.enableNotifications !== false;
+            document.getElementById('refreshInterval').value = refreshInterval / 1000;
+            
+            if (settings.theme === 'light') {
+                document.documentElement.style.colorScheme = 'light';
+            }
+        } catch (error) {
+            console.error('Error loading settings:', error);
+        }
+    }
+}
+
+function initializeResizeHandles() {
+    const handles = document.querySelectorAll('.chart-resize-handle');
+    let isResizing = false;
+    let startY = 0;
+    let startHeight = 0;
+    let currentHandle = null;
+
+    handles.forEach(handle => {
+        handle.addEventListener('mousedown', (e) => {
+            isResizing = true;
+            startY = e.clientY;
+            currentHandle = handle;
+            const wrapper = handle.previousElementSibling;
+            startHeight = wrapper.clientHeight;
+            document.body.style.userSelect = 'none';
+            document.body.style.cursor = 'ns-resize';
+        });
+    });
+
+    document.addEventListener('mousemove', (e) => {
+        if (!isResizing) return;
+        const delta = e.clientY - startY;
+        const wrapper = currentHandle.previousElementSibling;
+        wrapper.style.minHeight = (startHeight + delta) + 'px';
+    });
+
+    document.addEventListener('mouseup', () => {
+        if (isResizing) {
+            isResizing = false;
+            document.body.style.userSelect = 'auto';
+            document.body.style.cursor = 'default';
+        }
+    });
+}
 
 function initializeChart() {
     const container = document.getElementById('priceChart');
@@ -30,7 +94,9 @@ function initializeChart() {
     const interval = timeframeMap[currentTimeframe]?.tvInterval || '60';
     
     tvChart = new TradingView.widget({
-        autosize: true,
+        autosize: false,
+        width: '100%',
+        height: chartHeight,
         symbol: symbol,
         interval: interval,
         timezone: 'Etc/UTC',
@@ -41,6 +107,40 @@ function initializeChart() {
         enable_publishing: false,
         allow_symbol_change: false,
         container_id: 'priceChart',
+        hide_side_toolbar: false,
+        hide_top_toolbar: false,
+        withdateranges: true,
+        studies: ['MAExp@tv-basicstudies', 'Volume@tv-basicstudies'],
+        overrides: {
+            'mainSeriesProperties.candleStyle.upColor': '#00c853',
+            'mainSeriesProperties.candleStyle.downColor': '#ff3860',
+            'mainSeriesProperties.candleStyle.borderUpColor': '#00c853',
+            'mainSeriesProperties.candleStyle.borderDownColor': '#ff3860',
+            'mainSeriesProperties.candleStyle.wickUpColor': '#00c853',
+            'mainSeriesProperties.candleStyle.wickDownColor': '#ff3860',
+            'volumePaneSize': 'small',
+        }
+    });
+}
+
+function initializeLiveChart() {
+    const container = document.getElementById('liveChart');
+    if (!container) return;
+    
+    const symbol = 'BINANCE:' + currentSymbol.replace('USDT', '') + 'USDT';
+    
+    tvLiveChart = new TradingView.widget({
+        autosize: true,
+        symbol: symbol,
+        interval: '60',
+        timezone: 'Etc/UTC',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        toolbar_bg: '#1e2139',
+        enable_publishing: false,
+        allow_symbol_change: true,
+        container_id: 'liveChart',
         hide_side_toolbar: false,
         hide_top_toolbar: false,
         withdateranges: true,
@@ -66,46 +166,6 @@ function initializeEventListeners() {
         });
     });
 
-    // Timeframe buttons - Dashboard
-    const dashboardTimeframeButtons = document.querySelectorAll('#dashboard-section .tf-btn');
-    dashboardTimeframeButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const container = e.target.closest('.card-header');
-            if (container) {
-                container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
-                
-                const newTimeframe = e.target.dataset.tf;
-                if (newTimeframe !== currentTimeframe) {
-                    currentTimeframe = newTimeframe;
-                    console.log('Timeframe changed to:', currentTimeframe);
-                    updateChart();
-                }
-            }
-        });
-    });
-
-    // Timeframe buttons - Market Data
-    const marketTimeframeButtons = document.querySelectorAll('#market-section .tf-btn');
-    marketTimeframeButtons.forEach(btn => {
-        btn.addEventListener('click', (e) => {
-            e.preventDefault();
-            const container = e.target.closest('.card-header');
-            if (container) {
-                container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-                e.target.classList.add('active');
-                
-                const newTimeframe = e.target.dataset.tf;
-                if (newTimeframe !== currentTimeframe) {
-                    currentTimeframe = newTimeframe;
-                    console.log('Timeframe changed to:', currentTimeframe);
-                    updateChart();
-                }
-            }
-        });
-    });
-
     const symbolInput = document.getElementById('symbolInput');
     if (symbolInput) {
         symbolInput.addEventListener('change', (e) => {
@@ -114,6 +174,7 @@ function initializeEventListeners() {
                 currentSymbol = currentSymbol + 'USDT';
             }
             updateChart();
+            updateLiveChart();
             loadDashboardData();
         });
     }
@@ -127,6 +188,88 @@ function initializeEventListeners() {
     if (form) {
         form.addEventListener('submit', openPosition);
     }
+
+    const notificationBell = document.getElementById('notificationBell');
+    if (notificationBell) {
+        notificationBell.addEventListener('click', openNotificationsModal);
+    }
+
+    const settingsBtn = document.getElementById('settingsBtn');
+    if (settingsBtn) {
+        settingsBtn.addEventListener('click', openSettingsModal);
+    }
+
+    document.getElementById('notificationClose').addEventListener('click', closeNotificationsModal);
+    document.getElementById('settingsClose').addEventListener('click', closeSettingsModal);
+    document.getElementById('saveSettings').addEventListener('click', saveSettings);
+
+    document.getElementById('notificationModal').addEventListener('click', (e) => {
+        if (e.target.id === 'notificationModal') closeNotificationsModal();
+    });
+
+    document.getElementById('settingsModal').addEventListener('click', (e) => {
+        if (e.target.id === 'settingsModal') closeSettingsModal();
+    });
+}
+
+function openNotificationsModal() {
+    document.getElementById('notificationModal').classList.add('open');
+    loadNotifications();
+}
+
+function closeNotificationsModal() {
+    document.getElementById('notificationModal').classList.remove('open');
+}
+
+function openSettingsModal() {
+    document.getElementById('settingsModal').classList.add('open');
+}
+
+function closeSettingsModal() {
+    document.getElementById('settingsModal').classList.remove('open');
+}
+
+function loadNotifications() {
+    const notificationList = document.getElementById('notificationList');
+    if (notifications.length === 0) {
+        notificationList.innerHTML = '<p style="color: #8b949e; text-align: center;">No notifications yet</p>';
+        return;
+    }
+
+    notificationList.innerHTML = notifications.slice().reverse().map((notif, idx) => `
+        <div class="notification-item ${notif.read ? '' : 'unread'}">
+            <div>
+                <h4 style="margin: 0 0 4px 0; color: #f0f6fc;">${notif.title}</h4>
+                <p style="margin: 0; color: #8b949e; font-size: 13px;">${notif.message}</p>
+            </div>
+            <span class="notification-time">${new Date(notif.timestamp).toLocaleString()}</span>
+        </div>
+    `).join('');
+}
+
+function saveSettings() {
+    const settings = {
+        theme: document.getElementById('themeSelect').value,
+        defaultTimeframe: document.getElementById('defaultTimeframe').value,
+        enableNotifications: document.getElementById('enableNotifications').checked,
+        refreshInterval: parseInt(document.getElementById('refreshInterval').value),
+        apiKey: document.getElementById('apiKey').value,
+        apiSecret: document.getElementById('apiSecret').value
+    };
+
+    localStorage.setItem('dashboardSettings', JSON.stringify(settings));
+    
+    currentTimeframe = settings.defaultTimeframe;
+    refreshInterval = settings.refreshInterval * 1000;
+
+    if (settings.theme === 'light') {
+        document.documentElement.style.colorScheme = 'light';
+    } else {
+        document.documentElement.style.colorScheme = 'dark';
+    }
+
+    addNotification('Settings Saved', 'Your preferences have been saved successfully.');
+    closeSettingsModal();
 }
 
 function updateChart() {
@@ -135,6 +278,14 @@ function updateChart() {
         tvChart = null;
     }
     initializeChart();
+}
+
+function updateLiveChart() {
+    if (tvLiveChart) {
+        tvLiveChart.remove();
+        tvLiveChart = null;
+    }
+    initializeLiveChart();
 }
 
 function switchSection(section) {
@@ -166,6 +317,7 @@ async function loadDashboardData() {
         
         if (predictions.status === 'success') {
             updateMLPredictions(predictions);
+            checkSignalNotifications(predictions);
         } else {
             console.error('ML predictions error:', predictions.message);
         }
@@ -184,6 +336,38 @@ async function loadDashboardData() {
     } catch (error) {
         console.error('Error loading dashboard data:', error);
     }
+}
+
+function checkSignalNotifications(data) {
+    if (data.predictions && data.predictions.length > 0) {
+        const latestSignal = data.predictions[0];
+        if (latestSignal.signal_type && latestSignal.bounce_probability > 60) {
+            addNotification(
+                'Strong Trading Signal',
+                `${latestSignal.signal_type} signal detected at $${latestSignal.price} with ${latestSignal.bounce_probability.toFixed(1)}% probability`
+            );
+        }
+    }
+}
+
+function addNotification(title, message) {
+    const notification = {
+        id: Date.now(),
+        title: title,
+        message: message,
+        timestamp: new Date().toISOString(),
+        read: false
+    };
+    
+    notifications.push(notification);
+    updateNotificationBadge();
+}
+
+function updateNotificationBadge() {
+    const badge = document.getElementById('notificationBadge');
+    const unreadCount = notifications.filter(n => !n.read).length;
+    badge.textContent = unreadCount;
+    badge.style.display = unreadCount > 0 ? 'inline-flex' : 'none';
 }
 
 function updateMLPredictions(data) {
@@ -380,15 +564,15 @@ async function openPosition(e) {
         const result = await response.json();
         
         if (result.status === 'success') {
-            alert('Position opened: ' + result.message);
+            addNotification('Position Opened', 'Position opened successfully: ' + result.message);
             document.getElementById('openPositionForm').reset();
             loadDashboardData();
         } else {
-            alert('Error: ' + result.message);
+            addNotification('Error', 'Error opening position: ' + result.message);
         }
     } catch (error) {
         console.error('Error opening position:', error);
-        alert('Error opening position: ' + error.message);
+        addNotification('Error', 'Error opening position: ' + error.message);
     }
 }
 
@@ -405,14 +589,14 @@ async function closePositionUI(positionId, currentPrice) {
         const result = await response.json();
         
         if (result.status === 'success') {
-            alert('Position closed: ' + result.message);
+            addNotification('Position Closed', 'Position closed successfully: ' + result.message);
             loadDashboardData();
         } else {
-            alert('Error: ' + result.message);
+            addNotification('Error', 'Error closing position: ' + result.message);
         }
     } catch (error) {
         console.error('Error closing position:', error);
-        alert('Error closing position: ' + error.message);
+        addNotification('Error', 'Error closing position: ' + error.message);
     }
 }
 
