@@ -1,9 +1,7 @@
 import pandas as pd
 import numpy as np
-from typing import Dict, Tuple, List
-from models.data_processor import DataProcessor
+from typing import Dict, Tuple, List, Optional
 from models.feature_engineer import FeatureEngineer
-from pathlib import Path
 
 
 class MultiTimeframeEngineer:
@@ -28,37 +26,7 @@ class MultiTimeframeEngineer:
         self.base_timeframe = base_timeframe
         self.base_minutes = self.TIMEFRAME_MINUTES[base_timeframe]
         self.feature_engineer = FeatureEngineer()
-        self.data_processor = DataProcessor(symbol, base_timeframe)
-        self.higher_timeframe = self._get_immediate_higher_timeframe()
-
-    def _get_immediate_higher_timeframe(self) -> str:
-        """Get immediate higher timeframe only."""
-        next_tf = self.TIMEFRAME_HIERARCHY.get(self.base_timeframe)
-        
-        if next_tf is None:
-            return None
-        
-        cache_dir = Path(__file__).parent / 'cache' / 'data'
-        cache_file = cache_dir / f"{self.symbol}_{next_tf}.parquet"
-        
-        if cache_file.exists():
-            return next_tf
-        
-        return None
-
-    def load_timeframe_data(self, timeframe: str) -> pd.DataFrame:
-        """Load data for specific timeframe."""
-        try:
-            processor = DataProcessor(self.symbol, timeframe)
-            df = processor.load_data()
-            if df is None or len(df) == 0:
-                print(f"Warning: No data available for {timeframe}")
-                return None
-            df = processor.prepare_data(df)
-            return df
-        except Exception as e:
-            print(f"Warning: Failed to load {timeframe} data: {str(e)}")
-            return None
+        self.higher_timeframe = self.TIMEFRAME_HIERARCHY.get(base_timeframe)
 
     def align_timeframes(self, base_df: pd.DataFrame, higher_df: pd.DataFrame,
                         base_tf: str, higher_tf: str) -> pd.DataFrame:
@@ -74,7 +42,6 @@ class MultiTimeframeEngineer:
                 print(f"Warning: {higher_tf} is not higher than {base_tf}")
                 return None
             
-            ratio = higher_minutes // base_minutes
             aligned_data = pd.DataFrame(index=base_df.index)
             
             numeric_cols = higher_df.select_dtypes(include=[np.number]).columns.tolist()
@@ -96,28 +63,18 @@ class MultiTimeframeEngineer:
             print(f"Warning: Timeframe alignment failed for {higher_tf}: {str(e)}")
             return None
 
-    def engineer_higher_timeframe_features(self, base_df: pd.DataFrame) -> pd.DataFrame:
-        """Engineer features from immediate higher timeframe only."""
+    def engineer_higher_timeframe_features(self, base_df: pd.DataFrame, 
+                                          higher_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """Engineer features from immediate higher timeframe using pre-engineered features."""
         df_features = base_df.copy()
         
-        if self.higher_timeframe is None:
-            print(f"  No higher timeframe data available for {self.base_timeframe}")
+        if higher_features is None or len(higher_features) == 0:
+            print(f"  No higher timeframe features available")
             return df_features
         
         try:
-            print(f"  Processing {self.higher_timeframe} timeframe...")
-            higher_df = self.load_timeframe_data(self.higher_timeframe)
+            print(f"  Aligning {self.higher_timeframe} features to {self.base_timeframe}...")
             
-            if higher_df is None or len(higher_df) == 0:
-                print(f"  Skipping {self.higher_timeframe}: No data")
-                return df_features
-            
-            higher_features = self.feature_engineer.engineer_features(higher_df)
-            
-            if higher_features is None or len(higher_features) == 0:
-                print(f"  Skipping {self.higher_timeframe}: Feature engineering failed")
-                return df_features
-
             aligned_features = self.align_timeframes(
                 base_df,
                 higher_features,
@@ -126,7 +83,7 @@ class MultiTimeframeEngineer:
             )
             
             if aligned_features is None or len(aligned_features.columns) == 0:
-                print(f"  Skipping {self.higher_timeframe}: Alignment failed")
+                print(f"  Alignment failed")
                 return df_features
 
             added_count = 0
@@ -272,8 +229,14 @@ class MultiTimeframeEngineer:
             df_result['momentum_divergence_multi'] = 0
             return df_result
 
-    def engineer_comprehensive_features(self, base_df: pd.DataFrame) -> pd.DataFrame:
-        """Engineer multi-timeframe features using only immediate higher timeframe."""
+    def engineer_comprehensive_features(self, base_df: pd.DataFrame,
+                                       higher_features: Optional[pd.DataFrame] = None) -> pd.DataFrame:
+        """Engineer multi-timeframe features using pre-engineered higher timeframe features.
+        
+        Args:
+            base_df: Base timeframe dataframe with engineered features
+            higher_features: Pre-engineered higher timeframe features (optional)
+        """
         print("Starting multi-timeframe feature engineering...")
         
         if base_df is None or len(base_df) == 0:
@@ -285,7 +248,7 @@ class MultiTimeframeEngineer:
         print(f"  Base data: {len(base_df)} rows")
 
         try:
-            df_features = self.engineer_higher_timeframe_features(base_df)
+            df_features = self.engineer_higher_timeframe_features(base_df, higher_features)
         except Exception as e:
             print(f"Warning: Higher timeframe feature engineering failed: {str(e)}")
             df_features = base_df.copy()
