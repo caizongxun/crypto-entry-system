@@ -5,6 +5,8 @@ from datetime import datetime, timedelta
 import requests
 import os
 import sys
+from pathlib import Path
+import joblib
 from dotenv import load_dotenv
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
@@ -88,10 +90,48 @@ else:
     print('Warning: Binance API keys not configured or python-binance not installed. Price data will use public endpoints.')
 
 
+def get_local_models():
+    """Scan and return all local trained models."""
+    cache_dir = Path('models/cache')
+    models = []
+    
+    if cache_dir.exists():
+        for model_file in cache_dir.glob('*.joblib'):
+            try:
+                parts = model_file.stem.split('_')
+                if len(parts) >= 3:
+                    symbol = parts[0]
+                    timeframe = parts[1]
+                    model_type = '_'.join(parts[2:])
+                    
+                    file_size = model_file.stat().st_size / 1024
+                    modified_time = datetime.fromtimestamp(model_file.stat().st_mtime)
+                    
+                    models.append({
+                        'symbol': symbol,
+                        'timeframe': timeframe,
+                        'model_type': model_type,
+                        'file_name': model_file.name,
+                        'file_size_kb': round(file_size, 2),
+                        'modified_time': modified_time.strftime('%Y-%m-%d %H:%M:%S'),
+                        'path': str(model_file)
+                    })
+            except Exception as e:
+                print(f'Error reading model file {model_file.name}: {str(e)}')
+    
+    return sorted(models, key=lambda x: x['modified_time'], reverse=True)
+
+
 @app.route('/')
 def index():
     """Render main dashboard."""
     return render_template('dashboard.html')
+
+
+@app.route('/training')
+def training():
+    """Render model training and management page."""
+    return render_template('training.html')
 
 
 @app.route('/15m-analysis')
@@ -104,6 +144,64 @@ def analysis_15m():
 def advanced_chart():
     """Render advanced TradingView-style chart."""
     return render_template('chart.html')
+
+
+@app.route('/api/models/list', methods=['GET'])
+def list_local_models():
+    """Get list of all local trained models."""
+    try:
+        models = get_local_models()
+        
+        summary = {
+            'total_models': len(models),
+            'by_timeframe': {},
+            'by_symbol': {},
+            'by_type': {}
+        }
+        
+        for model in models:
+            timeframe = model['timeframe']
+            symbol = model['symbol']
+            model_type = model['model_type']
+            
+            summary['by_timeframe'][timeframe] = summary['by_timeframe'].get(timeframe, 0) + 1
+            summary['by_symbol'][symbol] = summary['by_symbol'].get(symbol, 0) + 1
+            summary['by_type'][model_type] = summary['by_type'].get(model_type, 0) + 1
+        
+        return jsonify({
+            'status': 'success',
+            'models': models,
+            'summary': summary
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/models/delete/<symbol>/<timeframe>', methods=['DELETE'])
+def delete_model(symbol, timeframe):
+    """Delete a trained model."""
+    try:
+        cache_dir = Path('models/cache')
+        model_pattern = f"{symbol}_{timeframe}_*.joblib"
+        
+        deleted_files = []
+        for model_file in cache_dir.glob(model_pattern):
+            try:
+                model_file.unlink()
+                deleted_files.append(model_file.name)
+            except Exception as e:
+                print(f'Error deleting {model_file.name}: {str(e)}')
+        
+        if deleted_files:
+            return jsonify({
+                'status': 'success',
+                'message': f'Deleted {len(deleted_files)} model file(s)',
+                'files': deleted_files
+            })
+        else:
+            return jsonify({'status': 'error', 'message': 'No model files found to delete'}), 404
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
 @app.route('/api/price', methods=['GET'])
@@ -242,6 +340,29 @@ def get_ml_prediction_15m():
             'predictions': predictions,
             'total_events': len(bb_events),
             'model_trained': ml_model_15m.model is not None
+        })
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/train-model', methods=['POST'])
+def train_model():
+    """Train model with specified symbol, timeframe and type."""
+    try:
+        data = request.json
+        symbol = data.get('symbol', 'BTCUSDT')
+        timeframe = data.get('timeframe', '1h')
+        model_type = data.get('model_type', 'xgboost')
+        
+        print(f"Starting training for {symbol} {timeframe} model ({model_type})...")
+        
+        model = CryptoEntryModel(symbol, timeframe, model_type)
+        training_results = model.train()
+        
+        return jsonify({
+            'status': 'success',
+            'message': f'Model training completed for {symbol} {timeframe}',
+            'results': training_results
         })
     except Exception as e:
         return jsonify({'status': 'error', 'message': str(e)}), 500
