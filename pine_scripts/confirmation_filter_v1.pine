@@ -41,7 +41,7 @@ volatility_medium = atr >= ta.sma(atr, 20) and atr <= ta.sma(atr, 20) * 1.5
 
 buy_confirmed = false
 sell_confirmed = false
-confirm_strength = 0
+confirm_strength = 0.0
 
 if use_stochastic
     if stoch_buy_confirmed
