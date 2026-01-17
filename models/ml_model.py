@@ -158,6 +158,38 @@ class CryptoEntryModel:
 
         return bounce_signal
 
+    def _validate_training_data(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
+        """Validate and clean training data."""
+        print(f"Validating training data... (shape: {X.shape})")
+        
+        if np.isnan(X).any() or np.isinf(X).any():
+            print("WARNING: Found NaN or infinity values in features. Cleaning data...")
+            
+            X_clean = np.nan_to_num(X, nan=0.0, posinf=1e6, neginf=-1e6)
+            
+            for col_idx in range(X_clean.shape[1]):
+                col_data = X_clean[:, col_idx]
+                col_mean = np.nanmean(col_data[np.isfinite(col_data)])
+                col_std = np.nanstd(col_data[np.isfinite(col_data)])
+                
+                if col_std == 0:
+                    col_std = 1
+                
+                X_clean[:, col_idx] = np.clip(
+                    col_data,
+                    col_mean - 5*col_std,
+                    col_mean + 5*col_std
+                )
+            
+            X = X_clean
+            valid_mask = np.all(np.isfinite(X), axis=1)
+            X = X[valid_mask]
+            y = y[valid_mask]
+            
+            print(f"Cleaned data shape: {X.shape} (removed {len(y) - X.shape[0]} invalid rows)")
+        
+        return X, y
+
     def prepare_training_data(self, lookback: int = 50) -> Tuple[np.ndarray, np.ndarray]:
         """Prepare data for BB bounce prediction model."""
         if self.feature_data is None:
@@ -190,6 +222,8 @@ class CryptoEntryModel:
 
         X = df_valid[feature_cols].values
         y = df_valid['bounce_target'].values.astype(int)
+
+        X, y = self._validate_training_data(X, y)
 
         print(f"Training data prepared: {X.shape[0]} BB touch/break events, {X.shape[1]} features")
         print(f"Timeframe: {self.timeframe}")
