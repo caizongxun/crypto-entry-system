@@ -7,7 +7,7 @@ from pathlib import Path
 
 
 class MultiTimeframeEngineer:
-    """Engineer features from multiple timeframes with proper data alignment."""
+    """Engineer features from immediate higher timeframe only to reduce noise."""
 
     TIMEFRAME_MINUTES = {
         '15m': 15,
@@ -16,36 +16,35 @@ class MultiTimeframeEngineer:
         '1d': 1440
     }
 
+    TIMEFRAME_HIERARCHY = {
+        '15m': '1h',
+        '1h': '4h',
+        '4h': '1d',
+        '1d': None
+    }
+
     def __init__(self, symbol: str, base_timeframe: str = '15m'):
         self.symbol = symbol
         self.base_timeframe = base_timeframe
         self.base_minutes = self.TIMEFRAME_MINUTES[base_timeframe]
         self.feature_engineer = FeatureEngineer()
         self.data_processor = DataProcessor(symbol, base_timeframe)
-        self.available_timeframes = self._detect_available_timeframes()
+        self.higher_timeframe = self._get_immediate_higher_timeframe()
 
-    def _detect_available_timeframes(self) -> List[str]:
-        """Detect which timeframes have cached data."""
-        all_timeframes = ['15m', '1h', '4h', '1d']
-        available = []
+    def _get_immediate_higher_timeframe(self) -> str:
+        """Get immediate higher timeframe only."""
+        next_tf = self.TIMEFRAME_HIERARCHY.get(self.base_timeframe)
+        
+        if next_tf is None:
+            return None
+        
         cache_dir = Path(__file__).parent / 'cache' / 'data'
+        cache_file = cache_dir / f"{self.symbol}_{next_tf}.parquet"
         
-        for tf in all_timeframes:
-            cache_file = cache_dir / f"{self.symbol}_{tf}.parquet"
-            if cache_file.exists():
-                available.append(tf)
+        if cache_file.exists():
+            return next_tf
         
-        return available
-
-    def get_higher_timeframes(self) -> list:
-        """Get list of higher timeframes relative to base timeframe."""
-        higher_tf = []
-        base_idx = self.available_timeframes.index(self.base_timeframe) if self.base_timeframe in self.available_timeframes else -1
-        
-        if base_idx >= 0:
-            higher_tf = self.available_timeframes[base_idx + 1:]
-        
-        return higher_tf
+        return None
 
     def load_timeframe_data(self, timeframe: str) -> pd.DataFrame:
         """Load data for specific timeframe."""
@@ -98,255 +97,191 @@ class MultiTimeframeEngineer:
             return None
 
     def engineer_higher_timeframe_features(self, base_df: pd.DataFrame) -> pd.DataFrame:
-        """Engineer features from multiple timeframes."""
+        """Engineer features from immediate higher timeframe only."""
         df_features = base_df.copy()
-        higher_timeframes = self.get_higher_timeframes()
         
-        if len(higher_timeframes) == 0:
-            print(f"  No higher timeframes available. Only {self.base_timeframe} data exists.")
+        if self.higher_timeframe is None:
+            print(f"  No higher timeframe data available for {self.base_timeframe}")
             return df_features
         
-        print(f"  Available higher timeframes: {higher_timeframes}")
-        added_features_count = 0
+        try:
+            print(f"  Processing {self.higher_timeframe} timeframe...")
+            higher_df = self.load_timeframe_data(self.higher_timeframe)
+            
+            if higher_df is None or len(higher_df) == 0:
+                print(f"  Skipping {self.higher_timeframe}: No data")
+                return df_features
+            
+            higher_features = self.feature_engineer.engineer_features(higher_df)
+            
+            if higher_features is None or len(higher_features) == 0:
+                print(f"  Skipping {self.higher_timeframe}: Feature engineering failed")
+                return df_features
 
-        for higher_tf in higher_timeframes:
-            try:
-                print(f"  Processing {higher_tf} timeframe...")
-                higher_df = self.load_timeframe_data(higher_tf)
-                
-                if higher_df is None or len(higher_df) == 0:
-                    print(f"  Skipping {higher_tf}: No data")
-                    continue
-                
-                higher_features = self.feature_engineer.engineer_features(higher_df)
-                
-                if higher_features is None or len(higher_features) == 0:
-                    print(f"  Skipping {higher_tf}: Feature engineering failed")
-                    continue
+            aligned_features = self.align_timeframes(
+                base_df,
+                higher_features,
+                self.base_timeframe,
+                self.higher_timeframe
+            )
+            
+            if aligned_features is None or len(aligned_features.columns) == 0:
+                print(f"  Skipping {self.higher_timeframe}: Alignment failed")
+                return df_features
 
-                aligned_features = self.align_timeframes(
-                    base_df,
-                    higher_features,
-                    self.base_timeframe,
-                    higher_tf
-                )
-                
-                if aligned_features is None or len(aligned_features.columns) == 0:
-                    print(f"  Skipping {higher_tf}: Alignment failed")
-                    continue
+            added_count = 0
+            for col in aligned_features.columns:
+                if col not in ['open', 'high', 'low', 'close', 'volume', 'open_time', 'close_time']:
+                    new_col_name = f"{col}_{self.higher_timeframe}"
+                    if new_col_name not in df_features.columns:
+                        df_features[new_col_name] = aligned_features[col]
+                        added_count += 1
 
-                for col in aligned_features.columns:
-                    if col not in ['open', 'high', 'low', 'close', 'volume', 'open_time', 'close_time']:
-                        new_col_name = f"{col}_{higher_tf}"
-                        if new_col_name not in df_features.columns:
-                            df_features[new_col_name] = aligned_features[col]
-                            added_features_count += 1
-
-                print(f"  Added {len(aligned_features.columns)} features from {higher_tf}")
-            except Exception as e:
-                print(f"  Failed to process {higher_tf}: {str(e)}")
-                continue
-
-        print(f"Multi-timeframe features: {added_features_count} features added")
-        return df_features
-
-    def calculate_multi_timeframe_signals(self, base_df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate consensus signals across multiple timeframes."""
-        df_signals = base_df.copy()
-        higher_timeframes = self.get_higher_timeframes()
-
-        if len(higher_timeframes) == 0:
-            return df_signals
-
-        for higher_tf in higher_timeframes:
-            try:
-                higher_df = self.load_timeframe_data(higher_tf)
-                if higher_df is None:
-                    continue
-                    
-                higher_features = self.feature_engineer.engineer_features(higher_df)
-                if higher_features is None:
-                    continue
-
-                aligned_features = self.align_timeframes(
-                    base_df,
-                    higher_features,
-                    self.base_timeframe,
-                    higher_tf
-                )
-                
-                if aligned_features is None:
-                    continue
-
-                rsi_col = f"rsi_{higher_tf}"
-                if 'rsi' in aligned_features.columns:
-                    df_signals[rsi_col] = aligned_features['rsi']
-
-                macd_col = f"macd_{higher_tf}"
-                if 'macd' in aligned_features.columns:
-                    df_signals[macd_col] = aligned_features['macd']
-
-            except Exception as e:
-                print(f"Warning: Failed to process signals for {higher_tf}: {str(e)}")
-                continue
-
-        return df_signals
+            print(f"  Added {added_count} features from {self.higher_timeframe}")
+            return df_features
+            
+        except Exception as e:
+            print(f"  Failed to process {self.higher_timeframe}: {str(e)}")
+            return df_features
 
     def calculate_timeframe_confirmation(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate signal confirmation across timeframes."""
+        """Calculate RSI confirmation from higher timeframe."""
         df_result = df.copy()
-        higher_timeframes = self.get_higher_timeframes()
 
         if 'rsi' not in df_result.columns:
             df_result['timeframe_confirmation'] = 0.5
             return df_result
 
-        if len(higher_timeframes) == 0:
+        if self.higher_timeframe is None:
             df_result['timeframe_confirmation'] = 0.5
             return df_result
 
-        confirmation_cols = []
-        base_rsi = df_result['rsi']
-
-        if base_rsi is not None:
-            df_result['base_is_bullish'] = (base_rsi > 50).astype(int)
-            confirmation_cols.append('base_is_bullish')
-
-        for higher_tf in higher_timeframes:
-            rsi_col = f"rsi_{higher_tf}"
-            if rsi_col in df_result.columns:
-                higher_rsi = df_result[rsi_col]
-                is_bullish = (higher_rsi > 50).astype(int)
-                bullish_col = f"is_bullish_{higher_tf}"
-                df_result[bullish_col] = is_bullish
-                confirmation_cols.append(bullish_col)
-
-        if len(confirmation_cols) > 1:
-            confirmation_scores = df_result[[col for col in confirmation_cols if col in df_result.columns]].mean(axis=1)
-            df_result['timeframe_confirmation'] = confirmation_scores
-        else:
+        rsi_higher_col = f"rsi_{self.higher_timeframe}"
+        
+        if rsi_higher_col not in df_result.columns:
             df_result['timeframe_confirmation'] = 0.5
+            return df_result
 
-        df_result['timeframe_confirmation'] = df_result['timeframe_confirmation'].fillna(0.5)
-        return df_result
+        try:
+            base_rsi = df_result['rsi']
+            higher_rsi = df_result[rsi_higher_col]
+            
+            base_bullish = (base_rsi > 50).astype(int)
+            higher_bullish = (higher_rsi > 50).astype(int)
+            
+            df_result['timeframe_confirmation'] = (base_bullish + higher_bullish) / 2.0
+            df_result['timeframe_confirmation'] = df_result['timeframe_confirmation'].fillna(0.5)
+            
+            return df_result
+        except Exception as e:
+            print(f"Warning: Timeframe confirmation failed: {str(e)}")
+            df_result['timeframe_confirmation'] = 0.5
+            return df_result
 
     def calculate_trend_alignment(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate if trends are aligned across timeframes."""
+        """Calculate trend alignment between base and higher timeframe."""
         df_result = df.copy()
-        higher_timeframes = self.get_higher_timeframes()
 
-        trend_columns = []
-
-        if 'sma_fast' in df_result.columns and 'sma_slow' in df_result.columns:
-            df_result['base_trend'] = (
-                (df_result['sma_fast'] > df_result['sma_slow']).astype(int)
-            )
-            trend_columns.append('base_trend')
-
-        for higher_tf in higher_timeframes:
-            sma_fast_col = f"sma_fast_{higher_tf}"
-            sma_slow_col = f"sma_slow_{higher_tf}"
-
-            if sma_fast_col in df_result.columns and sma_slow_col in df_result.columns:
-                df_result[f"trend_{higher_tf}"] = (
-                    (df_result[sma_fast_col] > df_result[sma_slow_col]).astype(int)
-                )
-                trend_columns.append(f"trend_{higher_tf}")
-
-        if len(trend_columns) > 1:
-            trend_data = df_result[[col for col in trend_columns if col in df_result.columns]]
-            df_result['trend_alignment'] = trend_data.mean(axis=1)
-        elif len(trend_columns) == 1:
-            df_result['trend_alignment'] = df_result[trend_columns[0]]
-        else:
+        if 'sma_fast' not in df_result.columns or 'sma_slow' not in df_result.columns:
             df_result['trend_alignment'] = 0.5
+            return df_result
 
-        df_result['trend_alignment'] = df_result['trend_alignment'].fillna(0.5)
-        return df_result
+        if self.higher_timeframe is None:
+            df_result['trend_alignment'] = 0.5
+            return df_result
+
+        sma_fast_higher_col = f"sma_fast_{self.higher_timeframe}"
+        sma_slow_higher_col = f"sma_slow_{self.higher_timeframe}"
+        
+        if sma_fast_higher_col not in df_result.columns or sma_slow_higher_col not in df_result.columns:
+            df_result['trend_alignment'] = 0.5
+            return df_result
+
+        try:
+            base_trend = (df_result['sma_fast'] > df_result['sma_slow']).astype(int)
+            higher_trend = (df_result[sma_fast_higher_col] > df_result[sma_slow_higher_col]).astype(int)
+            
+            df_result['trend_alignment'] = (base_trend + higher_trend) / 2.0
+            df_result['trend_alignment'] = df_result['trend_alignment'].fillna(0.5)
+            
+            return df_result
+        except Exception as e:
+            print(f"Warning: Trend alignment failed: {str(e)}")
+            df_result['trend_alignment'] = 0.5
+            return df_result
 
     def calculate_volatility_context(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate volatility context from higher timeframes."""
+        """Calculate relative volatility context."""
         df_result = df.copy()
-        higher_timeframes = self.get_higher_timeframes()
 
         if 'volatility' not in df_result.columns:
             df_result['high_volatility_context'] = 0
             return df_result
 
-        volatility_cols = []
-
-        if 'volatility' in df_result.columns:
-            df_result['base_volatility'] = df_result['volatility']
-            volatility_cols.append('base_volatility')
-
-        for higher_tf in higher_timeframes:
-            vol_col = f"volatility_{higher_tf}"
-            if vol_col in df_result.columns:
-                try:
-                    df_result[f"rel_volatility_{higher_tf}"] = (
-                        df_result['volatility'] / (df_result[vol_col] + 1e-6)
-                    )
-                    volatility_cols.append(f"rel_volatility_{higher_tf}")
-                except:
-                    continue
-
-        if len(volatility_cols) > 0:
-            vol_data = df_result[[col for col in volatility_cols if col in df_result.columns]]
-            if len(vol_data.columns) > 0:
-                df_result['high_volatility_context'] = vol_data.mean(axis=1)
-            else:
-                df_result['high_volatility_context'] = 0
-        else:
+        if self.higher_timeframe is None:
             df_result['high_volatility_context'] = 0
+            return df_result
 
-        return df_result
+        vol_higher_col = f"volatility_{self.higher_timeframe}"
+        
+        if vol_higher_col not in df_result.columns:
+            df_result['high_volatility_context'] = 0
+            return df_result
+
+        try:
+            relative_vol = df_result['volatility'] / (df_result[vol_higher_col] + 1e-6)
+            relative_vol = np.clip(relative_vol, 0, 10)
+            df_result['high_volatility_context'] = relative_vol
+            df_result['high_volatility_context'] = df_result['high_volatility_context'].fillna(0)
+            
+            return df_result
+        except Exception as e:
+            print(f"Warning: Volatility context failed: {str(e)}")
+            df_result['high_volatility_context'] = 0
+            return df_result
 
     def calculate_momentum_divergence(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate momentum divergence across timeframes."""
+        """Calculate momentum divergence between base and higher timeframe."""
         df_result = df.copy()
-        higher_timeframes = self.get_higher_timeframes()
 
         if 'momentum' not in df_result.columns:
             df_result['momentum_divergence_multi'] = 0
             return df_result
 
-        if len(higher_timeframes) == 0:
+        if self.higher_timeframe is None:
             df_result['momentum_divergence_multi'] = 0
             return df_result
 
-        base_momentum = df_result['momentum']
-        divergence_count = 0
-        divergence_sum = 0
+        momentum_higher_col = f"momentum_{self.higher_timeframe}"
         
-        for higher_tf in higher_timeframes:
-            momentum_col = f"momentum_{higher_tf}"
-            if momentum_col in df_result.columns:
-                try:
-                    higher_momentum = df_result[momentum_col]
-                    divergence = abs(base_momentum - higher_momentum)
-                    df_result[f"divergence_{higher_tf}"] = divergence
-                    divergence_sum += divergence
-                    divergence_count += 1
-                except:
-                    continue
-
-        if divergence_count > 0:
-            df_result['momentum_divergence_multi'] = divergence_sum / divergence_count
-        else:
+        if momentum_higher_col not in df_result.columns:
             df_result['momentum_divergence_multi'] = 0
+            return df_result
 
-        return df_result
+        try:
+            base_momentum = df_result['momentum']
+            higher_momentum = df_result[momentum_higher_col]
+            
+            divergence = abs(base_momentum - higher_momentum)
+            df_result['momentum_divergence_multi'] = divergence
+            df_result['momentum_divergence_multi'] = df_result['momentum_divergence_multi'].fillna(0)
+            
+            return df_result
+        except Exception as e:
+            print(f"Warning: Momentum divergence failed: {str(e)}")
+            df_result['momentum_divergence_multi'] = 0
+            return df_result
 
     def engineer_comprehensive_features(self, base_df: pd.DataFrame) -> pd.DataFrame:
-        """Engineer all multi-timeframe features comprehensively."""
-        print("Starting comprehensive multi-timeframe feature engineering...")
+        """Engineer multi-timeframe features using only immediate higher timeframe."""
+        print("Starting multi-timeframe feature engineering...")
         
         if base_df is None or len(base_df) == 0:
             print("Warning: Base dataframe is empty, skipping multi-timeframe features")
             return base_df
 
         print(f"  Base timeframe: {self.base_timeframe}")
-        print(f"  Available timeframes: {self.available_timeframes}")
+        print(f"  Higher timeframe: {self.higher_timeframe if self.higher_timeframe else 'None'}")
         print(f"  Base data: {len(base_df)} rows")
 
         try:
@@ -356,13 +291,13 @@ class MultiTimeframeEngineer:
             df_features = base_df.copy()
 
         try:
-            print("Calculating timeframe confirmation...")
+            print("Calculating timeframe confirmation (RSI)...")
             df_features = self.calculate_timeframe_confirmation(df_features)
         except Exception as e:
             print(f"Warning: Timeframe confirmation failed: {str(e)}")
 
         try:
-            print("Calculating trend alignment...")
+            print("Calculating trend alignment (SMA)...")
             df_features = self.calculate_trend_alignment(df_features)
         except Exception as e:
             print(f"Warning: Trend alignment failed: {str(e)}")
