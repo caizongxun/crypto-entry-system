@@ -1,107 +1,61 @@
 const API_BASE = 'http://localhost:5000/api';
 let currentSymbol = 'BTCUSDT';
 let tvChart = null;
-let tvLiveChart = null;
 let mlPredictions = [];
 let currentTimeframe = '60';
-let activeIndicators = {};
-let chartData = { opens: [], highs: [], lows: [], closes: [] };
 
 const timeframeMap = {
-    '1': { minutes: 1, interval: '1m' },
-    '5': { minutes: 5, interval: '5m' },
-    '60': { minutes: 60, interval: '1h' },
-    '240': { minutes: 240, interval: '4h' },
-    '1440': { minutes: 1440, interval: '1d' }
-};
-
-// Technical Indicator Calculations
-const indicators = {
-    sma: (prices, period = 20) => {
-        const result = [];
-        for (let i = period - 1; i < prices.length; i++) {
-            const sum = prices.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
-            result.push(sum / period);
-        }
-        return result;
-    },
-    
-    ema: (prices, period = 20) => {
-        const result = [];
-        const multiplier = 2 / (period + 1);
-        let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
-        result.push(ema);
-        
-        for (let i = period; i < prices.length; i++) {
-            ema = (prices[i] - ema) * multiplier + ema;
-            result.push(ema);
-        }
-        return result;
-    },
-    
-    bollinger: (prices, period = 20, stdDev = 2) => {
-        const sma = indicators.sma(prices, period);
-        const result = { upper: [], middle: sma, lower: [] };
-        
-        for (let i = period - 1; i < prices.length; i++) {
-            const values = prices.slice(i - period + 1, i + 1);
-            const mean = values.reduce((a, b) => a + b, 0) / period;
-            const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
-            const std = Math.sqrt(variance);
-            result.upper.push(mean + std * stdDev);
-            result.lower.push(mean - std * stdDev);
-        }
-        return result;
-    },
-    
-    rsi: (prices, period = 14) => {
-        const result = [];
-        const changes = [];
-        
-        for (let i = 1; i < prices.length; i++) {
-            changes.push(prices[i] - prices[i - 1]);
-        }
-        
-        let avgGain = 0, avgLoss = 0;
-        for (let i = 0; i < period; i++) {
-            avgGain += Math.max(changes[i], 0);
-            avgLoss += Math.abs(Math.min(changes[i], 0));
-        }
-        avgGain /= period;
-        avgLoss /= period;
-        
-        for (let i = period; i < changes.length; i++) {
-            const gain = Math.max(changes[i], 0);
-            const loss = Math.abs(Math.min(changes[i], 0));
-            avgGain = (avgGain * (period - 1) + gain) / period;
-            avgLoss = (avgLoss * (period - 1) + loss) / period;
-            const rs = avgGain / (avgLoss || 1);
-            const rsi = 100 - (100 / (1 + rs));
-            result.push(rsi);
-        }
-        return result;
-    },
-    
-    macd: (prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) => {
-        const fastEma = indicators.ema(prices, fastPeriod);
-        const slowEma = indicators.ema(prices, slowPeriod);
-        const macdLine = [];
-        
-        for (let i = 0; i < Math.min(fastEma.length, slowEma.length); i++) {
-            macdLine.push(fastEma[i] - slowEma[i]);
-        }
-        
-        const signalLine = indicators.ema(macdLine, signalPeriod);
-        return { macdLine, signalLine };
-    }
+    '1': { minutes: 1, interval: '1m', tvInterval: '1' },
+    '3': { minutes: 3, interval: '3m', tvInterval: '3' },
+    '5': { minutes: 5, interval: '5m', tvInterval: '5' },
+    '15': { minutes: 15, interval: '15m', tvInterval: '15' },
+    '30': { minutes: 30, interval: '30m', tvInterval: '30' },
+    '60': { minutes: 60, interval: '1h', tvInterval: '60' },
+    '240': { minutes: 240, interval: '4h', tvInterval: '240' },
+    '1440': { minutes: 1440, interval: '1d', tvInterval: '1D' }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
     console.log('Dashboard initialized');
+    initializeChart();
     initializeEventListeners();
     loadDashboardData();
     setInterval(loadDashboardData, 15000);
 });
+
+function initializeChart() {
+    const container = document.getElementById('priceChart');
+    
+    const symbol = 'BINANCE:' + currentSymbol.replace('USDT', '') + 'USDT';
+    const interval = timeframeMap[currentTimeframe]?.tvInterval || '60';
+    
+    tvChart = new TradingView.widget({
+        autosize: true,
+        symbol: symbol,
+        interval: interval,
+        timezone: 'Etc/UTC',
+        theme: 'dark',
+        style: '1',
+        locale: 'en',
+        toolbar_bg: '#1e2139',
+        enable_publishing: false,
+        allow_symbol_change: false,
+        container_id: 'priceChart',
+        hide_side_toolbar: false,
+        hide_top_toolbar: false,
+        withdateranges: true,
+        studies: [],
+        overrides: {
+            'mainSeriesProperties.candleStyle.upColor': '#00c853',
+            'mainSeriesProperties.candleStyle.downColor': '#ff3860',
+            'mainSeriesProperties.candleStyle.borderUpColor': '#00c853',
+            'mainSeriesProperties.candleStyle.borderDownColor': '#ff3860',
+            'mainSeriesProperties.candleStyle.wickUpColor': '#00c853',
+            'mainSeriesProperties.candleStyle.wickDownColor': '#ff3860',
+            'volumePaneSize': 'small',
+        }
+    });
+}
 
 function initializeEventListeners() {
     document.querySelectorAll('.nav-item').forEach(item => {
@@ -112,54 +66,45 @@ function initializeEventListeners() {
         });
     });
 
-    // Timeframe buttons
-    document.querySelectorAll('.tf-btn').forEach(btn => {
+    // Timeframe buttons - Dashboard
+    const dashboardTimeframeButtons = document.querySelectorAll('#dashboard-section .tf-btn');
+    dashboardTimeframeButtons.forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
             const container = e.target.closest('.card-header');
-            if (!container) return;
-            
-            container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
-            e.target.classList.add('active');
-            
-            const newTimeframe = e.target.dataset.tf;
-            if (newTimeframe !== currentTimeframe) {
-                currentTimeframe = newTimeframe;
-                console.log('Timeframe changed to:', currentTimeframe);
-                loadDashboardData();
+            if (container) {
+                container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                
+                const newTimeframe = e.target.dataset.tf;
+                if (newTimeframe !== currentTimeframe) {
+                    currentTimeframe = newTimeframe;
+                    console.log('Timeframe changed to:', currentTimeframe);
+                    updateChart();
+                }
             }
         });
     });
 
-    // Indicator buttons - Dashboard
-    const dashboardIndicators = document.getElementById('dashboardIndicators');
-    if (dashboardIndicators) {
-        dashboardIndicators.querySelectorAll('.indicator-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                const indicator = e.target.dataset.indicator;
-                e.target.classList.toggle('active');
-                activeIndicators[indicator] = e.target.classList.contains('active');
-                console.log('Indicator toggled:', indicator, activeIndicators[indicator]);
-                updateChartIndicators();
-            });
+    // Timeframe buttons - Market Data
+    const marketTimeframeButtons = document.querySelectorAll('#market-section .tf-btn');
+    marketTimeframeButtons.forEach(btn => {
+        btn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const container = e.target.closest('.card-header');
+            if (container) {
+                container.querySelectorAll('.tf-btn').forEach(b => b.classList.remove('active'));
+                e.target.classList.add('active');
+                
+                const newTimeframe = e.target.dataset.tf;
+                if (newTimeframe !== currentTimeframe) {
+                    currentTimeframe = newTimeframe;
+                    console.log('Timeframe changed to:', currentTimeframe);
+                    updateChart();
+                }
+            }
         });
-    }
-
-    // Indicator buttons - Market
-    const marketIndicators = document.getElementById('marketIndicators');
-    if (marketIndicators) {
-        marketIndicators.querySelectorAll('.indicator-btn').forEach(btn => {
-            btn.addEventListener('click', (e) => {
-                e.preventDefault();
-                const indicator = e.target.dataset.indicator;
-                e.target.classList.toggle('active');
-                activeIndicators[indicator] = e.target.classList.contains('active');
-                console.log('Indicator toggled:', indicator, activeIndicators[indicator]);
-                updateChartIndicators();
-            });
-        });
-    }
+    });
 
     const symbolInput = document.getElementById('symbolInput');
     if (symbolInput) {
@@ -168,6 +113,7 @@ function initializeEventListeners() {
             if (!currentSymbol.endsWith('USDT')) {
                 currentSymbol = currentSymbol + 'USDT';
             }
+            updateChart();
             loadDashboardData();
         });
     }
@@ -183,6 +129,14 @@ function initializeEventListeners() {
     }
 }
 
+function updateChart() {
+    if (tvChart) {
+        tvChart.remove();
+        tvChart = null;
+    }
+    initializeChart();
+}
+
 function switchSection(section) {
     document.querySelectorAll('.section').forEach(s => s.classList.remove('active'));
     document.querySelectorAll('.nav-item').forEach(n => n.classList.remove('active'));
@@ -196,95 +150,19 @@ function switchSection(section) {
     if (navItem) {
         navItem.classList.add('active');
     }
-    
-    setTimeout(() => {
-        if (section === 'market' && tvLiveChart) {
-            tvLiveChart.applyOptions({ width: document.getElementById('liveChart')?.clientWidth || 800 });
-        }
-    }, 100);
-}
-
-function updateChartIndicators() {
-    if (!tvChart || !chartData.closes.length) return;
-    
-    const closes = chartData.closes.map(v => parseFloat(v));
-    const baseLine = closes[closes.length - 1];
-    const baseTime = Math.floor(Date.now() / 1000);
-    const timeframeConfig = timeframeMap[currentTimeframe];
-    const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
-    
-    // Clear existing series except candlestick
-    if (tvChart.series && tvChart.series.length > 1) {
-        for (let i = tvChart.series.length - 1; i >= 1; i--) {
-            tvChart.removeSeries(tvChart.series[i]);
-        }
-    }
-    
-    // Add SMA
-    if (activeIndicators.sma) {
-        const smaValues = indicators.sma(closes, 20);
-        const smaData = smaValues.map((val, idx) => ({
-            time: baseTime - (closes.length - (idx + closes.length - smaValues.length)) * intervalSeconds,
-            value: val
-        }));
-        const smaSeries = tvChart.addLineSeries({ color: '#FFD700', lineWidth: 1 });
-        smaSeries.setData(smaData);
-    }
-    
-    // Add EMA
-    if (activeIndicators.ema) {
-        const emaValues = indicators.ema(closes, 20);
-        const emaData = emaValues.map((val, idx) => ({
-            time: baseTime - (closes.length - (idx + closes.length - emaValues.length)) * intervalSeconds,
-            value: val
-        }));
-        const emaSeries = tvChart.addLineSeries({ color: '#FF6B9D', lineWidth: 1 });
-        emaSeries.setData(emaData);
-    }
-    
-    // Add Bollinger Bands
-    if (activeIndicators.bb) {
-        const bbValues = indicators.bollinger(closes, 20, 2);
-        const bbUpper = bbValues.upper.map((val, idx) => ({
-            time: baseTime - (closes.length - (idx + closes.length - bbValues.upper.length)) * intervalSeconds,
-            value: val
-        }));
-        const bbLower = bbValues.lower.map((val, idx) => ({
-            time: baseTime - (closes.length - (idx + closes.length - bbValues.lower.length)) * intervalSeconds,
-            value: val
-        }));
-        
-        const bbUpperSeries = tvChart.addLineSeries({ color: '#00FF00', lineWidth: 1, lineStyle: 2 });
-        const bbLowerSeries = tvChart.addLineSeries({ color: '#00FF00', lineWidth: 1, lineStyle: 2 });
-        bbUpperSeries.setData(bbUpper);
-        bbLowerSeries.setData(bbLower);
-    }
-    
-    console.log('Chart indicators updated:', activeIndicators);
 }
 
 async function loadDashboardData() {
     try {
-        console.log('Loading dashboard data with timeframe:', currentTimeframe);
-        
-        const interval = timeframeMap[currentTimeframe]?.interval || '1h';
-        const limit = currentTimeframe === '1' ? 200 : currentTimeframe === '5' ? 150 : 100;
+        console.log('Loading dashboard data...');
         
         const promises = [
-            fetch(`${API_BASE}/price?symbol=${currentSymbol}&interval=${interval}&limit=${limit}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/ml-prediction?symbol=${currentSymbol}`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/sentiment`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message })),
             fetch(`${API_BASE}/trading/account-summary`).then(r => r.json()).catch(err => ({ status: 'error', message: err.message }))
         ];
         
-        const [priceData, predictions, sentiment, accountData] = await Promise.all(promises);
-
-        if (priceData.status === 'success') {
-            chartData = priceData.data;
-            updatePriceChart(priceData);
-        } else {
-            console.error('Price data error:', priceData.message);
-        }
+        const [predictions, sentiment, accountData] = await Promise.all(promises);
         
         if (predictions.status === 'success') {
             updateMLPredictions(predictions);
@@ -305,90 +183,6 @@ async function loadDashboardData() {
         }
     } catch (error) {
         console.error('Error loading dashboard data:', error);
-    }
-}
-
-function updatePriceChart(data) {
-    if (data.status === 'error') {
-        console.error('Price data error:', data.message);
-        return;
-    }
-
-    const container = document.getElementById('priceChart');
-    if (!container) {
-        console.error('Chart container not found');
-        return;
-    }
-
-    if (!data.data || !data.data.closes) {
-        console.error('Invalid price data structure');
-        return;
-    }
-
-    try {
-        const LWC = window.LightweightCharts;
-        if (!LWC) {
-            console.error('LightweightCharts library not loaded');
-            return;
-        }
-
-        if (!tvChart) {
-            tvChart = LWC.createChart(container, {
-                layout: {
-                    textColor: '#b0b8c8',
-                    background: { color: '#1e2139' }
-                },
-                width: container.clientWidth,
-                height: 400,
-                timeScale: {
-                    timeVisible: true,
-                    secondsVisible: false
-                },
-                localization: {
-                    priceFormatter: price => '$' + price.toFixed(2)
-                }
-            });
-
-            const candlestickSeries = tvChart.addCandlestickSeries({
-                upColor: '#00c853',
-                downColor: '#ff3860',
-                borderVisible: false,
-                wickUpColor: '#00c853',
-                wickDownColor: '#ff3860'
-            });
-
-            tvChart.candlestickSeries = candlestickSeries;
-        }
-
-        const candleData = [];
-        const baseTime = Math.floor(Date.now() / 1000);
-        const timeframeConfig = timeframeMap[currentTimeframe];
-        const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
-
-        for (let i = 0; i < data.data.closes.length; i++) {
-            candleData.push({
-                time: baseTime - (data.data.closes.length - i) * intervalSeconds,
-                open: parseFloat(data.data.opens[i]),
-                high: parseFloat(data.data.highs[i]),
-                low: parseFloat(data.data.lows[i]),
-                close: parseFloat(data.data.closes[i])
-            });
-        }
-
-        tvChart.candlestickSeries.setData(candleData);
-        tvChart.timeScale().fitContent();
-        
-        // Update indicators when chart updates
-        updateChartIndicators();
-        
-        console.log('TradingView chart updated with', candleData.length, 'candles');
-    } catch (err) {
-        console.error('Failed to update TradingView chart:', err);
-    }
-
-    const currentPriceElement = document.getElementById('currentPrice');
-    if (currentPriceElement && data.latest) {
-        currentPriceElement.textContent = `$${data.latest.price.toFixed(2)}`;
     }
 }
 
