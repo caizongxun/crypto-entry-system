@@ -9,14 +9,8 @@ stoch_overbought = input.int(80, title="Stochastic Overbought Level")
 stoch_oversold = input.int(20, title="Stochastic Oversold Level")
 
 atr_period = input.int(14, title="ATR Period")
-atr_multiplier = input.float(1.5, title="ATR Multiplier for Levels")
-
 cci_period = input.int(20, title="CCI Period")
 cci_threshold = input.float(100, title="CCI Threshold")
-
-use_stochastic = input.bool(true, title="Use Stochastic Filter")
-use_cci = input.bool(true, title="Use CCI Filter")
-use_atr_volatility = input.bool(true, title="Use ATR Volatility Filter")
 
 lowest_low = ta.lowest(low, stoch_k_period)
 highest_high = ta.highest(high, stoch_k_period)
@@ -25,56 +19,39 @@ k = ta.sma(k_raw, stoch_k_smooth)
 d = ta.sma(k, stoch_d_smooth)
 
 atr = ta.atr(atr_period)
-atr_upper = high + (atr * atr_multiplier)
-atr_lower = low - (atr * atr_multiplier)
-
 cci = ta.cci(close, cci_period)
 
-stoch_buy_confirmed = k > d and k < stoch_oversold
-stoch_sell_confirmed = k < d and k > stoch_overbought
+stoch_in_range = k > stoch_oversold and k < stoch_overbought
+k_crosses_d_up = ta.crossover(k, d)
+k_crosses_d_down = ta.crossunder(k, d)
 
-cci_buy_confirmed = cci > 0 and cci < cci_threshold
-cci_sell_confirmed = cci < 0 and cci > -cci_threshold
+cci_weak_buy = cci > 0 and cci < cci_threshold
+cci_weak_sell = cci < 0 and cci > -cci_threshold
 
-volatility_low = atr < ta.sma(atr, 20)
-volatility_medium = atr >= ta.sma(atr, 20) and atr <= ta.sma(atr, 20) * 1.5
+atr_normal = atr > ta.sma(atr, 20) * 0.8 and atr < ta.sma(atr, 20) * 1.5
 
-buy_confirmed = false
-sell_confirmed = false
-confirm_strength = 0.0
+buy_strong_confirm = false
+sell_strong_confirm = false
 
-if use_stochastic
-    if stoch_buy_confirmed
-        buy_confirmed := true
-        confirm_strength += 1
-    if stoch_sell_confirmed
-        sell_confirmed := true
-        confirm_strength += 1
+if stoch_in_range and k_crosses_d_up and cci_weak_buy and atr_normal
+    buy_strong_confirm := true
 
-if use_cci
-    if cci_buy_confirmed
-        buy_confirmed := buy_confirmed or true
-        confirm_strength += 1
-    if cci_sell_confirmed
-        sell_confirmed := sell_confirmed or true
-        confirm_strength += 1
-
-if use_atr_volatility
-    if volatility_medium
-        confirm_strength += 0.5
+if stoch_in_range and k_crosses_d_down and cci_weak_sell and atr_normal
+    sell_strong_confirm := true
 
 plot(k, title="Stochastic K", color=color.blue, linewidth=2)
 plot(d, title="Stochastic D", color=color.red, linewidth=2)
 hline(stoch_overbought, linestyle=hline.style_dashed, color=color.orange, title="Overbought")
 hline(stoch_oversold, linestyle=hline.style_dashed, color=color.orange, title="Oversold")
+hline(50, linestyle=hline.style_dotted, color=color.gray, title="Middle")
 
 plot(cci, title="CCI", color=color.purple, linewidth=2)
 hline(cci_threshold, linestyle=hline.style_dotted, color=color.gray)
 hline(-cci_threshold, linestyle=hline.style_dotted, color=color.gray)
 hline(0, linestyle=hline.style_dashed, color=color.black)
 
-plot(atr_upper, title="ATR Upper", color=color.green, linewidth=1, transp=50)
-plot(atr_lower, title="ATR Lower", color=color.red, linewidth=1, transp=50)
+plotshape(buy_strong_confirm, title="Buy Confirmed", style=shape.circle, location=location.bottom, color=color.green, size=size.small)
+plotshape(sell_strong_confirm, title="Sell Confirmed", style=shape.circle, location=location.top, color=color.red, size=size.small)
 
-plotshape(buy_confirmed, title="Buy Confirmed", style=shape.circle, location=location.bottom, color=color.green, size=size.tiny)
-plotshape(sell_confirmed, title="Sell Confirmed", style=shape.circle, location=location.top, color=color.red, size=size.tiny)
+alertcondition(buy_strong_confirm, title="Buy Confirmation Alert", message="STRONG BUY CONFIRMATION")
+alertcondition(sell_strong_confirm, title="Sell Confirmation Alert", message="STRONG SELL CONFIRMATION")
