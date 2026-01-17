@@ -29,13 +29,21 @@ class DataProcessor:
         """Check if data already cached locally."""
         cache_path = self.get_cache_path()
         exists = cache_path.exists()
-        print(f"Cache check for {self.symbol} ({self.timeframe}): {'Found' if exists else 'Not found'}")
+        if exists:
+            print(f"Cache found for {self.symbol} ({self.timeframe})")
+        else:
+            print(f"Cache not found for {self.symbol} ({self.timeframe})")
         return exists
 
     def get_hf_file_path(self) -> str:
-        """Construct HuggingFace dataset file path."""
+        """Construct HuggingFace dataset file path.
+        
+        Path format: klines/{SYMBOL}/{BASE}_{TIMEFRAME}.parquet
+        Example: klines/BTCUSDT/BTC_15m.parquet
+        """
         filename = f"{self.base}_{self.timeframe}.parquet"
-        return f"{HUGGINGFACE_CONFIG['base_path']}/{self.symbol}/{filename}"
+        hf_path = f"klines/{self.symbol}/{filename}"
+        return hf_path
 
     def download_data(self) -> pd.DataFrame:
         """Download data from HuggingFace if not cached."""
@@ -48,18 +56,20 @@ class DataProcessor:
         print(f"Downloading {self.symbol} {self.timeframe} from HuggingFace...")
         try:
             hf_file_path = self.get_hf_file_path()
+            print(f"HuggingFace path: {hf_file_path}")
+            
             local_path = hf_hub_download(
                 repo_id=self.repo_id,
                 filename=hf_file_path,
-                repo_type=HUGGINGFACE_CONFIG['repo_type'],
-                cache_dir=str(self.cache_dir)
+                repo_type=HUGGINGFACE_CONFIG['repo_type']
             )
             df = pd.read_parquet(local_path)
-            print(f"Download successful. Saving to cache at {cache_path}")
+            print(f"Download successful: {len(df)} rows")
+            print(f"Saving to cache at {cache_path}")
             df.to_parquet(cache_path, index=False)
             return df
         except Exception as e:
-            print(f"Error downloading data: {str(e)}")
+            print(f"Error downloading from HuggingFace: {str(e)}")
             raise
 
     def load_data(self) -> pd.DataFrame:
