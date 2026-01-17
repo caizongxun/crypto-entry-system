@@ -8,10 +8,12 @@ sys.path.insert(0, str(Path(__file__).parent))
 from models.ml_model import CryptoEntryModel
 
 
-def train_mode(symbol, timeframe, model_type, optimization_level):
+def train_mode(symbol, timeframe, model_type, optimization_level, use_multi_timeframe=True):
     print("="*60)
     print(f"Training {timeframe.upper()} BB Model for {symbol}")
     print(f"Optimization Level: {optimization_level}")
+    if use_multi_timeframe:
+        print(f"Multi-Timeframe Features: Enabled")
     print("="*60)
     
     try:
@@ -20,7 +22,8 @@ def train_mode(symbol, timeframe, model_type, optimization_level):
             symbol=symbol,
             timeframe=timeframe,
             model_type=model_type,
-            optimization_level=optimization_level
+            optimization_level=optimization_level,
+            use_multi_timeframe=use_multi_timeframe
         )
         model.load_data()
         
@@ -37,6 +40,8 @@ def train_mode(symbol, timeframe, model_type, optimization_level):
         print(f"Timeframe: {results['timeframe']}")
         print(f"Model Type: {results['model_type']}")
         print(f"Optimization: {results.get('optimization', 'none')}")
+        if 'multi_timeframe' in results:
+            print(f"Multi-Timeframe: {results['multi_timeframe']}")
         print(f"Train Accuracy: {results['train_accuracy']:.4f}")
         print(f"Test Accuracy: {results['test_accuracy']:.4f}")
         print(f"Train Precision: {results['train_precision']:.4f}")
@@ -79,11 +84,16 @@ Examples:
   python main.py --symbol BTCUSDT --timeframe 15m             Train with parameters
   python main.py --symbol ETHUSDT --timeframe 1h --opt aggressive
   python main.py --symbol LTCUSDT --timeframe 4h --model-type lightgbm --opt balanced
+  python main.py --symbol BTCUSDT --timeframe 1h --no-multi-tf  Train without multi-timeframe features
 
 Optimization Levels:
   conservative    High precision, fewer signals (precision 65-75%)
   balanced        Good precision and recall (precision 55-65%)
   aggressive      More signals, moderate precision (precision 45-55%)
+
+Multi-Timeframe Features:
+  By default, models are trained with multi-timeframe features that reference
+  higher timeframes for better context. Use --no-multi-tf to disable.
         """
     )
     
@@ -124,6 +134,12 @@ Optimization Levels:
         help='Optimization level (default: balanced)'
     )
     
+    parser.add_argument(
+        '--no-multi-tf',
+        action='store_true',
+        help='Disable multi-timeframe feature engineering'
+    )
+    
     args = parser.parse_args()
     
     if args.train or args.symbol != 'BTCUSDT' or args.timeframe != '1h' or args.model_type != 'xgboost' or args.opt != 'balanced':
@@ -131,11 +147,14 @@ Optimization Levels:
         if not symbol.endswith('USDT'):
             symbol = symbol + 'USDT'
         
+        use_multi_tf = not args.no_multi_tf
+        
         success = train_mode(
             symbol=symbol,
             timeframe=args.timeframe,
             model_type=args.model_type,
-            optimization_level=args.opt
+            optimization_level=args.opt,
+            use_multi_timeframe=use_multi_tf
         )
         sys.exit(0 if success else 1)
     else:
