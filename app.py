@@ -94,6 +94,12 @@ def index():
     return render_template('dashboard.html')
 
 
+@app.route('/15m-analysis')
+def analysis_15m():
+    """Render 15m analysis dashboard."""
+    return render_template('15m_analysis.html')
+
+
 @app.route('/chart')
 def advanced_chart():
     """Render advanced TradingView-style chart."""
