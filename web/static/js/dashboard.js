@@ -4,12 +4,96 @@ let tvChart = null;
 let tvLiveChart = null;
 let mlPredictions = [];
 let currentTimeframe = '60';
+let activeIndicators = {};
+let chartData = { opens: [], highs: [], lows: [], closes: [] };
+
 const timeframeMap = {
     '1': { minutes: 1, interval: '1m' },
     '5': { minutes: 5, interval: '5m' },
     '60': { minutes: 60, interval: '1h' },
     '240': { minutes: 240, interval: '4h' },
     '1440': { minutes: 1440, interval: '1d' }
+};
+
+// Technical Indicator Calculations
+const indicators = {
+    sma: (prices, period = 20) => {
+        const result = [];
+        for (let i = period - 1; i < prices.length; i++) {
+            const sum = prices.slice(i - period + 1, i + 1).reduce((a, b) => a + b, 0);
+            result.push(sum / period);
+        }
+        return result;
+    },
+    
+    ema: (prices, period = 20) => {
+        const result = [];
+        const multiplier = 2 / (period + 1);
+        let ema = prices.slice(0, period).reduce((a, b) => a + b, 0) / period;
+        result.push(ema);
+        
+        for (let i = period; i < prices.length; i++) {
+            ema = (prices[i] - ema) * multiplier + ema;
+            result.push(ema);
+        }
+        return result;
+    },
+    
+    bollinger: (prices, period = 20, stdDev = 2) => {
+        const sma = indicators.sma(prices, period);
+        const result = { upper: [], middle: sma, lower: [] };
+        
+        for (let i = period - 1; i < prices.length; i++) {
+            const values = prices.slice(i - period + 1, i + 1);
+            const mean = values.reduce((a, b) => a + b, 0) / period;
+            const variance = values.reduce((a, b) => a + Math.pow(b - mean, 2), 0) / period;
+            const std = Math.sqrt(variance);
+            result.upper.push(mean + std * stdDev);
+            result.lower.push(mean - std * stdDev);
+        }
+        return result;
+    },
+    
+    rsi: (prices, period = 14) => {
+        const result = [];
+        const changes = [];
+        
+        for (let i = 1; i < prices.length; i++) {
+            changes.push(prices[i] - prices[i - 1]);
+        }
+        
+        let avgGain = 0, avgLoss = 0;
+        for (let i = 0; i < period; i++) {
+            avgGain += Math.max(changes[i], 0);
+            avgLoss += Math.abs(Math.min(changes[i], 0));
+        }
+        avgGain /= period;
+        avgLoss /= period;
+        
+        for (let i = period; i < changes.length; i++) {
+            const gain = Math.max(changes[i], 0);
+            const loss = Math.abs(Math.min(changes[i], 0));
+            avgGain = (avgGain * (period - 1) + gain) / period;
+            avgLoss = (avgLoss * (period - 1) + loss) / period;
+            const rs = avgGain / (avgLoss || 1);
+            const rsi = 100 - (100 / (1 + rs));
+            result.push(rsi);
+        }
+        return result;
+    },
+    
+    macd: (prices, fastPeriod = 12, slowPeriod = 26, signalPeriod = 9) => {
+        const fastEma = indicators.ema(prices, fastPeriod);
+        const slowEma = indicators.ema(prices, slowPeriod);
+        const macdLine = [];
+        
+        for (let i = 0; i < Math.min(fastEma.length, slowEma.length); i++) {
+            macdLine.push(fastEma[i] - slowEma[i]);
+        }
+        
+        const signalLine = indicators.ema(macdLine, signalPeriod);
+        return { macdLine, signalLine };
+    }
 };
 
 document.addEventListener('DOMContentLoaded', () => {
@@ -28,6 +112,7 @@ function initializeEventListeners() {
         });
     });
 
+    // Timeframe buttons
     document.querySelectorAll('.tf-btn').forEach(btn => {
         btn.addEventListener('click', (e) => {
             e.preventDefault();
@@ -40,11 +125,41 @@ function initializeEventListeners() {
             const newTimeframe = e.target.dataset.tf;
             if (newTimeframe !== currentTimeframe) {
                 currentTimeframe = newTimeframe;
-                console.log('Timeframe changed to:', currentTimeframe, timeframeMap[currentTimeframe]);
+                console.log('Timeframe changed to:', currentTimeframe);
                 loadDashboardData();
             }
         });
     });
+
+    // Indicator buttons - Dashboard
+    const dashboardIndicators = document.getElementById('dashboardIndicators');
+    if (dashboardIndicators) {
+        dashboardIndicators.querySelectorAll('.indicator-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const indicator = e.target.dataset.indicator;
+                e.target.classList.toggle('active');
+                activeIndicators[indicator] = e.target.classList.contains('active');
+                console.log('Indicator toggled:', indicator, activeIndicators[indicator]);
+                updateChartIndicators();
+            });
+        });
+    }
+
+    // Indicator buttons - Market
+    const marketIndicators = document.getElementById('marketIndicators');
+    if (marketIndicators) {
+        marketIndicators.querySelectorAll('.indicator-btn').forEach(btn => {
+            btn.addEventListener('click', (e) => {
+                e.preventDefault();
+                const indicator = e.target.dataset.indicator;
+                e.target.classList.toggle('active');
+                activeIndicators[indicator] = e.target.classList.contains('active');
+                console.log('Indicator toggled:', indicator, activeIndicators[indicator]);
+                updateChartIndicators();
+            });
+        });
+    }
 
     const symbolInput = document.getElementById('symbolInput');
     if (symbolInput) {
@@ -89,6 +204,65 @@ function switchSection(section) {
     }, 100);
 }
 
+function updateChartIndicators() {
+    if (!tvChart || !chartData.closes.length) return;
+    
+    const closes = chartData.closes.map(v => parseFloat(v));
+    const baseLine = closes[closes.length - 1];
+    const baseTime = Math.floor(Date.now() / 1000);
+    const timeframeConfig = timeframeMap[currentTimeframe];
+    const intervalSeconds = (timeframeConfig?.minutes || 60) * 60;
+    
+    // Clear existing series except candlestick
+    if (tvChart.series && tvChart.series.length > 1) {
+        for (let i = tvChart.series.length - 1; i >= 1; i--) {
+            tvChart.removeSeries(tvChart.series[i]);
+        }
+    }
+    
+    // Add SMA
+    if (activeIndicators.sma) {
+        const smaValues = indicators.sma(closes, 20);
+        const smaData = smaValues.map((val, idx) => ({
+            time: baseTime - (closes.length - (idx + closes.length - smaValues.length)) * intervalSeconds,
+            value: val
+        }));
+        const smaSeries = tvChart.addLineSeries({ color: '#FFD700', lineWidth: 1 });
+        smaSeries.setData(smaData);
+    }
+    
+    // Add EMA
+    if (activeIndicators.ema) {
+        const emaValues = indicators.ema(closes, 20);
+        const emaData = emaValues.map((val, idx) => ({
+            time: baseTime - (closes.length - (idx + closes.length - emaValues.length)) * intervalSeconds,
+            value: val
+        }));
+        const emaSeries = tvChart.addLineSeries({ color: '#FF6B9D', lineWidth: 1 });
+        emaSeries.setData(emaData);
+    }
+    
+    // Add Bollinger Bands
+    if (activeIndicators.bb) {
+        const bbValues = indicators.bollinger(closes, 20, 2);
+        const bbUpper = bbValues.upper.map((val, idx) => ({
+            time: baseTime - (closes.length - (idx + closes.length - bbValues.upper.length)) * intervalSeconds,
+            value: val
+        }));
+        const bbLower = bbValues.lower.map((val, idx) => ({
+            time: baseTime - (closes.length - (idx + closes.length - bbValues.lower.length)) * intervalSeconds,
+            value: val
+        }));
+        
+        const bbUpperSeries = tvChart.addLineSeries({ color: '#00FF00', lineWidth: 1, lineStyle: 2 });
+        const bbLowerSeries = tvChart.addLineSeries({ color: '#00FF00', lineWidth: 1, lineStyle: 2 });
+        bbUpperSeries.setData(bbUpper);
+        bbLowerSeries.setData(bbLower);
+    }
+    
+    console.log('Chart indicators updated:', activeIndicators);
+}
+
 async function loadDashboardData() {
     try {
         console.log('Loading dashboard data with timeframe:', currentTimeframe);
@@ -106,6 +280,7 @@ async function loadDashboardData() {
         const [priceData, predictions, sentiment, accountData] = await Promise.all(promises);
 
         if (priceData.status === 'success') {
+            chartData = priceData.data;
             updatePriceChart(priceData);
         } else {
             console.error('Price data error:', priceData.message);
@@ -202,6 +377,10 @@ function updatePriceChart(data) {
 
         tvChart.candlestickSeries.setData(candleData);
         tvChart.timeScale().fitContent();
+        
+        // Update indicators when chart updates
+        updateChartIndicators();
+        
         console.log('TradingView chart updated with', candleData.length, 'candles');
     } catch (err) {
         console.error('Failed to update TradingView chart:', err);
