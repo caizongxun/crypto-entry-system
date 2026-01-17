@@ -10,6 +10,5 @@ Flask==3.0.0
 flask-cors==4.0.0
 python-dotenv==1.0.0
 textblob==0.17.1
-https://download.pytorch.org/whl/cpu/torch-2.0.1%2Bcpu-cp311-cp311-win_amd64.whl
 huggingface-hub==0.19.4
 kaleido==0.2.1
