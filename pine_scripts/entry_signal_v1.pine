@@ -26,9 +26,7 @@ rsi = ta.rsi(close, rsi_period)
 sma_fast = ta.sma(close, sma_fast_period)
 sma_slow = ta.sma(close, sma_slow_period)
 
-macd_line = ta.macd(close, macd_fast, macd_slow, macd_signal_length)[0]
-macd_signal = ta.macd(close, macd_fast, macd_slow, macd_signal_length)[1]
-macd_histogram = macd_line - macd_signal
+[macd_line, macd_signal, macd_histogram] = ta.macd(close, macd_fast, macd_slow, macd_signal_length)
 
 bb_middle = ta.sma(close, bb_period)
 bb_dev = ta.stdev(close, bb_period)
