@@ -2,8 +2,7 @@ from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 import pandas as pd
 from datetime import datetime, timedelta
-import yfinance as yf
-import binance
+import requests
 from binance.client import Client
 import os
 from dotenv import load_dotenv
@@ -33,7 +32,12 @@ paper_trading = PaperTradingEngine(initial_balance=10000.0)
 
 binance_api_key = os.getenv('BINANCE_API_KEY')
 binance_api_secret = os.getenv('BINANCE_API_SECRET')
-client = Client(api_key=binance_api_key, api_secret=binance_api_secret)
+
+if binance_api_key and binance_api_secret:
+    client = Client(api_key=binance_api_key, api_secret=binance_api_secret)
+else:
+    client = None
+    print('Warning: Binance API keys not configured. Price data will use public endpoints.')
 
 
 @app.route('/')
@@ -44,29 +48,53 @@ def index():
 
 @app.route('/api/price', methods=['GET'])
 def get_price():
-    """Get current price data."""
+    """Get current price data from Binance."""
     try:
         symbol = request.args.get('symbol', 'BTCUSDT')
         interval = request.args.get('interval', '1h')
         limit = int(request.args.get('limit', 100))
         
-        ticker = symbol.replace('USDT', '')
-        data = yf.download(f'{ticker}-USDT', period=f'{limit}d', interval='1h', progress=False)
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        klines = requests.get(
+            'https://api.binance.com/api/v3/klines',
+            params={
+                'symbol': symbol,
+                'interval': interval,
+                'limit': min(limit, 1000)
+            },
+            timeout=10
+        ).json()
+        
+        if isinstance(klines, dict) and 'code' in klines:
+            return jsonify({'status': 'error', 'message': klines.get('msg', 'Binance API error')}), 400
+        
+        data = {
+            'timestamps': [],
+            'opens': [],
+            'highs': [],
+            'lows': [],
+            'closes': [],
+            'volumes': []
+        }
+        
+        for kline in klines:
+            data['timestamps'].append(datetime.fromtimestamp(kline[0] / 1000).strftime('%Y-%m-%d %H:%M:%S'))
+            data['opens'].append(float(kline[1]))
+            data['highs'].append(float(kline[2]))
+            data['lows'].append(float(kline[3]))
+            data['closes'].append(float(kline[4]))
+            data['volumes'].append(float(kline[7]))
         
         result = {
             'status': 'success',
             'symbol': symbol,
-            'data': {
-                'timestamps': data.index.strftime('%Y-%m-%d %H:%M:%S').tolist(),
-                'opens': data['Open'].tolist(),
-                'highs': data['High'].tolist(),
-                'lows': data['Low'].tolist(),
-                'closes': data['Close'].tolist(),
-                'volumes': data['Volume'].tolist()
-            },
+            'interval': interval,
+            'data': data,
             'latest': {
-                'price': float(data['Close'].iloc[-1]),
-                'timestamp': data.index[-1].strftime('%Y-%m-%d %H:%M:%S')
+                'price': data['closes'][-1],
+                'timestamp': data['timestamps'][-1]
             }
         }
         
