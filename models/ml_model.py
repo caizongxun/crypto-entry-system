@@ -1,6 +1,6 @@
 import pandas as pd
 import numpy as np
-from typing import Tuple, Dict, Optional
+from typing import Tuple, Dict, Optional, List
 from sklearn.preprocessing import StandardScaler
 from sklearn.model_selection import train_test_split
 from sklearn.ensemble import RandomForestClassifier
@@ -19,6 +19,7 @@ from models.config import ML_CONFIG, MODEL_CONFIG, DEFAULT_SYMBOL, DEFAULT_TIMEF
 from models.data_processor import DataProcessor
 from models.feature_engineer import FeatureEngineer
 from models.multi_timeframe_engineer import MultiTimeframeEngineer
+from models.feature_selector import FeatureSelector
 from models.signal_evaluator import SignalEvaluator
 
 
@@ -34,16 +35,18 @@ class CryptoEntryModel:
 
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
                  model_type: str = 'xgboost', optimization_level: str = 'balanced',
-                 use_multi_timeframe: bool = True):
+                 use_multi_timeframe: bool = True, use_feature_selection: bool = True):
         self.symbol = symbol
         self.timeframe = timeframe
         self.model_type = model_type
         self.optimization_level = optimization_level
         self.use_multi_timeframe = use_multi_timeframe
+        self.use_feature_selection = use_feature_selection
         
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
         self.signal_evaluator = SignalEvaluator()
+        self.feature_selector = FeatureSelector(n_features=25) if use_feature_selection else None
         
         if self.use_multi_timeframe:
             self.multi_tf_engineer = MultiTimeframeEngineer(symbol, timeframe)
@@ -56,6 +59,7 @@ class CryptoEntryModel:
         self.raw_data = None
         self.higher_tf_data = None
         self.feature_data = None
+        self.selected_feature_names = None
         self.X_train = None
         self.X_test = None
         self.y_train = None
@@ -182,8 +186,11 @@ class CryptoEntryModel:
 
         return df_bb
 
-    def calculate_bounce_target(self, df: pd.DataFrame) -> np.ndarray:
-        """Calculate if BB touch/break resulted in effective bounce."""
+    def calculate_bounce_target_improved(self, df: pd.DataFrame) -> np.ndarray:
+        """Improved bounce target calculation with multiple lookforward periods.
+        
+        Stricter criteria: requires sustained bounce with minimum threshold.
+        """
         lookforward = self.timeframe_config['lookforward']
         bounce_threshold = self.timeframe_config['bounce_threshold']
 
@@ -199,16 +206,20 @@ class CryptoEntryModel:
                 future_high = df['high'].iloc[i:i+lookforward].max()
                 current_close = df['close'].iloc[i]
                 bounce_pct = (future_high - current_close) / current_close
-
-                if bounce_pct > bounce_threshold:
+                
+                high_above_bb = (df['high'].iloc[i:i+lookforward] > df['bb_upper'].iloc[i]).sum()
+                
+                if bounce_pct > bounce_threshold and high_above_bb >= 1:
                     bounce_signal[i] = 1
 
             elif touched_upper or broke_upper:
                 future_low = df['low'].iloc[i:i+lookforward].min()
                 current_close = df['close'].iloc[i]
                 bounce_pct = (current_close - future_low) / current_close
-
-                if bounce_pct > bounce_threshold:
+                
+                low_below_bb = (df['low'].iloc[i:i+lookforward] < df['bb_lower'].iloc[i]).sum()
+                
+                if bounce_pct > bounce_threshold and low_below_bb >= 1:
                     bounce_signal[i] = 1
 
         return bounce_signal
@@ -245,15 +256,15 @@ class CryptoEntryModel:
         
         return X, y
 
-    def prepare_training_data(self, lookback: int = 50) -> Tuple[np.ndarray, np.ndarray]:
-        """Prepare data for BB bounce prediction model."""
+    def prepare_training_data(self, lookback: int = 50) -> Tuple[np.ndarray, np.ndarray, List[str]]:
+        """Prepare data for BB bounce prediction model with improved labeling."""
         if self.feature_data is None:
             self.engineer_features()
 
         print("Preparing training data for BB bounce prediction...")
 
         df = self.calculate_bb_metrics(self.feature_data.copy())
-        df['bounce_target'] = self.calculate_bounce_target(df)
+        df['bounce_target'] = self.calculate_bounce_target_improved(df)
 
         base_features = [
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
@@ -293,7 +304,19 @@ class CryptoEntryModel:
         print(f"Effective bounces: {(y == 1).sum()}, Ineffective: {(y == 0).sum()}")
         print(f"Bounce rate: {(y == 1).sum() / len(y) * 100:.2f}%")
 
-        return X, y
+        return X, y, feature_cols
+
+    def _apply_feature_selection(self, X: np.ndarray, y: np.ndarray, 
+                                feature_names: List[str]) -> Tuple[np.ndarray, List[str]]:
+        """Apply feature selection to reduce dimensionality and improve precision."""
+        if not self.use_feature_selection:
+            return X, feature_names
+        
+        print("\nApplying feature selection...")
+        X_selected, selected_names = self.feature_selector.select_by_random_forest(X, y, feature_names)
+        self.selected_feature_names = selected_names
+        print(f"Reduced from {len(feature_names)} to {len(selected_names)} features\n")
+        return X_selected, selected_names
 
     def _apply_smote(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
         """Apply SMOTE balancing to training data."""
@@ -315,11 +338,13 @@ class CryptoEntryModel:
 
     def train(self, epochs: int = None) -> Dict:
         """Train the BB bounce prediction model with optimization."""
-        X, y = self.prepare_training_data()
+        X, y, feature_names = self.prepare_training_data()
 
         if len(X) < 100:
             print("Warning: Not enough training data. Need at least 100 samples.")
             return {}
+
+        X, feature_names = self._apply_feature_selection(X, y, feature_names)
 
         if self.use_smote:
             X, y = self._apply_smote(X, y)
@@ -409,6 +434,7 @@ class CryptoEntryModel:
             'timeframe': self.timeframe,
             'optimization': self.optimization_level,
             'multi_timeframe': self.use_multi_timeframe,
+            'feature_selection': self.use_feature_selection,
         }
 
     def _train_ensemble(self):
@@ -499,6 +525,9 @@ class CryptoEntryModel:
             multi_tf_cols = [col for col in multi_tf_features if col in recent_df.columns]
             feature_cols.extend(multi_tf_cols)
         
+        if self.selected_feature_names is not None:
+            feature_cols = [f for f in self.selected_feature_names if f in recent_df.columns]
+        
         valid_mask = recent_df[feature_cols].notna().all(axis=1)
         recent_df_valid = recent_df[valid_mask].copy()
 
@@ -542,6 +571,7 @@ class CryptoEntryModel:
             'model_type': self.model_type,
             'optimization_level': self.optimization_level,
             'use_multi_timeframe': self.use_multi_timeframe,
+            'selected_feature_names': self.selected_feature_names,
         }, self.model_path)
         print(f"Model saved to {self.model_path}")
 
@@ -556,6 +586,7 @@ class CryptoEntryModel:
             self.model = checkpoint.get('model')
             self.ensemble_models = checkpoint.get('ensemble_models')
             self.scaler = checkpoint['scaler']
+            self.selected_feature_names = checkpoint.get('selected_feature_names')
             print(f"Model loaded from {self.model_path}")
             return True
         except Exception as e:
@@ -584,5 +615,6 @@ class CryptoEntryModel:
                 'trained': self.model is not None or self.ensemble_models is not None,
                 'path': str(self.model_path) if self.model_path else None,
                 'multi_timeframe': self.use_multi_timeframe,
+                'feature_selection': self.use_feature_selection,
             }
         }
