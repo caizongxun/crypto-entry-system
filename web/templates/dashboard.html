@@ -11,7 +11,7 @@
     <style>
         .chart-container {
             width: 100%;
-            min-height: 400px;
+            min-height: 600px;
             border-radius: 8px;
             overflow: hidden;
             position: relative;
@@ -115,11 +115,11 @@
         }
         .chart-wrapper {
             flex: 1;
-            min-height: 400px;
+            min-height: 600px;
             display: flex;
             flex-direction: column;
         }
-        #priceChart {
+        #priceChart, #liveChart {
             flex: 1;
         }
     </style>
@@ -139,8 +139,12 @@
                     <i class="fas fa-home"></i>
                     <span>Dashboard</span>
                 </a>
-                <a href="#market" class="nav-item" data-section="market">
+                <a href="#chart" class="nav-item" data-section="chart">
                     <i class="fas fa-chart-area"></i>
+                    <span>Price Chart</span>
+                </a>
+                <a href="#market" class="nav-item" data-section="market">
+                    <i class="fas fa-chart-line"></i>
                     <span>Market Data</span>
                 </a>
                 <a href="#ml-signals" class="nav-item" data-section="ml-signals">
@@ -251,23 +255,50 @@
                     <div class="grid-2">
                         <div class="card">
                             <div class="card-header">
-                                <h2>Price Chart (TradingView)</h2>
-                            </div>
-                            <div class="card-body chart-wrapper">
-                                <div id="priceChart" class="chart-container"></div>
-                                <div class="chart-resize-handle"></div>
-                            </div>
-                        </div>
-
-                        <div class="card">
-                            <div class="card-header">
                                 <h2>ML Predictions (5 Latest)</h2>
+                                <button class="btn btn-primary" onclick="switchSection('ml-signals')">View All</button>
                             </div>
                             <div class="card-body">
                                 <div id="mlPredictionsList" style="max-height: 400px; overflow-y: auto;">
                                     <div class="loading-spinner"></div>
                                 </div>
                             </div>
+                        </div>
+
+                        <div class="card">
+                            <div class="card-header">
+                                <h2>Recent Trades</h2>
+                            </div>
+                            <div class="card-body" style="max-height: 400px; overflow-y: auto;">
+                                <table class="data-table" style="font-size: 12px;">
+                                    <thead>
+                                        <tr>
+                                            <th>Type</th>
+                                            <th>Entry</th>
+                                            <th>Exit</th>
+                                            <th>P&L</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="dashboardTradeHistory">
+                                        <tr><td colspan="4" class="empty-state">No trades</td></tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </section>
+
+                <section id="chart-section" class="section">
+                    <div class="section-header">
+                        <h1>Price Chart</h1>
+                    </div>
+                    <div class="card">
+                        <div class="card-header">
+                            <h2 id="chartTitle">Bitcoin / USDT</h2>
+                        </div>
+                        <div class="card-body chart-wrapper">
+                            <div id="priceChart" class="chart-container"></div>
+                            <div class="chart-resize-handle"></div>
                         </div>
                     </div>
                 </section>
