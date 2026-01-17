@@ -3,7 +3,8 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Crypto Entry System - Dashboard</title>
+    <title>Crypto Entry System</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@3.9.1/dist/chart.min.js"></script>
     <style>
         * {
             margin: 0;
@@ -13,303 +14,355 @@
 
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
-            color: #e0e0e0;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: #333;
             min-height: 100vh;
-        }
-
-        .navbar {
-            background: rgba(255, 255, 255, 0.05);
-            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
-            backdrop-filter: blur(10px);
-            padding: 0 20px;
-            position: sticky;
-            top: 0;
-            z-index: 1000;
-        }
-
-        .navbar-content {
-            max-width: 1400px;
-            margin: 0 auto;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            height: 60px;
-        }
-
-        .navbar-brand {
-            font-size: 18px;
-            font-weight: 700;
-            color: #00d4ff;
-            text-decoration: none;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .navbar-brand:before {
-            content: '';
-            display: inline-block;
-            width: 8px;
-            height: 8px;
-            background: #00d4ff;
-            border-radius: 50%;
-        }
-
-        .nav-menu {
-            display: flex;
-            list-style: none;
-            gap: 0;
-        }
-
-        .nav-item {
-            position: relative;
-        }
-
-        .nav-link {
-            display: flex;
-            align-items: center;
-            padding: 12px 20px;
-            color: #888;
-            text-decoration: none;
-            font-size: 13px;
-            font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            transition: all 0.3s ease;
-            border-bottom: 3px solid transparent;
-        }
-
-        .nav-link:hover {
-            color: #00d4ff;
-            border-bottom-color: #00d4ff;
-        }
-
-        .nav-link.active {
-            color: #00d4ff;
-            border-bottom-color: #00d4ff;
+            padding: 20px;
         }
 
         .container {
-            max-width: 1400px;
+            max-width: 1200px;
             margin: 0 auto;
-            padding: 30px 20px;
-        }
-
-        .welcome-section {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
+            background: white;
             border-radius: 12px;
-            padding: 30px;
-            margin-bottom: 30px;
-            backdrop-filter: blur(10px);
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.1);
+            overflow: hidden;
         }
 
-        .welcome-section h1 {
+        .header {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            padding: 30px;
+            text-align: center;
+        }
+
+        .header h1 {
             font-size: 32px;
             margin-bottom: 10px;
-            color: #00d4ff;
+            font-weight: 700;
         }
 
-        .welcome-section p {
-            font-size: 14px;
-            color: #aaa;
+        .header p {
+            font-size: 16px;
+            opacity: 0.95;
+        }
+
+        .content {
+            padding: 40px;
+        }
+
+        .section {
+            margin-bottom: 40px;
+        }
+
+        .section-title {
+            font-size: 20px;
+            font-weight: 600;
             margin-bottom: 20px;
+            color: #333;
+            border-bottom: 2px solid #667eea;
+            padding-bottom: 10px;
         }
 
-        .action-buttons {
+        .stats-grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .stat-card {
+            background: linear-gradient(135deg, #f5f7fa 0%, #c3cfe2 100%);
+            padding: 20px;
+            border-radius: 8px;
+            text-align: center;
+        }
+
+        .stat-label {
+            font-size: 12px;
+            color: #666;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 10px;
+        }
+
+        .stat-value {
+            font-size: 28px;
+            font-weight: 700;
+            color: #667eea;
+        }
+
+        .button-group {
             display: flex;
             gap: 15px;
             flex-wrap: wrap;
+            margin: 20px 0;
         }
 
-        .action-button {
+        .btn {
             padding: 12px 24px;
-            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
-            color: #000;
             border: none;
             border-radius: 6px;
-            cursor: pointer;
-            font-weight: 600;
-            font-size: 13px;
-            text-transform: uppercase;
-            letter-spacing: 1px;
-            text-decoration: none;
-            transition: all 0.3s ease;
-            display: inline-block;
-        }
-
-        .action-button:hover {
-            transform: translateY(-2px);
-            box-shadow: 0 8px 20px rgba(0, 212, 255, 0.3);
-        }
-
-        .action-button.secondary {
-            background: rgba(255, 255, 255, 0.1);
-            color: #00d4ff;
-            border: 1px solid rgba(0, 212, 255, 0.3);
-        }
-
-        .features-grid {
-            display: grid;
-            grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
-            gap: 20px;
-            margin-top: 30px;
-        }
-
-        .feature-card {
-            background: rgba(255, 255, 255, 0.05);
-            border: 1px solid rgba(255, 255, 255, 0.1);
-            border-radius: 12px;
-            padding: 20px;
-            backdrop-filter: blur(10px);
-            transition: all 0.3s ease;
-        }
-
-        .feature-card:hover {
-            border-color: rgba(0, 212, 255, 0.3);
-            box-shadow: 0 4px 15px rgba(0, 212, 255, 0.1);
-        }
-
-        .feature-card h3 {
             font-size: 14px;
-            color: #00d4ff;
-            margin-bottom: 10px;
-            display: flex;
-            align-items: center;
-            gap: 8px;
-        }
-
-        .feature-card h3:before {
-            content: '';
-            display: inline-block;
-            width: 4px;
-            height: 4px;
-            background: #00d4ff;
-            border-radius: 50%;
-        }
-
-        .feature-card p {
-            font-size: 12px;
-            color: #aaa;
-            line-height: 1.6;
-            margin-bottom: 15px;
-        }
-
-        .feature-card a {
-            display: inline-block;
-            padding: 8px 16px;
-            background: rgba(0, 212, 255, 0.1);
-            color: #00d4ff;
-            border: 1px solid rgba(0, 212, 255, 0.3);
-            border-radius: 4px;
-            text-decoration: none;
-            font-size: 11px;
             font-weight: 600;
-            text-transform: uppercase;
-            letter-spacing: 0.5px;
+            cursor: pointer;
             transition: all 0.3s ease;
+            text-decoration: none;
+            display: inline-block;
         }
 
-        .feature-card a:hover {
-            background: rgba(0, 212, 255, 0.2);
-            border-color: rgba(0, 212, 255, 0.5);
+        .btn-primary {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
         }
 
-        .info-box {
-            background: rgba(0, 212, 255, 0.1);
-            border: 1px solid rgba(0, 212, 255, 0.3);
-            border-radius: 6px;
-            padding: 15px;
-            margin-top: 20px;
+        .btn-primary:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(102, 126, 234, 0.4);
+        }
+
+        .btn-secondary {
+            background: #f0f0f0;
+            color: #667eea;
+            border: 2px solid #667eea;
+        }
+
+        .btn-secondary:hover {
+            background: #667eea;
+            color: white;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin: 20px 0;
+            background: #f9f9f9;
+            border-radius: 8px;
+            padding: 20px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #999;
+        }
+
+        .spinner {
+            border: 4px solid #f3f3f3;
+            border-top: 4px solid #667eea;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto 15px;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .data-table {
+            width: 100%;
+            border-collapse: collapse;
+            margin-top: 15px;
+        }
+
+        .data-table thead {
+            background: #f5f5f5;
+        }
+
+        .data-table th {
+            padding: 12px;
+            text-align: left;
+            font-weight: 600;
+            color: #333;
+            border-bottom: 2px solid #ddd;
+        }
+
+        .data-table td {
+            padding: 12px;
+            border-bottom: 1px solid #eee;
+        }
+
+        .data-table tbody tr:hover {
+            background: #f9f9f9;
+        }
+
+        .badge {
+            display: inline-block;
+            padding: 4px 12px;
+            border-radius: 20px;
             font-size: 12px;
-            color: #00d4ff;
+            font-weight: 600;
+        }
+
+        .badge-success {
+            background: #d4edda;
+            color: #155724;
+        }
+
+        .badge-warning {
+            background: #fff3cd;
+            color: #856404;
+        }
+
+        .badge-danger {
+            background: #f8d7da;
+            color: #721c24;
+        }
+
+        .alert {
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .alert-info {
+            background: #d1ecf1;
+            color: #0c5460;
+            border: 1px solid #bee5eb;
+        }
+
+        .alert-warning {
+            background: #fff3cd;
+            color: #856404;
+            border: 1px solid #ffeaa7;
         }
     </style>
 </head>
 <body>
-    <nav class="navbar">
-        <div class="navbar-content">
-            <a href="/" class="navbar-brand">Crypto Entry System</a>
-            <ul class="nav-menu">
-                <li class="nav-item">
-                    <a href="/" class="nav-link active" id="dashboardNav">Dashboard</a>
-                </li>
-                <li class="nav-item">
-                    <a href="/training" class="nav-link" id="trainingNav">Training</a>
-                </li>
-                <li class="nav-item">
-                    <a href="/15m-analysis" class="nav-link" id="analysisNav">15m Analysis</a>
-                </li>
-                <li class="nav-item">
-                    <a href="/chart" class="nav-link" id="chartNav">Chart</a>
-                </li>
-            </ul>
-        </div>
-    </nav>
-
     <div class="container">
-        <div class="welcome-section">
+        <div class="header">
             <h1>Crypto Entry System</h1>
-            <p>Advanced machine learning models for cryptocurrency trading signal analysis</p>
-            
-            <div class="action-buttons">
-                <a href="/training" class="action-button">Train Model</a>
-                <a href="/15m-analysis" class="action-button secondary">15m Analysis</a>
-                <a href="/chart" class="action-button secondary">View Chart</a>
-            </div>
+            <p>Advanced Machine Learning for Cryptocurrency Trading Signals</p>
         </div>
 
-        <div class="features-grid">
-            <div class="feature-card">
-                <h3>Model Training</h3>
-                <p>Train Bollinger Band bounce prediction models for different cryptocurrencies and timeframes. Supports XGBoost, LightGBM, and Random Forest algorithms.</p>
-                <a href="/training">Go to Training</a>
+        <div class="content">
+            <div class="section">
+                <h2 class="section-title">System Overview</h2>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div class="stat-label">Status</div>
+                        <div class="stat-value" id="statusValue">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Models Loaded</div>
+                        <div class="stat-value" id="modelsLoadedValue">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div class="stat-label">Last Update</div>
+                        <div class="stat-value" id="lastUpdateValue">-</div>
+                    </div>
+                </div>
             </div>
 
-            <div class="feature-card">
-                <h3>15-Minute Analysis</h3>
-                <p>Real-time analysis dashboard for 15-minute timeframe with BB signal predictions, bounce probability, and historical tracking.</p>
-                <a href="/15m-analysis">Open Analysis</a>
+            <div class="section">
+                <h2 class="section-title">Quick Actions</h2>
+                <div class="button-group">
+                    <button class="btn btn-primary" onclick="window.location.href='/15m-analysis'">15m Analysis</button>
+                    <button class="btn btn-primary" onclick="window.location.href='/chart'">View Chart</button>
+                    <button class="btn btn-secondary" onclick="refreshData()">Refresh Data</button>
+                </div>
             </div>
 
-            <div class="feature-card">
-                <h3>Advanced Chart</h3>
-                <p>Professional-grade charting interface with technical indicators, support for multiple timeframes, and pattern recognition tools.</p>
-                <a href="/chart">View Chart</a>
+            <div class="section">
+                <h2 class="section-title">1H Model Predictions</h2>
+                <div id="predictions1hContainer" class="loading">
+                    <div class="spinner"></div>
+                    Loading predictions...
+                </div>
             </div>
 
-            <div class="feature-card">
-                <h3>Local Model Management</h3>
-                <p>Manage all trained models locally. View model details, performance metrics, file size, and delete models when needed.</p>
-                <a href="/training">Manage Models</a>
+            <div class="section">
+                <h2 class="section-title">Market Status</h2>
+                <div id="sentimentContainer" class="loading">
+                    <div class="spinner"></div>
+                    Loading sentiment data...
+                </div>
             </div>
-
-            <div class="feature-card">
-                <h3>Multi-Timeframe Support</h3>
-                <p>Train and evaluate models across 15m, 1h, 4h, and 1d timeframes for comprehensive market analysis and strategy validation.</p>
-                <a href="/training">Train Now</a>
-            </div>
-
-            <div class="feature-card">
-                <h3>Market Signals</h3>
-                <p>Get predictions for BB touch, BB break, bounce probability, and position within Bollinger Band channels for precise entry signals.</p>
-                <a href="/15m-analysis">View Signals</a>
-            </div>
-        </div>
-
-        <div class="info-box">
-            <strong>Getting Started:</strong> Head to the Training tab to train your first model, or check the 15m Analysis dashboard for real-time predictions from existing models.
         </div>
     </div>
 
     <script>
-        document.querySelectorAll('.nav-link').forEach(link => {
-            if (window.location.pathname === '/' && link.id === 'dashboardNav') {
-                link.classList.add('active');
-            } else if (link.getAttribute('href') === window.location.pathname) {
-                link.classList.add('active');
-            }
+        const API_BASE = '/api';
+
+        function loadPredictions() {
+            fetch(`${API_BASE}/ml-prediction?symbol=BTCUSDT`)
+                .then(res => res.json())
+                .then(data => {
+                    const container = document.getElementById('predictions1hContainer');
+                    if (data.status === 'success' && data.predictions.length > 0) {
+                        let html = '<table class="data-table"><thead><tr>';
+                        html += '<th>Time</th><th>Signal</th><th>Price</th><th>Probability</th>';
+                        html += '</tr></thead><tbody>';
+                        
+                        data.predictions.slice(0, 10).forEach(pred => {
+                            const badge = pred.bounce_probability > 70 ? 'success' : 
+                                         pred.bounce_probability > 60 ? 'warning' : 'danger';
+                            html += `<tr>`;
+                            html += `<td>${pred.timestamp}</td>`;
+                            html += `<td><span class="badge badge-${badge}">${pred.signal_type}</span></td>`;
+                            html += `<td>$${pred.price.toFixed(2)}</td>`;
+                            html += `<td>${pred.bounce_probability.toFixed(1)}%</td>`;
+                            html += `</tr>`;
+                        });
+                        
+                        html += '</tbody></table>';
+                        container.innerHTML = html;
+                    } else {
+                        container.innerHTML = '<div class="alert alert-info">No predictions available</div>';
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('predictions1hContainer').innerHTML = 
+                        `<div class="alert alert-warning">Error loading predictions: ${err.message}</div>`;
+                });
+        }
+
+        function loadSentiment() {
+            fetch(`${API_BASE}/sentiment`)
+                .then(res => res.json())
+                .then(data => {
+                    const container = document.getElementById('sentimentContainer');
+                    if (data.status === 'success') {
+                        let html = '<div class="stats-grid">';
+                        html += `<div class="stat-card"><div class="stat-label">Fear/Greed Index</div>`;
+                        html += `<div class="stat-value">${data.fear_greed_index.value || 'N/A'}</div></div>`;
+                        html += '</div>';
+                        container.innerHTML = html;
+                    }
+                })
+                .catch(err => {
+                    document.getElementById('sentimentContainer').innerHTML = 
+                        '<div class="alert alert-warning">Error loading sentiment</div>';
+                });
+        }
+
+        function updateStatus() {
+            fetch(`${API_BASE}/health`)
+                .then(res => res.json())
+                .then(data => {
+                    document.getElementById('statusValue').textContent = data.status === 'healthy' ? 'Online' : 'Offline';
+                    const modelsLoaded = (data.services.ml_model_1h === 'loaded' ? 1 : 0) + 
+                                        (data.services.ml_model_15m === 'loaded' ? 1 : 0);
+                    document.getElementById('modelsLoadedValue').textContent = modelsLoaded + '/2';
+                    document.getElementById('lastUpdateValue').textContent = new Date().toLocaleTimeString();
+                })
+                .catch(err => {
+                    console.error('Error updating status:', err);
+                });
+        }
+
+        function refreshData() {
+            updateStatus();
+            loadPredictions();
+            loadSentiment();
+        }
+
+        window.addEventListener('load', () => {
+            refreshData();
+            setInterval(refreshData, 60000);
         });
     </script>
 </body>
