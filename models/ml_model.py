@@ -169,9 +169,13 @@ class CryptoEntryModel:
         df['bounce_target'] = self.calculate_bounce_target(df)
 
         feature_names = [
-            'rsi', 'macd', 'macd_histogram', 'momentum', 'volatility',
-            'bb_basis', 'bb_width', 'bb_position', 'basis_slope',
-            'sma_fast', 'sma_slow', 'atr', 'trend_strength'
+            'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
+            'rsi', 'macd', 'macd_signal', 'macd_histogram', 'momentum', 'volatility',
+            'bb_basis', 'bb_middle', 'bb_width', 'bb_position', 'basis_slope',
+            'atr', 'trend_strength', 'obv',
+            'volume_momentum', 'price_position', 'volume_relative_strength',
+            'close_location', 'momentum_divergence', 'volatility_acceleration',
+            'multi_timeframe_strength'
         ]
 
         feature_cols = [col for col in feature_names if col in df.columns]
@@ -378,9 +382,13 @@ class CryptoEntryModel:
         recent_df = df.tail(lookback).copy()
 
         feature_names = [
-            'rsi', 'macd', 'macd_histogram', 'momentum', 'volatility',
-            'bb_basis', 'bb_width', 'bb_position', 'basis_slope',
-            'sma_fast', 'sma_slow', 'atr', 'trend_strength'
+            'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
+            'rsi', 'macd', 'macd_signal', 'macd_histogram', 'momentum', 'volatility',
+            'bb_basis', 'bb_middle', 'bb_width', 'bb_position', 'basis_slope',
+            'atr', 'trend_strength', 'obv',
+            'volume_momentum', 'price_position', 'volume_relative_strength',
+            'close_location', 'momentum_divergence', 'volatility_acceleration',
+            'multi_timeframe_strength'
         ]
 
         feature_cols = [col for col in feature_names if col in recent_df.columns]
