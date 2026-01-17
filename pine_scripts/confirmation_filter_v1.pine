@@ -18,7 +18,7 @@ use_stochastic = input.bool(true, title="Use Stochastic Filter")
 use_cci = input.bool(true, title="Use CCI Filter")
 use_atr_volatility = input.bool(true, title="Use ATR Volatility Filter")
 
-k, d = ta.stoch(close, high, low, stoch_k_period)
+[k, d] = ta.stoch(close, high, low, stoch_k_period)
 k_smoothed = ta.sma(k, stoch_smooth)
 d_smoothed = ta.sma(d, stoch_smooth)
 
