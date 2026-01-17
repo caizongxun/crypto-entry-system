@@ -122,6 +122,70 @@
         #priceChart, #liveChart {
             flex: 1;
         }
+        .whale-activity-item {
+            padding: 12px;
+            background: #0e1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .whale-flow {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 8px;
+        }
+        .whale-amount {
+            font-weight: 600;
+            font-size: 14px;
+        }
+        .whale-amount.inflow {
+            color: #00c853;
+        }
+        .whale-amount.outflow {
+            color: #ff3860;
+        }
+        .whale-info {
+            font-size: 12px;
+            color: #8b949e;
+        }
+        .on-chain-metric {
+            padding: 12px;
+            background: #0e1117;
+            border: 1px solid #30363d;
+            border-radius: 4px;
+            margin-bottom: 8px;
+        }
+        .metric-label {
+            color: #8b949e;
+            font-size: 12px;
+            margin-bottom: 4px;
+        }
+        .metric-value {
+            font-size: 16px;
+            font-weight: 600;
+            color: #f0f6fc;
+        }
+        .risk-indicator {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            margin-left: 8px;
+        }
+        .risk-low {
+            background: rgba(0, 200, 83, 0.2);
+            color: #00c853;
+        }
+        .risk-medium {
+            background: rgba(255, 199, 7, 0.2);
+            color: #ffc107;
+        }
+        .risk-high {
+            background: rgba(255, 56, 96, 0.2);
+            color: #ff3860;
+        }
     </style>
 </head>
 <body>
@@ -242,12 +306,12 @@
 
                         <div class="card stat-card">
                             <div class="card-header">
-                                <span>Risk/Reward</span>
-                                <i class="fas fa-sliders-h"></i>
+                                <span>On-Chain Risk</span>
+                                <i class="fas fa-exclamation-triangle"></i>
                             </div>
                             <div class="card-body">
-                                <h3 id="riskReward">1:1</h3>
-                                <p class="stat-sub">Sharpe Ratio: 0.00</p>
+                                <h3 id="onChainRisk">Low</h3>
+                                <p class="stat-sub">Whale Flow: <span id="whaleNetFlow">$0</span></p>
                             </div>
                         </div>
                     </div>
@@ -267,22 +331,12 @@
 
                         <div class="card">
                             <div class="card-header">
-                                <h2>Recent Trades</h2>
+                                <h2>Whale Activity Alert</h2>
                             </div>
                             <div class="card-body" style="max-height: 400px; overflow-y: auto;">
-                                <table class="data-table" style="font-size: 12px;">
-                                    <thead>
-                                        <tr>
-                                            <th>Type</th>
-                                            <th>Entry</th>
-                                            <th>Exit</th>
-                                            <th>P&L</th>
-                                        </tr>
-                                    </thead>
-                                    <tbody id="dashboardTradeHistory">
-                                        <tr><td colspan="4" class="empty-state">No trades</td></tr>
-                                    </tbody>
-                                </table>
+                                <div id="whaleAlertsList">
+                                    <p class="empty-state">No whale activity detected</p>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -394,24 +448,54 @@
 
                 <section id="on-chain-section" class="section">
                     <div class="section-header">
-                        <h1>On-Chain Analysis</h1>
+                        <h1>On-Chain Analysis - Whale Activity</h1>
                     </div>
                     <div class="grid-2">
                         <div class="card">
                             <div class="card-header">
-                                <h2>Whale Activity</h2>
+                                <h2>Large Whale Transactions</h2>
                             </div>
-                            <div class="card-body">
-                                <canvas id="whaleActivityChart" style="height: 300px;"></canvas>
+                            <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                                <div id="whaleTransactionsList">
+                                    <p class="empty-state">Loading whale data...</p>
+                                </div>
                             </div>
                         </div>
 
                         <div class="card">
                             <div class="card-header">
-                                <h2>Exchange Flows</h2>
+                                <h2>Exchange Inflow/Outflow</h2>
                             </div>
-                            <div class="card-body">
-                                <canvas id="exchangeFlowsChart" style="height: 300px;"></canvas>
+                            <div class="card-body" style="max-height: 500px; overflow-y: auto;">
+                                <div id="exchangeFlowList">
+                                    <p class="empty-state">Loading exchange flow data...</p>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card" style="margin-top: 20px;">
+                        <div class="card-header">
+                            <h2>On-Chain Metrics</h2>
+                        </div>
+                        <div class="card-body">
+                            <div class="grid-4">
+                                <div class="on-chain-metric">
+                                    <div class="metric-label">Network Activity</div>
+                                    <div class="metric-value" id="networkActivity">--</div>
+                                </div>
+                                <div class="on-chain-metric">
+                                    <div class="metric-label">Exchange Reserve</div>
+                                    <div class="metric-value" id="exchangeReserve">--</div>
+                                </div>
+                                <div class="on-chain-metric">
+                                    <div class="metric-label">Whale Holdings</div>
+                                    <div class="metric-value" id="whaleHoldings">--</div>
+                                </div>
+                                <div class="on-chain-metric">
+                                    <div class="metric-label">24h Net Flow</div>
+                                    <div class="metric-value" id="netFlow24h">--</div>
+                                </div>
                             </div>
                         </div>
                     </div>
@@ -450,6 +534,20 @@
                                     <div class="form-group">
                                         <label>Take Profit</label>
                                         <input type="number" id="takeProfit" step="0.01" value="0" min="0">
+                                    </div>
+                                    <div style="background: #0e1117; padding: 12px; border-radius: 4px; margin-bottom: 16px;">
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                            <span style="color: #8b949e; font-size: 13px;">ML Signal Confidence</span>
+                                            <span id="signalConfidence" style="color: #00d4ff; font-weight: 600;">--</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between; margin-bottom: 8px;">
+                                            <span style="color: #8b949e; font-size: 13px;">On-Chain Risk Level</span>
+                                            <span id="riskLevel" style="color: #ffc107; font-weight: 600;">Medium</span>
+                                        </div>
+                                        <div style="display: flex; justify-content: space-between;">
+                                            <span style="color: #8b949e; font-size: 13px;">Whale Activity</span>
+                                            <span id="whaleActivityStatus" style="color: #f0f6fc; font-weight: 600;">Normal</span>
+                                        </div>
                                     </div>
                                     <button type="submit" class="btn btn-primary" style="width: 100%;">Open Position</button>
                                 </form>
@@ -535,6 +633,11 @@
                         <option value="240">4 Hour</option>
                         <option value="1440">1 Day</option>
                     </select>
+                </div>
+                <div class="setting-group">
+                    <label>Enable On-Chain Risk Filter</label>
+                    <input type="checkbox" id="enableOnChainFilter" checked>
+                    <span>Block trades when whale outflow detected</span>
                 </div>
                 <div class="setting-group">
                     <label>Notifications</label>
