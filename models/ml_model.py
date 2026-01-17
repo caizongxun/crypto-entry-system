@@ -75,10 +75,10 @@ class CryptoEntryModel:
         df_bb['bb_position'] = (df_bb['close'] - bb_lower) / (bb_upper - bb_lower)
         df_bb['basis_slope'] = bb_basis.diff()
 
-        df_bb['touched_upper'] = (df_bb['close'] >= bb_upper * 0.98) and (df_bb['close'] <= bb_upper)
-        df_bb['touched_lower'] = (df_bb['close'] <= bb_lower * 1.02) and (df_bb['close'] >= bb_lower)
-        df_bb['broke_upper'] = (df_bb['close'] > bb_upper) and (df_bb['high'].shift(1) <= bb_upper.shift(1))
-        df_bb['broke_lower'] = (df_bb['close'] < bb_lower) and (df_bb['low'].shift(1) >= bb_lower.shift(1))
+        df_bb['touched_upper'] = (df_bb['close'] >= bb_upper * 0.98) & (df_bb['close'] <= bb_upper)
+        df_bb['touched_lower'] = (df_bb['close'] <= bb_lower * 1.02) & (df_bb['close'] >= bb_lower)
+        df_bb['broke_upper'] = (df_bb['close'] > bb_upper) & (df_bb['high'].shift(1) <= bb_upper.shift(1))
+        df_bb['broke_lower'] = (df_bb['close'] < bb_lower) & (df_bb['low'].shift(1) >= bb_lower.shift(1))
 
         return df_bb
 
