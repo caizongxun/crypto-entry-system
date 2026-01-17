@@ -1,0 +1,7 @@
+pandas>=1.5.0
+numpy>=1.23.0
+scikit-learn>=1.2.0
+xgboost>=2.0.0
+joblib>=1.2.0
+huggingface_hub>=0.20.0
+technical_analysis_indicators>=0.2.0
