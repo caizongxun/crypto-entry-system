@@ -1,0 +1,490 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>15m BB Model Analysis</title>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background: linear-gradient(135deg, #1a1a2e 0%, #16213e 100%);
+            color: #e0e0e0;
+            min-height: 100vh;
+            padding: 20px;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+
+        .header {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            margin-bottom: 30px;
+            backdrop-filter: blur(10px);
+        }
+
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 15px;
+            color: #00d4ff;
+        }
+
+        .controls {
+            display: flex;
+            gap: 15px;
+            flex-wrap: wrap;
+            align-items: center;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .form-group label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        .form-group input,
+        .form-group select {
+            padding: 8px 12px;
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid rgba(255, 255, 255, 0.2);
+            border-radius: 6px;
+            color: #e0e0e0;
+            font-size: 13px;
+            width: 140px;
+        }
+
+        button {
+            padding: 10px 20px;
+            background: linear-gradient(135deg, #00d4ff 0%, #0099cc 100%);
+            color: #000;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-weight: 600;
+            font-size: 13px;
+            transition: all 0.3s ease;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+        }
+
+        button:hover {
+            transform: translateY(-2px);
+            box-shadow: 0 8px 20px rgba(0, 212, 255, 0.3);
+        }
+
+        button:active {
+            transform: translateY(0);
+        }
+
+        button.secondary {
+            background: rgba(255, 255, 255, 0.1);
+            color: #00d4ff;
+            border: 1px solid rgba(0, 212, 255, 0.3);
+        }
+
+        .status-box {
+            background: rgba(0, 212, 255, 0.1);
+            border: 1px solid rgba(0, 212, 255, 0.3);
+            border-radius: 6px;
+            padding: 10px 15px;
+            font-size: 12px;
+            color: #00d4ff;
+        }
+
+        .grid {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(350px, 1fr));
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+
+        .card {
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 12px;
+            padding: 20px;
+            backdrop-filter: blur(10px);
+        }
+
+        .card h2 {
+            font-size: 16px;
+            margin-bottom: 15px;
+            color: #00d4ff;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .card h2:before {
+            content: '';
+            display: inline-block;
+            width: 4px;
+            height: 4px;
+            background: #00d4ff;
+            border-radius: 50%;
+        }
+
+        .metric {
+            margin-bottom: 15px;
+            padding-bottom: 15px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .metric:last-child {
+            border-bottom: none;
+            margin-bottom: 0;
+            padding-bottom: 0;
+        }
+
+        .metric-label {
+            font-size: 12px;
+            color: #888;
+            text-transform: uppercase;
+            letter-spacing: 1px;
+            margin-bottom: 5px;
+        }
+
+        .metric-value {
+            font-size: 18px;
+            color: #00d4ff;
+            font-weight: 600;
+        }
+
+        .metric-unit {
+            font-size: 12px;
+            color: #666;
+            margin-left: 5px;
+        }
+
+        .predictions-table {
+            width: 100%;
+            border-collapse: collapse;
+            font-size: 12px;
+        }
+
+        .predictions-table th {
+            background: rgba(0, 212, 255, 0.1);
+            color: #00d4ff;
+            padding: 10px;
+            text-align: left;
+            font-weight: 600;
+            border-bottom: 2px solid rgba(0, 212, 255, 0.3);
+        }
+
+        .predictions-table td {
+            padding: 10px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .predictions-table tr:last-child td {
+            border-bottom: none;
+        }
+
+        .signal-badge {
+            display: inline-block;
+            padding: 4px 8px;
+            border-radius: 4px;
+            font-size: 11px;
+            font-weight: 600;
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+        }
+
+        .signal-lower_touch {
+            background: rgba(76, 175, 80, 0.2);
+            color: #4caf50;
+            border: 1px solid #4caf50;
+        }
+
+        .signal-lower_break {
+            background: rgba(76, 175, 80, 0.3);
+            color: #81c784;
+            border: 1px solid #4caf50;
+        }
+
+        .signal-upper_touch {
+            background: rgba(244, 67, 54, 0.2);
+            color: #f44336;
+            border: 1px solid #f44336;
+        }
+
+        .signal-upper_break {
+            background: rgba(244, 67, 54, 0.3);
+            color: #ef5350;
+            border: 1px solid #f44336;
+        }
+
+        .chart-container {
+            position: relative;
+            height: 300px;
+            margin-top: 15px;
+        }
+
+        .loading {
+            text-align: center;
+            padding: 20px;
+            color: #888;
+        }
+
+        .spinner {
+            border: 3px solid rgba(0, 212, 255, 0.2);
+            border-top: 3px solid #00d4ff;
+            border-radius: 50%;
+            width: 40px;
+            height: 40px;
+            animation: spin 1s linear infinite;
+            margin: 0 auto;
+        }
+
+        @keyframes spin {
+            0% { transform: rotate(0deg); }
+            100% { transform: rotate(360deg); }
+        }
+
+        .error {
+            background: rgba(244, 67, 54, 0.1);
+            border: 1px solid rgba(244, 67, 54, 0.5);
+            color: #ef5350;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .success {
+            background: rgba(76, 175, 80, 0.1);
+            border: 1px solid rgba(76, 175, 80, 0.5);
+            color: #81c784;
+            padding: 15px;
+            border-radius: 6px;
+            margin-bottom: 20px;
+        }
+
+        .bb-chart-container {
+            position: relative;
+            height: 400px;
+            margin-top: 20px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>15m Bollinger Band Model Analysis</h1>
+            <div class="controls">
+                <div class="form-group">
+                    <label>Trading Pair</label>
+                    <input type="text" id="symbol" value="BTCUSDT" placeholder="BTCUSDT">
+                </div>
+                <div class="form-group">
+                    <label>Lookback</label>
+                    <input type="number" id="lookback" value="50" min="10" max="500">
+                </div>
+                <button onclick="trainModel()">Train Model</button>
+                <button class="secondary" onclick="fetchPredictions()">Refresh Predictions</button>
+                <div id="statusBox" class="status-box" style="display: none;"></div>
+            </div>
+        </div>
+
+        <div id="alertContainer"></div>
+
+        <div class="grid">
+            <div class="card">
+                <h2>Model Training</h2>
+                <div class="metric">
+                    <div class="metric-label">Model Status</div>
+                    <div class="metric-value" id="modelStatus">Loading...</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Last Training</div>
+                    <div class="metric-value" id="lastTraining">N/A</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Model Type</div>
+                    <div class="metric-value" id="modelType">XGBoost</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Current Statistics</h2>
+                <div class="metric">
+                    <div class="metric-label">Total BB Signals</div>
+                    <div class="metric-value" id="totalSignals">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">High Probability Signals</div>
+                    <div class="metric-value" id="highProbSignals">0</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Last Signal Time</div>
+                    <div class="metric-value" id="lastSignalTime">N/A</div>
+                </div>
+            </div>
+
+            <div class="card">
+                <h2>Recent BB Metrics</h2>
+                <div class="metric">
+                    <div class="metric-label">BB Position</div>
+                    <div class="metric-value" id="bbPosition">0.00%</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">BB Width</div>
+                    <div class="metric-value" id="bbWidth">0.00</div>
+                </div>
+                <div class="metric">
+                    <div class="metric-label">Current Price</div>
+                    <div class="metric-value" id="currentPrice">0.00</div>
+                </div>
+            </div>
+        </div>
+
+        <div class="card">
+            <h2>Recent BB Predictions</h2>
+            <div id="predictionsContainer">
+                <div class="loading">
+                    <div class="spinner"></div>
+                    <p>Loading predictions...</p>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script>
+        const API_BASE = '/api';
+
+        function showStatus(message, type = 'info') {
+            const container = document.getElementById('alertContainer');
+            const div = document.createElement('div');
+            div.className = type === 'error' ? 'error' : (type === 'success' ? 'success' : 'status-box');
+            div.textContent = message;
+            container.innerHTML = '';
+            container.appendChild(div);
+            setTimeout(() => {
+                div.remove();
+            }, 5000);
+        }
+
+        function trainModel() {
+            const symbol = document.getElementById('symbol').value || 'BTCUSDT';
+            const btn = event.target;
+            btn.disabled = true;
+            btn.textContent = 'Training...';
+
+            fetch(`${API_BASE}/train-model-15m`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ symbol })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    showStatus('Model training completed successfully!', 'success');
+                    const results = data.results;
+                    console.log('Training Results:', results);
+                    document.getElementById('modelStatus').textContent = 'Trained';
+                    document.getElementById('lastTraining').textContent = new Date().toLocaleString();
+                    setTimeout(() => fetchPredictions(), 1000);
+                } else {
+                    showStatus('Training failed: ' + (data.message || 'Unknown error'), 'error');
+                }
+            })
+            .catch(err => {
+                showStatus('Training error: ' + err.message, 'error');
+                console.error(err);
+            })
+            .finally(() => {
+                btn.disabled = false;
+                btn.textContent = 'Train Model';
+            });
+        }
+
+        function fetchPredictions() {
+            const symbol = document.getElementById('symbol').value || 'BTCUSDT';
+            const lookback = document.getElementById('lookback').value || 50;
+
+            fetch(`${API_BASE}/ml-prediction-15m?symbol=${symbol}&lookback=${lookback}`)
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    updatePredictions(data);
+                } else {
+                    showStatus('Failed to fetch predictions: ' + (data.message || 'Unknown error'), 'error');
+                }
+            })
+            .catch(err => {
+                showStatus('Error fetching predictions: ' + err.message, 'error');
+                console.error(err);
+            });
+        }
+
+        function updatePredictions(data) {
+            const predictions = data.predictions || [];
+            const container = document.getElementById('predictionsContainer');
+
+            document.getElementById('totalSignals').textContent = data.total_events || 0;
+            document.getElementById('modelStatus').textContent = data.model_trained ? 'Trained' : 'Not Trained';
+            document.getElementById('highProbSignals').textContent = predictions.filter(p => p.bounce_probability > 70).length;
+
+            if (predictions.length === 0) {
+                container.innerHTML = '<div class="loading">No BB signals in current timeframe</div>';
+                return;
+            }
+
+            const latest = predictions[predictions.length - 1];
+            document.getElementById('currentPrice').textContent = latest.price.toFixed(2);
+            document.getElementById('bbPosition').textContent = (latest.bb_position * 100).toFixed(1) + '%';
+            document.getElementById('bbWidth').textContent = latest.bb_width.toFixed(8);
+            document.getElementById('lastSignalTime').textContent = latest.timestamp ? new Date(latest.timestamp).toLocaleString() : 'N/A';
+
+            let html = '<table class="predictions-table"><thead><tr>';
+            html += '<th>Time</th><th>Signal Type</th><th>Price</th><th>BB Position</th><th>Probability</th>';
+            html += '</tr></thead><tbody>';
+
+            predictions.forEach(pred => {
+                const timestamp = new Date(pred.timestamp).toLocaleString('en-US', { 
+                    month: '2-digit', 
+                    day: '2-digit', 
+                    hour: '2-digit', 
+                    minute: '2-digit',
+                    second: '2-digit'
+                });
+                const probability = pred.bounce_probability || 0;
+                const signal = pred.signal_type || 'none';
+                
+                html += '<tr>';
+                html += `<td>${timestamp}</td>`;
+                html += `<td><span class="signal-badge signal-${signal}">${signal.replace('_', ' ')}</span></td>`;
+                html += `<td>${pred.price.toFixed(2)}</td>`;
+                html += `<td>${(pred.bb_position * 100).toFixed(1)}%</td>`;
+                html += `<td>${probability.toFixed(1)}%</td>`;
+                html += '</tr>';
+            });
+
+            html += '</tbody></table>';
+            container.innerHTML = html;
+        }
+
+        window.addEventListener('load', () => {
+            fetchPredictions();
+            setInterval(fetchPredictions, 60000);
+        });
+    </script>
+</body>
+</html>
