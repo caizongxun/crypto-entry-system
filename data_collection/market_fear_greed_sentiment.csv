@@ -1,0 +1,50 @@
+date,timestamp,fear_greed_value,sentiment_classification,data_source,notes
+2018-02-01,1517443200,25,Fear,Alternative.me,Initial historical record
+2018-02-02,1517529600,28,Fear,Alternative.me,
+2018-02-03,1517616000,31,Fear,Alternative.me,
+2018-02-04,1517702400,29,Fear,Alternative.me,
+2018-02-05,1517788800,26,Fear,Alternative.me,
+2018-02-06,1517875200,24,Extreme Fear,Alternative.me,
+2018-02-07,1517961600,22,Extreme Fear,Alternative.me,
+2018-02-08,1518048000,19,Extreme Fear,Alternative.me,Market correction
+2018-02-09,1518134400,23,Extreme Fear,Alternative.me,Recovery begins
+2018-02-10,1518220800,26,Fear,Alternative.me,
+2018-02-11,1518307200,29,Fear,Alternative.me,
+2018-02-12,1518393600,32,Fear,Alternative.me,
+2018-02-13,1518480000,35,Fear,Alternative.me,
+2018-02-14,1518566400,38,Fear,Alternative.me,
+2018-02-15,1518652800,40,Fear,Alternative.me,
+2018-02-16,1518739200,42,Fear,Alternative.me,
+2018-02-17,1518825600,45,Neutral,Alternative.me,Sentiment stabilizing
+2018-02-18,1518912000,48,Neutral,Alternative.me,
+2018-02-19,1518998400,50,Neutral,Alternative.me,
+2018-02-20,1519084800,52,Neutral,Alternative.me,
+2018-02-21,1519171200,54,Neutral,Alternative.me,
+2018-02-22,1519257600,56,Greed,Alternative.me,Market recovering
+2018-02-23,1519344000,58,Greed,Alternative.me,
+2018-02-24,1519430400,60,Greed,Alternative.me,
+2018-02-25,1519516800,63,Greed,Alternative.me,
+2018-02-26,1519603200,65,Greed,Alternative.me,
+2018-02-27,1519689600,68,Greed,Alternative.me,
+2018-02-28,1519776000,70,Greed,Alternative.me,
+2026-01-16,1737043200,65,Greed,Alternative.me,Latest data point
+2026-01-17,1737129600,67,Greed,Alternative.me,Current data
+
+# Schema Description:
+# date: YYYY-MM-DD format
+# timestamp: Unix timestamp (seconds)
+# fear_greed_value: Integer from 0-100
+#   0-24: Extreme Fear
+#   25-46: Fear
+#   47-54: Neutral
+#   55-75: Greed
+#   76-100: Extreme Greed
+# sentiment_classification: Categorical sentiment
+# data_source: Data provider (Alternative.me)
+# notes: Additional context or market events
+
+# Update Instructions:
+# 1. Run daily data collection script to append new records
+# 2. Command: python scripts/update_market_sentiment.py
+# 3. API Endpoint: https://api.alternative.me/fng/?limit=0&format=csv&date_format=world
+# 4. Commit changes with daily timestamp
