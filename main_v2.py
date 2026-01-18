@@ -50,7 +50,7 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
     model.load_data()
     model.engineer_features()
     
-    print("Step 2: Preparing raw training data (no SMOTE, no feature selection)...")
+    print("Step 2: Preparing raw training data (no feature selection)...")
     X, y, feature_names = model.prepare_training_data()
 
     print(f"Raw training data shape: {X.shape}")
@@ -74,8 +74,8 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
 
     print(f"\nOptimization results saved to: {results_path}")
     print(f"\nRecommendation:")
-    print(f"These parameters were optimized on raw data without SMOTE.")
-    print(f"Use train mode to apply SMOTE during final training:")
+    print(f"These parameters were optimized on raw data using scale_pos_weight for imbalance.")
+    print(f"Use train mode to train the final model:")
     print()
     print(f"  python main_v2.py --mode train --symbol {symbol} --timeframe {timeframe}")
     print(f"    --model-type {model_type} --results-path {results_path}")
@@ -86,10 +86,8 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
 def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
                                optimization_level: str, results_path: str = None):
     """
-    Train model using previously optimized hyperparameters.
-    Applies SMOTE and feature selection during training.
-    
-    During training, increases regularization to prevent overfitting on SMOTE-augmented data.
+    Train model using cost-sensitive learning (scale_pos_weight) for class imbalance.
+    Applies threshold calibration to achieve target recall and precision.
     
     Args:
         symbol: Trading pair (e.g., BTCUSDT)
@@ -124,19 +122,7 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
             model.hyperparams.update(optimized_params)
             
             print(f"Loaded optimized parameters from {results_path}")
-            print(f"Original parameters: {model.hyperparams}")
-            
-            print(f"\nApplying anti-overfitting adjustments for final training:")
-            if model_type == 'xgboost':
-                model.hyperparams['subsample'] = min(0.85, model.hyperparams.get('subsample', 0.9))
-                model.hyperparams['colsample_bytree'] = min(0.85, model.hyperparams.get('colsample_bytree', 0.9))
-                model.hyperparams['reg_lambda'] = model.hyperparams.get('reg_lambda', 1.0) * 1.5
-                model.hyperparams['reg_alpha'] = model.hyperparams.get('reg_alpha', 0.5)
-                print(f"  - Reduced subsample to {model.hyperparams['subsample']:.4f}")
-                print(f"  - Reduced colsample_bytree to {model.hyperparams['colsample_bytree']:.4f}")
-                print(f"  - Increased reg_lambda to {model.hyperparams['reg_lambda']:.4f}")
-            
-            print(f"\nAdjusted parameters: {model.hyperparams}")
+            print(f"Best hyperparameters: {model.hyperparams}")
             print()
 
     print("Step 1: Loading data...")
@@ -145,7 +131,7 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
     print("Step 2: Engineering features...")
     model.engineer_features()
 
-    print("Step 3: Training model (with SMOTE and feature selection)...")
+    print("Step 3: Training model (with feature selection and threshold calibration)...")
     training_results = model.train()
 
     print()
@@ -167,18 +153,14 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
     precision_gap = train_precision - test_precision
     recall_gap = train_recall - test_recall
     
-    print(f"\nOverfitting Analysis:")
+    print(f"\nGeneralization Analysis:")
     print(f"  Precision gap (Train - Test): {precision_gap:.4f}")
     print(f"  Recall gap (Train - Test): {recall_gap:.4f}")
-    print(f"  Train F1: {2 * (train_precision * train_recall) / (train_precision + train_recall):.4f}")
-    print(f"  Test F1: {2 * (test_precision * test_recall) / (test_precision + test_recall):.4f}")
+    print(f"  Train F1: {2 * (train_precision * train_recall) / (train_precision + train_recall) if (train_precision + train_recall) > 0 else 0:.4f}")
+    print(f"  Test F1: {2 * (test_precision * test_recall) / (test_precision + test_recall) if (test_precision + test_recall) > 0 else 0:.4f}")
     
     if precision_gap > 0.20:
         print(f"\nWARNING: SEVERE overfitting - {precision_gap*100:.1f}% precision drop")
-        print(f"Possible causes:")
-        print(f"  - Borderline-SMOTE still generating too many synthetic samples")
-        print(f"  - Hyperparameters optimized on different data distribution")
-        print(f"  - Feature selection removing discriminative features")
     elif precision_gap > 0.10:
         print(f"\nWARNING: Moderate overfitting - {precision_gap*100:.1f}% precision drop")
     elif precision_gap > 0.05:
@@ -186,12 +168,16 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
     else:
         print(f"\nGOOD: Generalization healthy - {precision_gap*100:.1f}% precision drop")
     
-    print(f"\nDiagnostics:")
-    print(f"  SMOTE Ratio: {model.smote_ratio}")
-    print(f"  Model Type: {model_type}")
-    print(f"  Use Feature Selection: {model.use_feature_selection}")
+    if test_precision >= 0.80 and test_recall >= 0.80:
+        print(f"\nSUCCESS: Target metrics achieved (Precision: {test_precision:.4f}, Recall: {test_recall:.4f})")
+    else:
+        print(f"\nINFO: Current metrics (Precision: {test_precision:.4f}, Recall: {test_recall:.4f})")
+        if test_precision < 0.80:
+            print(f"      Precision below 80% target by {(0.80 - test_precision)*100:.1f}%")
+        if test_recall < 0.80:
+            print(f"      Recall below 80% target by {(0.80 - test_recall)*100:.1f}%")
+    
     print()
-
     return training_results
 
 
