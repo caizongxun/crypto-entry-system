@@ -1,292 +1,244 @@
 """
-Feature Engineering for trading signals
-Calculates technical indicators and derives ML features
+Feature engineering module for Strategy V3.
+
+Comprehensive technical indicators and feature engineering.
 """
 
-import logging
-from typing import Dict, Tuple, Optional
 import pandas as pd
 import numpy as np
-from sklearn.preprocessing import StandardScaler
-from sklearn.feature_selection import SelectKBest, f_regression
-
-from .config import Config, FeatureConfig
-
-
-logger = logging.getLogger(__name__)
+from typing import List, Tuple
+from loguru import logger
 
 
 class FeatureEngineer:
-    """Calculate and engineer features for trading signals"""
-    
-    def __init__(self, config: Config):
+    """
+    Computes technical indicators and engineered features.
+    """
+
+    def __init__(self, config):
         """
-        Initialize FeatureEngineer
-        
+        Initialize FeatureEngineer.
+
         Args:
-            config: Configuration object
+            config: StrategyConfig object
         """
-        self.config = config
-        self.feature_config = config.feature
-        self.scaler = StandardScaler()
-        self.feature_selector = None
-        self.selected_features = None
-    
-    def calculate_price_action_features(self, df: pd.DataFrame) -> pd.DataFrame:
+        self.cfg = config
+        self.indicators = config.indicators
+        self.verbose = config.verbose
+
+    def engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate price action features (SMA, EMA, momentum)
-        
+        Compute all features from OHLCV data.
+
         Args:
             df: OHLCV DataFrame
-            
+
         Returns:
-            DataFrame with added features
+            DataFrame with engineered features
         """
-        df = df.copy()
-        
-        # Simple Moving Averages
-        for period in self.feature_config.sma_periods:
-            df[f'sma_{period}'] = df['close'].rolling(window=period).mean()
-        
-        # Exponential Moving Averages
-        for period in self.feature_config.ema_periods:
-            df[f'ema_{period}'] = df['close'].ewm(span=period, adjust=False).mean()
-        
-        # Momentum (Price change)
-        df['momentum_1'] = df['close'].diff(1)
-        df['momentum_5'] = df['close'].diff(5)
-        df['momentum_10'] = df['close'].diff(10)
-        
-        # Price rate of change
-        df['roc_5'] = ((df['close'] - df['close'].shift(5)) / df['close'].shift(5)) * 100
-        df['roc_10'] = ((df['close'] - df['close'].shift(10)) / df['close'].shift(10)) * 100
-        
-        # Returns
+        features = df.copy()
+
+        # Price action
+        features = self._add_sma(features)
+        features = self._add_ema(features)
+        features = self._add_momentum(features)
+
+        # Oscillators
+        features = self._add_rsi(features)
+        features = self._add_macd(features)
+        features = self._add_stochastic(features)
+
+        # Volatility
+        features = self._add_atr(features)
+        features = self._add_bollinger_bands(features)
+
+        # Volume
+        features = self._add_volume_indicators(features)
+
+        # Price relationships
+        features = self._add_price_relationships(features)
+
+        # Remove NaN rows
+        features = features.dropna()
+
+        if self.verbose:
+            logger.info(f'Engineered {len(features.columns) - 5} features')
+
+        return features
+
+    def _add_sma(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Simple Moving Averages.
+        """
+        df['sma_short'] = df['close'].rolling(window=self.indicators.sma_short).mean()
+        df['sma_medium'] = df['close'].rolling(window=self.indicators.sma_medium).mean()
+        df['sma_long'] = df['close'].rolling(window=self.indicators.sma_long).mean()
+
+        df['sma_short_slope'] = df['sma_short'].diff()
+        df['sma_long_slope'] = df['sma_long'].diff()
+
+        return df
+
+    def _add_ema(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Exponential Moving Averages.
+        """
+        df['ema_short'] = df['close'].ewm(span=self.indicators.ema_short, adjust=False).mean()
+        df['ema_long'] = df['close'].ewm(span=self.indicators.ema_long, adjust=False).mean()
+
+        df['price_to_ema_short'] = (df['close'] - df['ema_short']) / df['ema_short']
+        df['price_to_ema_long'] = (df['close'] - df['ema_long']) / df['ema_long']
+
+        return df
+
+    def _add_rsi(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Relative Strength Index.
+        """
+        delta = df['close'].diff()
+        gains = (delta.where(delta > 0, 0)).rolling(window=self.indicators.rsi_period).mean()
+        losses = (-delta.where(delta < 0, 0)).rolling(window=self.indicators.rsi_period).mean()
+
+        rs = gains / (losses + 1e-8)
+        df['rsi'] = 100 - (100 / (1 + rs))
+
+        df['rsi_normalized'] = df['rsi'] / 100.0
+        df['rsi_divergence'] = df['rsi'].diff()
+
+        return df
+
+    def _add_macd(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add MACD indicator.
+        """
+        ema_fast = df['close'].ewm(span=self.indicators.macd_fast, adjust=False).mean()
+        ema_slow = df['close'].ewm(span=self.indicators.macd_slow, adjust=False).mean()
+
+        df['macd_line'] = ema_fast - ema_slow
+        df['macd_signal'] = df['macd_line'].ewm(span=self.indicators.macd_signal, adjust=False).mean()
+        df['macd_histogram'] = df['macd_line'] - df['macd_signal']
+
+        df['macd_direction'] = (df['macd_histogram'] > 0).astype(int)
+
+        return df
+
+    def _add_bollinger_bands(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Bollinger Bands.
+        """
+        sma = df['close'].rolling(window=self.indicators.bb_period).mean()
+        std = df['close'].rolling(window=self.indicators.bb_period).std()
+
+        df['bb_upper'] = sma + (std * self.indicators.bb_std_dev)
+        df['bb_lower'] = sma - (std * self.indicators.bb_std_dev)
+        df['bb_middle'] = sma
+        df['bb_width'] = df['bb_upper'] - df['bb_lower']
+
+        # Price position within bands
+        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'] + 1e-8)
+        df['bb_position'] = df['bb_position'].clip(0, 1)
+
+        return df
+
+    def _add_atr(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Average True Range.
+        """
+        tr1 = df['high'] - df['low']
+        tr2 = abs(df['high'] - df['close'].shift())
+        tr3 = abs(df['low'] - df['close'].shift())
+
+        true_range = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
+        df['atr'] = true_range.rolling(window=self.indicators.atr_period).mean()
+
+        # ATR ratio to close
+        df['atr_ratio'] = df['atr'] / df['close']
+
+        return df
+
+    def _add_stochastic(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add Stochastic Oscillator.
+        """
+        low_min = df['low'].rolling(window=self.indicators.stoch_period).min()
+        high_max = df['high'].rolling(window=self.indicators.stoch_period).max()
+
+        stoch_k = 100 * (df['close'] - low_min) / (high_max - low_min + 1e-8)
+        df['stoch_k'] = stoch_k.rolling(window=self.indicators.stoch_smooth_k).mean()
+        df['stoch_d'] = df['stoch_k'].rolling(window=self.indicators.stoch_smooth_d).mean()
+
+        df['stoch_k_normalized'] = df['stoch_k'] / 100.0
+
+        return df
+
+    def _add_momentum(self, df: pd.DataFrame) -> pd.DataFrame:
+        """
+        Add momentum indicators.
+        """
+        df['momentum_1'] = df['close'] - df['close'].shift(1)
+        df['momentum_5'] = df['close'] - df['close'].shift(5)
+        df['momentum_10'] = df['close'] - df['close'].shift(10)
+
         df['returns_1'] = df['close'].pct_change(1)
         df['returns_5'] = df['close'].pct_change(5)
-        
+
         return df
-    
-    def calculate_oscillators(self, df: pd.DataFrame) -> pd.DataFrame:
+
+    def _add_volume_indicators(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate oscillator features (RSI, MACD, Stochastic)
-        
-        Args:
-            df: OHLCV DataFrame
-            
-        Returns:
-            DataFrame with added features
+        Add volume-based indicators.
         """
-        df = df.copy()
-        
-        # RSI (Relative Strength Index)
-        rsi = self._calculate_rsi(df['close'], self.feature_config.rsi_period)
-        df['rsi'] = rsi
-        df['rsi_overbought'] = (rsi > self.feature_config.rsi_threshold_high).astype(int)
-        df['rsi_oversold'] = (rsi < self.feature_config.rsi_threshold_low).astype(int)
-        
-        # MACD (Moving Average Convergence Divergence)
-        macd, signal, histogram = self._calculate_macd(
-            df['close'],
-            self.feature_config.macd_fast,
-            self.feature_config.macd_slow,
-            self.feature_config.macd_signal
-        )
-        df['macd'] = macd
-        df['macd_signal'] = signal
-        df['macd_histogram'] = histogram
-        df['macd_crossover'] = ((macd > signal) & (macd.shift(1) <= signal.shift(1))).astype(int)
-        
-        # Stochastic Oscillator
-        k_percent, d_percent = self._calculate_stochastic(df['high'], df['low'], df['close'])
-        df['stoch_k'] = k_percent
-        df['stoch_d'] = d_percent
-        
+        df['volume_sma'] = df['volume'].rolling(window=20).mean()
+        df['volume_ratio'] = df['volume'] / (df['volume_sma'] + 1e-8)
+
+        # On-Balance Volume (simplified)
+        obv = (pd.Series(np.where(df['close'] > df['close'].shift(), df['volume'], 0)) -
+               pd.Series(np.where(df['close'] < df['close'].shift(), df['volume'], 0))).cumsum()
+        df['obv'] = obv
+        df['obv_sma'] = obv.rolling(window=20).mean()
+
         return df
-    
-    def calculate_volatility_features(self, df: pd.DataFrame) -> pd.DataFrame:
+
+    def _add_price_relationships(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Calculate volatility features (ATR, Bollinger Bands, std)
-        
-        Args:
-            df: OHLCV DataFrame
-            
-        Returns:
-            DataFrame with added features
+        Add derived price relationships.
         """
-        df = df.copy()
-        
-        # ATR (Average True Range)
-        atr = self._calculate_atr(df['high'], df['low'], df['close'], self.feature_config.atr_period)
-        df['atr'] = atr
-        df['atr_pct'] = (atr / df['close']) * 100
-        
-        # Bollinger Bands
-        bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(
-            df['close'],
-            self.feature_config.bb_period,
-            self.feature_config.bb_std_dev
-        )
-        df['bb_upper'] = bb_upper
-        df['bb_middle'] = bb_middle
-        df['bb_lower'] = bb_lower
-        df['bb_width'] = (bb_upper - bb_lower) / bb_middle
-        df['bb_position'] = (df['close'] - bb_lower) / (bb_upper - bb_lower)
-        
-        # Standard deviation of returns
-        df['volatility_5'] = df['returns_1'].rolling(window=5).std()
-        df['volatility_10'] = df['returns_1'].rolling(window=10).std()
-        df['volatility_20'] = df['returns_1'].rolling(window=20).std()
-        
+        df['high_low_ratio'] = df['high'] / (df['low'] + 1e-8)
+        df['close_to_high_ratio'] = df['close'] / (df['high'] + 1e-8)
+        df['close_to_low_ratio'] = df['close'] / (df['low'] + 1e-8)
+
+        df['price_range'] = df['high'] - df['low']
+        df['body_size'] = abs(df['close'] - df['open'])
+        df['upper_shadow'] = df['high'] - df[['close', 'open']].max(axis=1)
+        df['lower_shadow'] = df[['close', 'open']].min(axis=1) - df['low']
+
         return df
-    
-    def calculate_volume_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """
-        Calculate volume-based features
-        
-        Args:
-            df: OHLCV DataFrame
-            
-        Returns:
-            DataFrame with added features
-        """
-        df = df.copy()
-        
-        # Volume moving average
-        df['volume_ma'] = df['volume'].rolling(window=self.feature_config.volume_ma_period).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_ma']
-        
-        # On-Balance Volume (OBV)
-        df['obv'] = (np.sign(df['close'].diff()) * df['volume']).fillna(0).cumsum()
-        df['obv_ma'] = df['obv'].rolling(window=12).mean()
-        df['obv_signal'] = ((df['obv'] > df['obv_ma']) & (df['obv'].shift(1) <= df['obv_ma'].shift(1))).astype(int)
-        
-        # Volume momentum
-        df['volume_momentum'] = df['volume'].diff()
-        
-        return df
-    
-    def engineer_all_features(self, df: pd.DataFrame, target: Optional[pd.Series] = None) -> Tuple[pd.DataFrame, Optional[np.ndarray]]:
-        """
-        Engineer all features from raw OHLCV data
-        
-        Args:
-            df: Raw OHLCV DataFrame
-            target: Optional target variable for feature selection
-            
-        Returns:
-            Tuple of (engineered_df, selected_features_array)
-        """
-        logger.info("Engineering features...")
-        
-        # Calculate all features
-        df = self.calculate_price_action_features(df)
-        df = self.calculate_oscillators(df)
-        df = self.calculate_volatility_features(df)
-        df = self.calculate_volume_features(df)
-        
-        # Remove NaN rows
-        df = df.dropna()
-        
-        logger.info(f"Total features created: {len([c for c in df.columns if c not in ['open', 'high', 'low', 'close', 'volume']])}")
-        
-        # Feature selection if target provided
-        X_selected = None
-        if target is not None:
-            X_selected = self.select_features(df, target, n_features=25)
-        
-        return df, X_selected
-    
-    def select_features(self, df: pd.DataFrame, target: pd.Series, n_features: int = 25) -> np.ndarray:
-        """
-        Select top features using SelectKBest
-        
-        Args:
-            df: Feature DataFrame
-            target: Target variable
-            n_features: Number of features to select
-            
-        Returns:
-            Array of selected features
-        """
-        # Select only numeric feature columns
-        feature_cols = [c for c in df.columns if c not in ['open', 'high', 'low', 'close', 'volume', 'close_time']]
-        X = df[feature_cols].copy()
-        
-        # Remove any rows with NaN
-        mask = ~(X.isna().any(axis=1) | target.isna())
-        X = X[mask]
-        target_clean = target[mask]
-        
-        # Select features
-        selector = SelectKBest(score_func=f_regression, k=min(n_features, X.shape[1]))
-        X_selected = selector.fit_transform(X, target_clean)
-        
-        self.selected_features = X.columns[selector.get_support()].tolist()
-        self.feature_selector = selector
-        
-        logger.info(f"Selected {len(self.selected_features)} features")
-        
-        return X_selected
-    
-    def normalize_features(self, X: pd.DataFrame) -> np.ndarray:
-        """
-        Normalize features using StandardScaler
-        
-        Args:
-            X: Features DataFrame
-            
-        Returns:
-            Scaled features array
-        """
-        return self.scaler.fit_transform(X)
-    
-    # Private helper methods
-    
+
     @staticmethod
-    def _calculate_rsi(prices: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate RSI"""
-        delta = prices.diff()
-        gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
-        loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
-        rsi = 100 - (100 / (1 + rs))
-        return rsi
-    
-    @staticmethod
-    def _calculate_macd(prices: pd.Series, fast: int = 12, slow: int = 26, signal: int = 9) -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate MACD"""
-        ema_fast = prices.ewm(span=fast, adjust=False).mean()
-        ema_slow = prices.ewm(span=slow, adjust=False).mean()
-        macd = ema_fast - ema_slow
-        signal_line = macd.ewm(span=signal, adjust=False).mean()
-        histogram = macd - signal_line
-        return macd, signal_line, histogram
-    
-    @staticmethod
-    def _calculate_atr(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> pd.Series:
-        """Calculate ATR"""
-        tr1 = high - low
-        tr2 = abs(high - close.shift())
-        tr3 = abs(low - close.shift())
-        tr = pd.concat([tr1, tr2, tr3], axis=1).max(axis=1)
-        atr = tr.rolling(window=period).mean()
-        return atr
-    
-    @staticmethod
-    def _calculate_bollinger_bands(prices: pd.Series, period: int = 20, std_dev: float = 2.0) -> Tuple[pd.Series, pd.Series, pd.Series]:
-        """Calculate Bollinger Bands"""
-        middle = prices.rolling(window=period).mean()
-        std = prices.rolling(window=period).std()
-        upper = middle + (std * std_dev)
-        lower = middle - (std * std_dev)
-        return upper, middle, lower
-    
-    @staticmethod
-    def _calculate_stochastic(high: pd.Series, low: pd.Series, close: pd.Series, period: int = 14) -> Tuple[pd.Series, pd.Series]:
-        """Calculate Stochastic Oscillator"""
-        lowest_low = low.rolling(window=period).min()
-        highest_high = high.rolling(window=period).max()
-        k_percent = 100 * ((close - lowest_low) / (highest_high - lowest_low))
-        d_percent = k_percent.rolling(window=3).mean()
-        return k_percent, d_percent
+    def get_feature_names() -> List[str]:
+        """
+        Get list of all engineered feature names.
+        """
+        return [
+            # SMA
+            'sma_short', 'sma_medium', 'sma_long', 'sma_short_slope', 'sma_long_slope',
+            # EMA
+            'ema_short', 'ema_long', 'price_to_ema_short', 'price_to_ema_long',
+            # RSI
+            'rsi', 'rsi_normalized', 'rsi_divergence',
+            # MACD
+            'macd_line', 'macd_signal', 'macd_histogram', 'macd_direction',
+            # Bollinger Bands
+            'bb_upper', 'bb_lower', 'bb_middle', 'bb_width', 'bb_position',
+            # ATR
+            'atr', 'atr_ratio',
+            # Stochastic
+            'stoch_k', 'stoch_d', 'stoch_k_normalized',
+            # Momentum
+            'momentum_1', 'momentum_5', 'momentum_10', 'returns_1', 'returns_5',
+            # Volume
+            'volume_sma', 'volume_ratio', 'obv', 'obv_sma',
+            # Price relationships
+            'high_low_ratio', 'close_to_high_ratio', 'close_to_low_ratio',
+            'price_range', 'body_size', 'upper_shadow', 'lower_shadow',
+        ]
