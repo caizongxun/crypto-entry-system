@@ -39,42 +39,35 @@ def setup_logging(verbose: bool = False):
     )
 
 
-def _create_classification_targets(df: pd.DataFrame, lookback: int = 20, forward: int = 5) -> tuple:
+def _create_regression_targets(df: pd.DataFrame, lookback: int = 20, forward_lookback: int = 20) -> tuple:
     """
-    Create classification targets for tradeable signals.
+    Create regression targets by predicting future support/resistance.
+    
+    Key insight: Shift targets forward so we predict FUTURE price extremes,
+    not past ones. This avoids data leakage.
     
     Args:
         df: DataFrame with OHLCV data
-        lookback: Number of periods to calculate support/resistance
-        forward: Number of periods to look forward for price movement
+        lookback: Number of periods to calculate current support/resistance
+        forward_lookback: Number of periods ahead to predict support/resistance
         
     Returns:
-        Tuple of (support_levels, resistance_levels, will_touch_support, will_touch_resistance, direction)
+        Tuple of (current_support, current_resistance, future_support, future_resistance, direction)
     """
-    # Calculate support/resistance from past lookback periods
-    support = df['low'].rolling(window=lookback).min()
-    resistance = df['high'].rolling(window=lookback).max()
+    # Current support/resistance (calculated from past lookback periods)
+    current_support = df['low'].rolling(window=lookback).min()
+    current_resistance = df['high'].rolling(window=lookback).max()
     
-    # Look forward to see if price touches support or resistance
-    # Check the next 'forward' candles
-    will_touch_support = np.zeros(len(df), dtype=float)
-    will_touch_resistance = np.zeros(len(df), dtype=float)
+    # Future support/resistance (what will be the extremes in next forward_lookback periods)
+    # This is the target we want to predict
+    future_support = df['low'].rolling(window=forward_lookback).min().shift(-forward_lookback)
+    future_resistance = df['high'].rolling(window=forward_lookback).max().shift(-forward_lookback)
     
-    for i in range(len(df) - forward):
-        future_low = df['low'].iloc[i+1:i+1+forward].min()
-        future_high = df['high'].iloc[i+1:i+1+forward].max()
-        
-        if support.iloc[i] > 0 and future_low <= support.iloc[i]:
-            will_touch_support[i] = 1
-        
-        if resistance.iloc[i] > 0 and future_high >= resistance.iloc[i]:
-            will_touch_resistance[i] = 1
-    
-    # Price direction: whether next 5 candles average close is higher or lower
-    future_close = df['close'].shift(-forward)
+    # Price direction in forward window
+    future_close = df['close'].shift(-forward_lookback)
     direction = np.where(future_close > df['close'], 1, -1)
     
-    return support, resistance, will_touch_support, will_touch_resistance, direction
+    return current_support, current_resistance, future_support, future_resistance, direction
 
 
 def train_model(args):
@@ -128,19 +121,17 @@ def train_model(args):
 
     logger.info(f'Total features: {len(df_features.columns) - 5}')
 
-    # Create targets for classification
-    logger.info('Creating targets...')
-    support, resistance, will_touch_support, will_touch_resistance, direction = _create_classification_targets(
-        df, lookback=20, forward=5
+    # Create targets: predict FUTURE support/resistance, not current ones
+    logger.info('Creating targets (predicting future support/resistance)...')
+    current_support, current_resistance, future_support, future_resistance, direction = _create_regression_targets(
+        df, lookback=20, forward_lookback=20
     )
     
     # Remove rows with NaN
-    mask = support.notna() & resistance.notna()
+    mask = future_support.notna() & future_resistance.notna()
     df_clean = df_features[mask].copy()
-    support_clean = support[mask]
-    resistance_clean = resistance[mask]
-    will_touch_support_clean = will_touch_support[mask]
-    will_touch_resistance_clean = will_touch_resistance[mask]
+    future_support_clean = future_support[mask]
+    future_resistance_clean = future_resistance[mask]
     direction_clean = direction[mask]
 
     logger.info(f'Clean data: {len(df_clean)} samples')
@@ -152,33 +143,24 @@ def train_model(args):
     df_train = df_clean[train_mask].copy()
     df_test = df_clean[test_mask].copy()
     
-    y_train_support_touch = will_touch_support_clean[train_mask]
-    y_train_resistance_touch = will_touch_resistance_clean[train_mask]
-    y_train_direction = direction_clean[train_mask]
+    y_train_support = future_support_clean[train_mask]
+    y_train_resistance = future_resistance_clean[train_mask]
+    y_train_breakout = (future_resistance_clean[train_mask] > df['close'][train_mask]).astype(float)
     
-    y_test_support_touch = will_touch_support_clean[test_mask]
-    y_test_resistance_touch = will_touch_resistance_clean[test_mask]
-    y_test_direction = direction_clean[test_mask]
+    y_test_support = future_support_clean[test_mask]
+    y_test_resistance = future_resistance_clean[test_mask]
+    y_test_breakout = (future_resistance_clean[test_mask] > df['close'][test_mask]).astype(float)
 
     logger.info(f'Training samples: {len(df_train)}')
     logger.info(f'Testing samples: {len(df_test)}')
-    logger.info(f'Support touch rate: {will_touch_support_clean.mean():.2%}')
-    logger.info(f'Resistance touch rate: {will_touch_resistance_clean.mean():.2%}')
-    logger.info(f'Direction: Up {(direction_clean==1).sum()}, Down {(direction_clean==-1).sum()}')
+    logger.info(f'Average support prediction (train): {y_train_support.mean():.2f}')
+    logger.info(f'Average resistance prediction (train): {y_train_resistance.mean():.2f}')
+    logger.info(f'Current price range: {df["close"].mean():.2f}')
 
     # Get feature columns (exclude OHLCV)
     feature_cols = [col for col in df_clean.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
     X_train = df_train[feature_cols]
     X_test = df_test[feature_cols]
-
-    # Prepare regression targets (still using support/resistance values)
-    y_train_support = support_clean[train_mask]
-    y_train_resistance = resistance_clean[train_mask]
-    y_train_breakout = will_touch_resistance_clean[train_mask]
-    
-    y_test_support = support_clean[test_mask]
-    y_test_resistance = resistance_clean[test_mask]
-    y_test_breakout = will_touch_resistance_clean[test_mask]
 
     # Train models
     logger.info('Training models...')
@@ -247,8 +229,11 @@ def train_model(args):
             logger.info(f"  Overfitting Gap: {row['overfitting_gap']:.6f}")
             if row['overfitting_gap'] > 0.2:
                 logger.warning(f"  WARNING: Significant overfitting detected!")
+            elif row['overfitting_gap'] > 0.1:
+                logger.info(f"  Status: Mild overfitting")
             else:
                 logger.info(f"  Status: Healthy model")
+        logger.info(f"  Test MAE: {row['test_mae']:.4f} (avg prediction error)")
 
     return True
 
@@ -381,22 +366,21 @@ def backtest_strategy(args):
     df_features = engineer.engineer_features(df)
 
     # Create targets
-    support, resistance, will_touch_support, will_touch_resistance, direction = _create_classification_targets(
-        df, lookback=20, forward=5
+    current_support, current_resistance, future_support, future_resistance, direction = _create_regression_targets(
+        df, lookback=20, forward_lookback=20
     )
 
     # Remove NaN
-    mask = support.notna() & resistance.notna()
+    mask = future_support.notna() & future_resistance.notna()
     df_clean = df_features[mask].copy()
-    support = support[mask]
-    resistance = resistance[mask]
-    will_touch_resistance = will_touch_resistance[mask]
+    future_support = future_support[mask]
+    future_resistance = future_resistance[mask]
 
     # Split and get test set
     train_df, test_df = loader.split_train_test(df_clean, train_ratio=0.7)
-    y_test_support = support[test_df.index]
-    y_test_resistance = resistance[test_df.index]
-    y_test_breakout = will_touch_resistance[test_df.index]
+    y_test_support = future_support[test_df.index]
+    y_test_resistance = future_resistance[test_df.index]
+    y_test_breakout = (future_resistance[test_df.index] > df['close'][test_df.index]).astype(float)
 
     # Load models
     logger.info('Loading trained models...')
