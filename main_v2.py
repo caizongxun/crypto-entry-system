@@ -75,7 +75,8 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
     print(f"\nRecommendation:")
     print(f"These parameters were optimized on raw data without SMOTE.")
     print(f"Use train mode to apply SMOTE during final training:")
-    print(f"\n  python main_v2.py --mode train --symbol {symbol} --timeframe {timeframe} \")
+    print()
+    print(f"  python main_v2.py --mode train --symbol {symbol} --timeframe {timeframe}")
     print(f"    --model-type {model_type} --results-path {results_path}")
 
     return result
