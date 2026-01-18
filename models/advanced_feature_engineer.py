@@ -39,14 +39,22 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Check if BB indicators exist
-        if 'touched_lower' not in df.columns or 'touched_upper' not in df.columns:
-            print("Warning: BB indicators not found, using neutral bounce failure memory")
+        # Check if BB indicators exist - ALL required indicators must be present
+        required_bb_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper', 'close', 'low']
+        missing_cols = [col for col in required_bb_cols if col not in df.columns]
+        
+        if missing_cols:
+            print(f"Warning: BB indicators not found ({missing_cols}), using neutral bounce failure memory")
             df['bounce_failure_memory'] = 0.5
             return df
         
         # Bin price into volatility-adjusted levels
-        df['price_bin'] = pd.qcut(df['close'], q=20, duplicates='drop')
+        try:
+            df['price_bin'] = pd.qcut(df['close'], q=20, duplicates='drop')
+        except Exception as e:
+            print(f"Warning: Could not bin prices ({e}), using neutral bounce failure memory")
+            df['bounce_failure_memory'] = 0.5
+            return df
         
         # For each bin, calculate historical bounce success
         bounce_success_by_bin = {}
@@ -57,14 +65,19 @@ class AdvancedFeatureEngineer:
                 bounce_success_by_bin[price_bin] = 0.5  # Default neutral
                 continue
             
-            # Count successful bounces (used BB touch + had future bounce)
-            successful = (bin_data['touched_lower'] | bin_data['touched_upper']).sum()
-            failed = (bin_data['touched_lower'] & (bin_data['low'].shift(-1) < bin_data['bb_lower'])).sum()
+            # Count successful bounces (used BB touch)
+            touch_count = (bin_data['touched_lower'] | bin_data['touched_upper']).sum()
             
-            if successful == 0:
+            if touch_count == 0:
                 success_rate = 0.5
             else:
-                success_rate = max(0, (successful - failed) / successful)
+                # For lower touches that failed (continued lower next candle)
+                lower_fails = (bin_data['touched_lower'] & (bin_data['low'].shift(-1) < bin_data['bb_lower'])).sum()
+                # For upper touches that failed (continued upper next candle)  
+                upper_fails = (bin_data['touched_upper'] & (bin_data['low'].shift(-1) > bin_data['bb_upper'])).sum()
+                
+                total_fails = lower_fails + upper_fails
+                success_rate = max(0, (touch_count - total_fails) / touch_count) if touch_count > 0 else 0.5
             
             bounce_success_by_bin[price_bin] = success_rate
         
@@ -143,8 +156,11 @@ class AdvancedFeatureEngineer:
         df = df.copy()
         
         # Check if BB indicators exist
-        if 'touched_lower' not in df.columns:
-            print("Warning: BB indicators not found, using neutral reversal strength")
+        required_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper', 'close', 'high', 'low']
+        missing_cols = [col for col in required_cols if col not in df.columns]
+        
+        if missing_cols:
+            print(f"Warning: BB indicators not found ({missing_cols}), using neutral reversal strength")
             df['reversal_speed'] = 0.5
             df['reversal_magnitude'] = 0.5
             df['reversal_acceleration'] = 0.5
@@ -346,15 +362,22 @@ class AdvancedFeatureEngineer:
             
         Returns:
             DataFrame with additional advanced features
+            
+        Note: This method requires BB indicators to be pre-calculated.
+        If they're missing, it will create neutral placeholder features.
         """
-        print("Applying advanced feature engineering...")
+        print("Applying advanced ML-optimized features...")
         
         # Check if BB indicators exist - if not, skip advanced features
-        if 'touched_lower' not in df.columns or 'bb_lower' not in df.columns:
-            print("  Note: BB indicators not yet available, deferring advanced features to training phase")
-            # Create placeholder advanced features
+        required_bb_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper']
+        missing_cols = [col for col in required_bb_cols if col not in df.columns]
+        
+        if missing_cols:
+            print(f"  Note: BB indicators not yet available ({missing_cols}), using neutral advanced features")
+            # Create placeholder advanced features with neutral values
             for feature_name in self.get_feature_list():
                 df[feature_name] = 0.5
+            print("  Advanced features initialized with neutral values (0.5)")
             return df
         
         # Step 1: Bounce failure memory
