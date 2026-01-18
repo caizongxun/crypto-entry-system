@@ -100,22 +100,31 @@ TIMEFRAME_CONFIGS = {
     '15m': {
         'bb_period': 20,
         'bb_std': 2.0,
+        'bb_touch_tolerance_upper': 0.01,  # 1% above BB upper
+        'bb_touch_tolerance_lower': 0.01,  # 1% below BB lower
         'lookforward': 24,
-        'bounce_threshold': 0.002,
+        'bounce_threshold': 0.005,  # Increased from 0.002 for stricter bounce definition
         'model_type': 'xgboost',
+        'scale_pos_weight_multiplier': 2.0,  # Increase positive class weight for better precision
     },
     '1h': {
         'bb_period': 20,
         'bb_std': 2.0,
+        'bb_touch_tolerance_upper': 0.01,
+        'bb_touch_tolerance_lower': 0.01,
         'lookforward': 8,
-        'bounce_threshold': 0.003,
+        'bounce_threshold': 0.007,  # Increased from 0.003
         'model_type': 'xgboost',
+        'scale_pos_weight_multiplier': 2.0,
     },
     '1d': {
         'bb_period': 20,
         'bb_std': 2.0,
+        'bb_touch_tolerance_upper': 0.01,
+        'bb_touch_tolerance_lower': 0.01,
         'lookforward': 5,
-        'bounce_threshold': 0.005,
+        'bounce_threshold': 0.008,  # Increased from 0.005
         'model_type': 'xgboost',
+        'scale_pos_weight_multiplier': 2.0,
     },
 }
