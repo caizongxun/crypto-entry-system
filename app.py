@@ -16,8 +16,10 @@ app.config['JSON_AS_ASCII'] = False
 
 from trading.auto_trader import AutoTrader
 from web.routes.trading_routes import trading_bp
+from web.routes.realtime_routes import realtime_bp
 
 app.register_blueprint(trading_bp)
+app.register_blueprint(realtime_bp)
 
 app.auto_trader = AutoTrader(
     initial_balance=1000.0,
