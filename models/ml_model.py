@@ -175,11 +175,16 @@ class CryptoEntryModel:
         return self.feature_data
 
     def calculate_bb_metrics(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate Bollinger Bands metrics for bounce detection using timeframe config."""
+        """Calculate Bollinger Bands metrics for bounce detection using timeframe config.
+        
+        Uses stricter tolerance parameters for more precise BB touch/break detection.
+        """
         df_bb = df.copy()
 
         bb_period = self.timeframe_config['bb_period']
         bb_std = self.timeframe_config['bb_std']
+        bb_touch_tol_upper = self.timeframe_config.get('bb_touch_tolerance_upper', 0.02)
+        bb_touch_tol_lower = self.timeframe_config.get('bb_touch_tolerance_lower', 0.02)
 
         bb_basis = df_bb['close'].rolling(window=bb_period).mean()
         bb_dev = df_bb['close'].rolling(window=bb_period).std()
@@ -193,8 +198,15 @@ class CryptoEntryModel:
         df_bb['bb_position'] = (df_bb['close'] - bb_lower) / (bb_upper - bb_lower)
         df_bb['basis_slope'] = bb_basis.diff()
 
-        df_bb['touched_upper'] = (df_bb['close'] >= bb_upper * 0.98) & (df_bb['close'] <= bb_upper)
-        df_bb['touched_lower'] = (df_bb['close'] <= bb_lower * 1.02) & (df_bb['close'] >= bb_lower)
+        # Stricter BB touch definition (1% tolerance instead of 2%)
+        df_bb['touched_upper'] = (
+            (df_bb['close'] >= bb_upper * (1 - bb_touch_tol_upper)) & 
+            (df_bb['close'] <= bb_upper * (1 + bb_touch_tol_upper))
+        )
+        df_bb['touched_lower'] = (
+            (df_bb['close'] <= bb_lower * (1 + bb_touch_tol_lower)) & 
+            (df_bb['close'] >= bb_lower * (1 - bb_touch_tol_lower))
+        )
         df_bb['broke_upper'] = (df_bb['close'] > bb_upper) & (df_bb['high'].shift(1) <= bb_upper.shift(1))
         df_bb['broke_lower'] = (df_bb['close'] < bb_lower) & (df_bb['low'].shift(1) >= bb_lower.shift(1))
 
@@ -435,9 +447,14 @@ class CryptoEntryModel:
         self.y_train = y_train
         self.y_test = y_test
         
-        scale_pos_weight = (self.y_train == 0).sum() / max((self.y_train == 1).sum(), 1)
-        print(f"\nClass imbalance ratio: {scale_pos_weight:.2f}:1")
-        print(f"Using scale_pos_weight = {scale_pos_weight:.2f}")
+        # Calculate scale_pos_weight with multiplier from config
+        base_scale_pos_weight = (self.y_train == 0).sum() / max((self.y_train == 1).sum(), 1)
+        scale_pos_weight_multiplier = self.timeframe_config.get('scale_pos_weight_multiplier', 1.0)
+        scale_pos_weight = base_scale_pos_weight * scale_pos_weight_multiplier
+        
+        print(f"\nClass imbalance ratio: {base_scale_pos_weight:.2f}:1")
+        print(f"Scale pos weight multiplier: {scale_pos_weight_multiplier}x")
+        print(f"Final scale_pos_weight = {scale_pos_weight:.2f}")
         
         self.debug_info['train_set_size'] = len(X_train)
         self.debug_info['test_set_size'] = len(X_test)
@@ -445,7 +462,9 @@ class CryptoEntryModel:
         self.debug_info['train_negative'] = (y_train == 0).sum()
         self.debug_info['test_positive'] = (y_test == 1).sum()
         self.debug_info['test_negative'] = (y_test == 0).sum()
+        self.debug_info['base_scale_pos_weight'] = base_scale_pos_weight
         self.debug_info['scale_pos_weight'] = scale_pos_weight
+        self.debug_info['scale_pos_weight_multiplier'] = scale_pos_weight_multiplier
 
         print(f"\nTraining {self.model_type} model for {self.timeframe}...")
         print(f"Hyperparameters: {self.hyperparams}")
