@@ -6,6 +6,8 @@ import requests
 import os
 import sys
 from dotenv import load_dotenv
+import yfinance as yf
+import time
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
@@ -85,30 +87,187 @@ if binance_api_key and binance_api_secret and Client:
         client = None
 else:
     client = None
-    print('Warning: Binance API keys not configured or python-binance not installed. Price data will use public endpoints.')
+    print('Warning: Binance API keys not configured or python-binance not installed. Using public endpoints.')
+
+
+class RealtimeCandleProvider:
+    TIMEFRAME_MS = {
+        '15m': 15 * 60 * 1000,
+        '1h': 60 * 60 * 1000,
+        '1d': 24 * 60 * 60 * 1000
+    }
+    
+    TIMEFRAME_YFINANCE = {
+        '15m': '15m',
+        '1h': '1h',
+        '1d': '1d'
+    }
+    
+    @staticmethod
+    def _convert_interval_to_binance(timeframe):
+        interval_map = {'15m': '15m', '1h': '1h', '1d': '1d'}
+        return interval_map.get(timeframe, '1h')
+    
+    @staticmethod
+    def get_completed_candles_binance(symbol, timeframe, limit=50):
+        try:
+            if limit < 50:
+                limit = 50
+            
+            interval = RealtimeCandleProvider._convert_interval_to_binance(timeframe)
+            
+            klines = requests.get(
+                'https://api.binance.com/api/v3/klines',
+                params={
+                    'symbol': symbol,
+                    'interval': interval,
+                    'limit': min(limit + 1, 1000)
+                },
+                timeout=10
+            ).json()
+            
+            if isinstance(klines, dict) and 'code' in klines:
+                return None
+            
+            candles = []
+            current_time = int(time.time() * 1000)
+            timeframe_ms = RealtimeCandleProvider.TIMEFRAME_MS.get(timeframe, 60 * 60 * 1000)
+            
+            for kline in klines[:-1]:
+                open_time = kline[0]
+                is_completed = (current_time - open_time) >= timeframe_ms
+                
+                if is_completed:
+                    candles.append({
+                        'open_time': open_time,
+                        'open': float(kline[1]),
+                        'high': float(kline[2]),
+                        'low': float(kline[3]),
+                        'close': float(kline[4]),
+                        'volume': float(kline[7]),
+                        'is_completed': True
+                    })
+            
+            return candles[-limit:] if len(candles) >= limit else (candles if candles else None)
+        
+        except Exception as e:
+            print(f'Error fetching from Binance: {str(e)}')
+            return None
+    
+    @staticmethod
+    def get_completed_candles_yfinance(symbol, timeframe, limit=50):
+        try:
+            if limit < 50:
+                limit = 50
+            
+            ticker = yf.Ticker(symbol)
+            yf_interval = RealtimeCandleProvider.TIMEFRAME_YFINANCE.get(timeframe, '1h')
+            
+            df = ticker.history(interval=yf_interval, period='60d')
+            
+            if df.empty:
+                return None
+            
+            candles = []
+            current_time = pd.Timestamp.now()
+            timeframe_td = pd.Timedelta(minutes=15 if timeframe == '15m' else (60 if timeframe == '1h' else 24*60))
+            
+            for idx, row in df.iterrows():
+                if (current_time - idx) >= timeframe_td * 0.9:
+                    candles.append({
+                        'open_time': int(idx.timestamp() * 1000),
+                        'open': float(row['Open']),
+                        'high': float(row['High']),
+                        'low': float(row['Low']),
+                        'close': float(row['Close']),
+                        'volume': float(row['Volume']) if 'Volume' in row else 0,
+                        'is_completed': True
+                    })
+            
+            return candles[-limit:] if len(candles) >= limit else (candles if candles else None)
+        
+        except Exception as e:
+            print(f'Error fetching from yfinance: {str(e)}')
+            return None
+    
+    @staticmethod
+    def get_current_candle_status(symbol, timeframe, data_source='binance'):
+        try:
+            if data_source == 'binance':
+                interval = RealtimeCandleProvider._convert_interval_to_binance(timeframe)
+                klines = requests.get(
+                    'https://api.binance.com/api/v3/klines',
+                    params={'symbol': symbol, 'interval': interval, 'limit': 2},
+                    timeout=10
+                ).json()
+                
+                if isinstance(klines, dict) or len(klines) < 2:
+                    return None
+                
+                current_candle = klines[-1]
+                open_time = current_candle[0]
+                current_time = int(time.time() * 1000)
+                timeframe_ms = RealtimeCandleProvider.TIMEFRAME_MS.get(timeframe, 60 * 60 * 1000)
+                
+                progress = ((current_time - open_time) / timeframe_ms) * 100
+                
+                return {
+                    'status': 'completed' if progress >= 100 else 'forming',
+                    'progress_percentage': min(100, round(progress, 2)),
+                    'open_time': open_time,
+                    'current_price': float(current_candle[4]),
+                    'open_price': float(current_candle[1]),
+                    'high': float(current_candle[2]),
+                    'low': float(current_candle[3])
+                }
+            else:
+                ticker = yf.Ticker(symbol)
+                yf_interval = RealtimeCandleProvider.TIMEFRAME_YFINANCE.get(timeframe, '1h')
+                df = ticker.history(interval=yf_interval, period='5d')
+                
+                if df.empty:
+                    return None
+                
+                current_row = df.iloc[-1]
+                open_time_idx = df.index[-1]
+                current_time = pd.Timestamp.now()
+                timeframe_td = pd.Timedelta(minutes=15 if timeframe == '15m' else (60 if timeframe == '1h' else 24*60))
+                
+                elapsed = (current_time - open_time_idx)
+                progress = (elapsed / timeframe_td) * 100
+                
+                return {
+                    'status': 'completed' if progress >= 100 else 'forming',
+                    'progress_percentage': min(100, round(progress.total_seconds() / timeframe_td.total_seconds() * 100, 2)),
+                    'open_time': int(open_time_idx.timestamp() * 1000),
+                    'current_price': float(current_row['Close']),
+                    'open_price': float(current_row['Open']),
+                    'high': float(current_row['High']),
+                    'low': float(current_row['Low'])
+                }
+        
+        except Exception as e:
+            print(f'Error getting candle status: {str(e)}')
+            return None
 
 
 @app.route('/')
 def index():
-    """Render main dashboard."""
-    return render_template('dashboard.html')
+    return render_template('trading_dashboard.html')
 
 
 @app.route('/15m-analysis')
 def analysis_15m():
-    """Render 15m analysis dashboard."""
     return render_template('15m_analysis.html')
 
 
 @app.route('/chart')
 def advanced_chart():
-    """Render advanced TradingView-style chart."""
     return render_template('chart.html')
 
 
 @app.route('/api/price', methods=['GET'])
 def get_price():
-    """Get current price data from Binance."""
     try:
         symbol = request.args.get('symbol', 'BTCUSDT')
         interval = request.args.get('interval', '1h')
@@ -163,9 +322,204 @@ def get_price():
         return jsonify({'status': 'error', 'message': str(e)}), 500
 
 
+@app.route('/api/system/status', methods=['GET'])
+def system_status():
+    return jsonify({
+        'status': 'ok',
+        'timestamp': datetime.now().isoformat(),
+        'components': {
+            'ml_model': 'loaded' if ml_model_15m else 'not_initialized',
+            'realtime_fetcher': 'initialized'
+        }
+    })
+
+
+@app.route('/api/realtime/prediction', methods=['GET'])
+def realtime_prediction():
+    try:
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        timeframe = request.args.get('timeframe', '15m')
+        limit = int(request.args.get('limit', 50))
+        data_source = request.args.get('source', 'binance')
+        
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        if limit < 50:
+            limit = 50
+        
+        if data_source == 'binance':
+            candles = RealtimeCandleProvider.get_completed_candles_binance(symbol, timeframe, limit)
+        else:
+            candles = RealtimeCandleProvider.get_completed_candles_yfinance(symbol, timeframe, limit)
+        
+        if not candles or len(candles) < 50:
+            return jsonify({
+                'status': 'error',
+                'message': f'Insufficient completed candles. Got {len(candles) if candles else 0}, need at least 50'
+            }), 400
+        
+        df = pd.DataFrame(candles)
+        df['timestamp'] = pd.to_datetime(df['open_time'], unit='ms')
+        
+        df['bb_basis'] = df['close'].rolling(window=20).mean()
+        std = df['close'].rolling(window=20).std()
+        df['bb_upper'] = df['bb_basis'] + (std * 2)
+        df['bb_lower'] = df['bb_basis'] - (std * 2)
+        df['bb_width'] = df['bb_upper'] - df['bb_lower']
+        df['bb_position'] = (df['close'] - df['bb_lower']) / df['bb_width']
+        
+        delta = df['close'].diff()
+        gain = (delta.where(delta > 0, 0)).rolling(window=14).mean()
+        loss = (-delta.where(delta < 0, 0)).rolling(window=14).mean()
+        rs = gain / loss
+        df['rsi'] = 100 - (100 / (1 + rs))
+        
+        df['volatility'] = df['close'].pct_change().rolling(window=20).std()
+        
+        latest_row = df.iloc[-1]
+        
+        signal_type = 'NEUTRAL'
+        bounce_probability = 0.5
+        confidence = 'LOW'
+        
+        if latest_row['bb_upper'] > 0:
+            if latest_row['close'] >= latest_row['bb_upper']:
+                signal_type = 'SELL_SIGNAL'
+                bounce_probability = min(0.95, 0.6 + (1 - latest_row['bb_position']) * 0.3)
+                confidence = 'HIGH'
+            elif latest_row['close'] <= latest_row['bb_lower']:
+                signal_type = 'BUY_SIGNAL'
+                bounce_probability = min(0.95, 0.6 + latest_row['bb_position'] * 0.3)
+                confidence = 'HIGH'
+            elif latest_row['bb_position'] > 0.8:
+                signal_type = 'POTENTIAL_SELL'
+                bounce_probability = min(0.9, 0.5 + (1 - latest_row['bb_position']) * 0.3)
+                confidence = 'MEDIUM'
+            elif latest_row['bb_position'] < 0.2:
+                signal_type = 'POTENTIAL_BUY'
+                bounce_probability = min(0.9, 0.5 + latest_row['bb_position'] * 0.3)
+                confidence = 'MEDIUM'
+        
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'data_source': data_source,
+            'candles_used': len(candles),
+            'latest_candle': {
+                'timestamp': latest_row['timestamp'].isoformat(),
+                'open': float(latest_row['open']),
+                'high': float(latest_row['high']),
+                'low': float(latest_row['low']),
+                'close': float(latest_row['close']),
+                'volume': float(latest_row['volume']),
+                'bb_upper': float(latest_row['bb_upper']) if pd.notna(latest_row['bb_upper']) else None,
+                'bb_basis': float(latest_row['bb_basis']) if pd.notna(latest_row['bb_basis']) else None,
+                'bb_lower': float(latest_row['bb_lower']) if pd.notna(latest_row['bb_lower']) else None,
+                'bb_position': float(latest_row['bb_position']) if pd.notna(latest_row['bb_position']) else None,
+                'bb_width': float(latest_row['bb_width']) if pd.notna(latest_row['bb_width']) else None
+            },
+            'technical_indicators': {
+                'rsi': float(latest_row['rsi']) if pd.notna(latest_row['rsi']) else None,
+                'volatility': float(latest_row['volatility']) if pd.notna(latest_row['volatility']) else None
+            },
+            'prediction': {
+                'signal_type': signal_type,
+                'bounce_probability': float(bounce_probability),
+                'confidence': confidence
+            }
+        })
+    
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
+@app.route('/api/realtime/candle-status', methods=['GET'])
+def candle_status():
+    try:
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        timeframe = request.args.get('timeframe', '15m')
+        data_source = request.args.get('source', 'binance')
+        
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        status = RealtimeCandleProvider.get_current_candle_status(symbol, timeframe, data_source)
+        
+        if status is None:
+            return jsonify({
+                'status': 'error',
+                'candle_status': {'status': 'error', 'message': 'Could not fetch candle status'}
+            }), 400
+        
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'data_source': data_source,
+            'candle_status': status
+        })
+    
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e), 'candle_status': {'status': 'error'}}), 500
+
+
+@app.route('/api/realtime/candles', methods=['GET'])
+def get_candles():
+    try:
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        timeframe = request.args.get('timeframe', '15m')
+        limit = int(request.args.get('limit', 50))
+        data_source = request.args.get('source', 'binance')
+        
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        if limit < 10:
+            limit = 10
+        if limit > 1000:
+            limit = 1000
+        
+        if data_source == 'binance':
+            candles = RealtimeCandleProvider.get_completed_candles_binance(symbol, timeframe, limit)
+        else:
+            candles = RealtimeCandleProvider.get_completed_candles_yfinance(symbol, timeframe, limit)
+        
+        if not candles:
+            return jsonify({
+                'status': 'error',
+                'message': 'Could not fetch candles from data source'
+            }), 400
+        
+        formatted_candles = []
+        for candle in candles:
+            formatted_candles.append({
+                'open_time': candle['open_time'],
+                'timestamp': datetime.fromtimestamp(candle['open_time'] / 1000).isoformat(),
+                'open': round(candle['open'], 2),
+                'high': round(candle['high'], 2),
+                'low': round(candle['low'], 2),
+                'close': round(candle['close'], 2),
+                'volume': round(candle['volume'], 2),
+                'is_completed': candle.get('is_completed', True)
+            })
+        
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'timeframe': timeframe,
+            'data_source': data_source,
+            'candles_count': len(formatted_candles),
+            'candles': formatted_candles
+        })
+    
+    except Exception as e:
+        return jsonify({'status': 'error', 'message': str(e)}), 500
+
+
 @app.route('/api/ml-prediction', methods=['GET'])
 def get_ml_prediction():
-    """Get ML model predictions for 1h timeframe."""
     try:
         if not ml_model_1h:
             return jsonify({'status': 'error', 'message': 'ML model not initialized'}), 500
@@ -206,7 +560,6 @@ def get_ml_prediction():
 
 @app.route('/api/ml-prediction-15m', methods=['GET'])
 def get_ml_prediction_15m():
-    """Get ML model predictions for 15m timeframe."""
     try:
         if not ml_model_15m:
             return jsonify({'status': 'error', 'message': '15m ML model not initialized'}), 500
@@ -249,7 +602,6 @@ def get_ml_prediction_15m():
 
 @app.route('/api/sentiment', methods=['GET'])
 def get_sentiment():
-    """Get market sentiment data."""
     try:
         if not sentiment_analyzer:
             return jsonify({'status': 'error', 'message': 'Sentiment analyzer not initialized'}), 500
@@ -269,7 +621,6 @@ def get_sentiment():
 
 @app.route('/api/on-chain', methods=['GET'])
 def get_on_chain_data():
-    """Get on-chain data."""
     try:
         if not on_chain_provider:
             return jsonify({'status': 'error', 'message': 'On-chain provider not initialized'}), 500
@@ -287,7 +638,6 @@ def get_on_chain_data():
 
 @app.route('/api/trading/open-position', methods=['POST'])
 def open_position():
-    """Open a new position."""
     try:
         if not paper_trading:
             return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
@@ -311,7 +661,6 @@ def open_position():
 
 @app.route('/api/trading/close-position', methods=['POST'])
 def close_position():
-    """Close a position."""
     try:
         if not paper_trading:
             return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
@@ -331,7 +680,6 @@ def close_position():
 
 @app.route('/api/trading/account-summary', methods=['GET'])
 def get_account_summary():
-    """Get trading account summary."""
     try:
         if not paper_trading:
             return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
@@ -352,7 +700,6 @@ def get_account_summary():
 
 @app.route('/api/trading/update-price', methods=['POST'])
 def update_price():
-    """Update market price for positions."""
     try:
         if not paper_trading:
             return jsonify({'status': 'error', 'message': 'Paper trading not initialized'}), 500
@@ -370,7 +717,6 @@ def update_price():
 
 @app.route('/api/health', methods=['GET'])
 def health_check():
-    """API health check endpoint."""
     return jsonify({
         'status': 'healthy',
         'timestamp': datetime.now().isoformat(),
@@ -380,7 +726,8 @@ def health_check():
             'ml_model_1h': 'loaded' if ml_model_1h else 'not_loaded',
             'ml_model_15m': 'loaded' if ml_model_15m else 'not_loaded',
             'paper_trading': 'enabled' if paper_trading else 'disabled',
-            'binance_client': 'connected' if client else 'using_public_endpoints'
+            'binance_client': 'connected' if client else 'using_public_endpoints',
+            'realtime_provider': 'initialized'
         }
     })
 
