@@ -39,6 +39,33 @@ def setup_logging(verbose: bool = False):
     )
 
 
+def _create_support_resistance_targets(df: pd.DataFrame, lookback: int = 20) -> tuple:
+    """
+    Create support/resistance targets based on historical extremes.
+    
+    Args:
+        df: DataFrame with OHLCV data
+        lookback: Number of periods to look back
+        
+    Returns:
+        Tuple of (support, resistance, target_price)
+    """
+    # Support: lowest low in past lookback periods
+    support = df['low'].rolling(window=lookback).min()
+    
+    # Resistance: highest high in past lookback periods
+    resistance = df['high'].rolling(window=lookback).max()
+    
+    # Target: whether next candle breaks above resistance or below support
+    future_high = df['high'].shift(-1)
+    future_low = df['low'].shift(-1)
+    
+    breakout_above = (future_high > resistance).astype(float)
+    breakout_below = (future_low < support).astype(float)
+    
+    return support, resistance, breakout_above, breakout_below
+
+
 def train_model(args):
     """
     Train the strategy model.
@@ -90,25 +117,27 @@ def train_model(args):
 
     logger.info(f'Total features: {len(df_features.columns) - 5}')
 
-    # Create targets using the full dataset
+    # Create improved targets
     logger.info('Creating targets...')
     
-    # Support: 5-candle low (looking forward)
-    y_support = df['low'].rolling(window=5).min().shift(-5)
+    # Create support/resistance based on historical extremes (not future data)
+    support, resistance, breakout_above, breakout_below = _create_support_resistance_targets(
+        df, lookback=20
+    )
     
-    # Resistance: 5-candle high (looking forward)
-    y_resistance = df['high'].rolling(window=5).max().shift(-5)
+    # Target for next price move prediction
+    # 1 if price goes up more than 1%, -1 if goes down more than 1%, 0 otherwise
+    future_close = df['close'].shift(-1)
+    future_return = (future_close - df['close']) / df['close']
+    y_direction = np.where(future_return > 0.01, 1, np.where(future_return < -0.01, -1, 0))
     
-    # Breakout probability: if price breaks resistance within 5 candles
-    future_high = df['high'].rolling(window=5).max().shift(-5)
-    y_breakout = (future_high > df['high']).astype(float)
-
-    # Remove rows with NaN targets
-    mask = y_support.notna() & y_resistance.notna() & y_breakout.notna()
+    # Remove rows with NaN
+    mask = support.notna() & resistance.notna()
     df_clean = df_features[mask].copy()
-    y_support_clean = y_support[mask]
-    y_resistance_clean = y_resistance[mask]
-    y_breakout_clean = y_breakout[mask]
+    support_clean = support[mask]
+    resistance_clean = resistance[mask]
+    breakout_above_clean = breakout_above[mask]
+    y_direction_clean = y_direction[mask]
 
     logger.info(f'Clean data: {len(df_clean)} samples')
 
@@ -119,16 +148,20 @@ def train_model(args):
     df_train = df_clean[train_mask].copy()
     df_test = df_clean[test_mask].copy()
     
-    y_train_support = y_support_clean[train_mask]
-    y_train_resistance = y_resistance_clean[train_mask]
-    y_train_breakout = y_breakout_clean[train_mask]
+    y_train_support = support_clean[train_mask]
+    y_train_resistance = resistance_clean[train_mask]
+    y_train_breakout = breakout_above_clean[train_mask]
+    y_train_direction = y_direction_clean[train_mask]
     
-    y_test_support = y_support_clean[test_mask]
-    y_test_resistance = y_resistance_clean[test_mask]
-    y_test_breakout = y_breakout_clean[test_mask]
+    y_test_support = support_clean[test_mask]
+    y_test_resistance = resistance_clean[test_mask]
+    y_test_breakout = breakout_above_clean[test_mask]
+    y_test_direction = y_direction_clean[test_mask]
 
     logger.info(f'Training samples: {len(df_train)}')
     logger.info(f'Testing samples: {len(df_test)}')
+    logger.info(f'Breakout prevalence: {breakout_above_clean.mean():.2%}')
+    logger.info(f'Direction distribution: Up {(y_direction_clean==1).sum()}, Down {(y_direction_clean==-1).sum()}, Neutral {(y_direction_clean==0).sum()}')
 
     # Get feature columns (exclude OHLCV)
     feature_cols = [col for col in df_clean.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
@@ -162,7 +195,6 @@ def train_model(args):
     results_data = []
     for model_name, model_metrics in metrics.items():
         if isinstance(model_metrics.get('test_r2'), (int, float)):
-            # Has test metrics
             results_data.append({
                 'model': model_name,
                 'train_rmse': model_metrics['train_rmse'],
@@ -171,10 +203,10 @@ def train_model(args):
                 'test_rmse': model_metrics['test_rmse'],
                 'test_mae': model_metrics['test_mae'],
                 'test_r2': model_metrics['test_r2'],
+                'overfitting_gap': model_metrics['train_r2'] - model_metrics['test_r2'],
                 'timestamp': datetime.now().isoformat()
             })
         else:
-            # Only training metrics
             results_data.append({
                 'model': model_name,
                 'train_rmse': model_metrics['rmse'],
@@ -183,6 +215,7 @@ def train_model(args):
                 'test_rmse': None,
                 'test_mae': None,
                 'test_r2': None,
+                'overfitting_gap': None,
                 'timestamp': datetime.now().isoformat()
             })
     
@@ -199,6 +232,9 @@ def train_model(args):
         logger.info(f"  Train R2: {row['train_r2']:.6f}")
         if pd.notna(row['test_r2']):
             logger.info(f"  Test R2:  {row['test_r2']:.6f}")
+            logger.info(f"  Overfitting Gap: {row['overfitting_gap']:.6f}")
+            if row['overfitting_gap'] > 0.2:
+                logger.warning(f"  WARNING: Significant overfitting detected!")
 
     return True
 
@@ -331,22 +367,20 @@ def backtest_strategy(args):
     df_features = engineer.engineer_features(df)
 
     # Create targets for analysis
-    y_support = df['low'].rolling(window=5).min().shift(-5)
-    y_resistance = df['high'].rolling(window=5).max().shift(-5)
-    y_breakout = (df['high'].rolling(window=5).max().shift(-5) > df['close']).astype(float)
+    support, resistance, breakout_above, breakout_below = _create_support_resistance_targets(df, lookback=20)
 
     # Remove NaN
-    mask = y_support.notna() & y_resistance.notna()
+    mask = support.notna() & resistance.notna()
     df_clean = df_features[mask].copy()
-    y_support = y_support[mask]
-    y_resistance = y_resistance[mask]
-    y_breakout = y_breakout[mask]
+    support = support[mask]
+    resistance = resistance[mask]
+    breakout_above = breakout_above[mask]
 
     # Split and get test set
     train_df, test_df = loader.split_train_test(df_clean, train_ratio=0.7)
-    y_test_support = y_support[test_df.index]
-    y_test_resistance = y_resistance[test_df.index]
-    y_test_breakout = y_breakout[test_df.index]
+    y_test_support = support[test_df.index]
+    y_test_resistance = resistance[test_df.index]
+    y_test_breakout = breakout_above[test_df.index]
 
     # Load models
     logger.info('Loading trained models...')
