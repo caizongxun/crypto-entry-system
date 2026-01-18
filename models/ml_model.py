@@ -285,16 +285,38 @@ class CryptoEntryModel:
     def prepare_training_data(self, lookback: int = 50) -> Tuple[np.ndarray, np.ndarray, List[str]]:
         """Prepare data for BB bounce prediction model with improved labeling.
         
-        Critical fix: Calculate BB metrics BEFORE feature engineering to ensure
-        advanced features have access to BB indicators.
+        Critical: Calculate BB metrics FIRST before using multi-timeframe features
+        to ensure all features are properly initialized.
         """
-        if self.feature_data is None:
-            self.engineer_features()
+        if self.raw_data is None:
+            self.load_data()
 
         print("Preparing training data for BB bounce prediction...")
 
-        df = self.calculate_bb_metrics(self.feature_data.copy())
+        # Step 1: Calculate BB metrics on base data
+        df = self.calculate_bb_metrics(self.raw_data.copy())
+        
+        # Step 2: Now engineer features with BB metrics available
+        print("\nEngineering features with BB metrics...")
+        df = self.feature_engineer.engineer_features(df)
+        
+        # Step 3: Integrate multi-timeframe features if available
+        if self.use_multi_timeframe and self.higher_tf_data is not None:
+            print("Integrating multi-timeframe features...")
+            try:
+                higher_tf_data = self.calculate_bb_metrics(self.higher_tf_data.copy())
+                higher_tf_features = self.feature_engineer.engineer_features(higher_tf_data)
+                df = self.multi_tf_engineer.engineer_comprehensive_features(
+                    df,
+                    higher_tf_features
+                )
+                print("Multi-timeframe features integrated successfully")
+            except Exception as e:
+                print(f"Warning: Multi-timeframe integration failed: {str(e)}")
+        
+        # Step 4: Calculate bounce targets
         df['bounce_target'] = self.calculate_bounce_target_improved(df)
+        self.feature_data = df
 
         base_features = [
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
