@@ -271,7 +271,11 @@ class CryptoEntryModel:
         return X, y
 
     def prepare_training_data(self, lookback: int = 50) -> Tuple[np.ndarray, np.ndarray, List[str]]:
-        """Prepare data for BB bounce prediction model with improved labeling."""
+        """Prepare data for BB bounce prediction model with improved labeling.
+        
+        Critical fix: Calculate BB metrics BEFORE feature engineering to ensure
+        advanced features have access to BB indicators.
+        """
         if self.feature_data is None:
             self.engineer_features()
 
@@ -295,10 +299,20 @@ class CryptoEntryModel:
             'momentum_divergence_multi'
         ]
         
+        advanced_features = [
+            'bounce_failure_memory', 'volume_zscore', 'volume_ratio', 'volume_momentum',
+            'volume_anomaly_score', 'volume_extreme', 'reversal_speed', 'reversal_magnitude',
+            'reversal_acceleration', 'time_of_day_score', 'day_of_week_score', 'session_type',
+            'time_quality', 'advanced_reversal_score', 'is_strong_setup', 'is_weak_setup'
+        ]
+        
         feature_cols = [col for col in base_features if col in df.columns]
         if self.use_multi_timeframe:
             multi_tf_cols = [col for col in multi_tf_features if col in df.columns]
             feature_cols.extend(multi_tf_cols)
+        
+        adv_cols = [col for col in advanced_features if col in df.columns]
+        feature_cols.extend(adv_cols)
 
         valid_mask = (
             (df['touched_lower'] | df['touched_upper'] | df['broke_lower'] | df['broke_upper']) &
