@@ -257,7 +257,7 @@ class FeatureEngineer:
         df_features['bb_position'] = df_features['bb_position'].clip(0, 1)
         df_features['basis_slope'] = df_features['bb_middle'].diff()
 
-        # Apply advanced feature engineering
+        # Apply advanced feature engineering AFTER BB metrics are available
         print("\nIntegrating advanced ML-optimized features...")
         df_features = self.advanced_engineer.engineer_all_features(df_features)
 
