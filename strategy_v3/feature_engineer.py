@@ -108,9 +108,9 @@ class FeatureEngineer:
         df['roc_10'] = df['close'].pct_change(periods=10)
         df['momentum'] = df['close'] - df['close'].shift(10)
 
-        # Fill NaN values
-        df = df.fillna(method='bfill')
-        df = df.fillna(method='ffill')
+        # Fill NaN values using new pandas API
+        df = df.bfill()
+        df = df.ffill()
         df = df.fillna(0)
 
         return df
