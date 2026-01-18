@@ -12,6 +12,9 @@ class AdvancedFeatureEngineer:
     2. Volume Anomaly Detection: Abnormal volume spike during BB touch
     3. Reversal Strength: Speed and magnitude of price reversal
     4. Time Structure: Hourly and daily patterns affecting bounce probability
+    
+    Note: Requires BB indicators (touched_lower, touched_upper, bb_lower, bb_upper)
+    to be pre-calculated. Will skip if not available.
     """
 
     def __init__(self, lookback_period: int = 252):
@@ -35,6 +38,12 @@ class AdvancedFeatureEngineer:
         Result: High success rate locations get higher weight
         """
         df = df.copy()
+        
+        # Check if BB indicators exist
+        if 'touched_lower' not in df.columns or 'touched_upper' not in df.columns:
+            print("Warning: BB indicators not found, using neutral bounce failure memory")
+            df['bounce_failure_memory'] = 0.5
+            return df
         
         # Bin price into volatility-adjusted levels
         df['price_bin'] = pd.qcut(df['close'], q=20, duplicates='drop')
@@ -133,6 +142,14 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
+        # Check if BB indicators exist
+        if 'touched_lower' not in df.columns:
+            print("Warning: BB indicators not found, using neutral reversal strength")
+            df['reversal_speed'] = 0.5
+            df['reversal_magnitude'] = 0.5
+            df['reversal_acceleration'] = 0.5
+            return df
+        
         # For lower band touches
         df['reversal_speed_lower'] = 0.0
         for i in range(len(df) - lookforward):
@@ -205,7 +222,15 @@ class AdvancedFeatureEngineer:
         
         # Convert timestamp to datetime if needed
         if not pd.api.types.is_datetime64_any_dtype(df.index):
-            df.index = pd.to_datetime(df.index)
+            try:
+                df.index = pd.to_datetime(df.index)
+            except:
+                print("Warning: Could not convert index to datetime, using neutral time scores")
+                df['time_of_day_score'] = 0.85
+                df['day_of_week_score'] = 1.0
+                df['session_type'] = 2
+                df['time_quality'] = 0.85
+                return df
         
         # Extract time components
         df['hour'] = df.index.hour
@@ -323,6 +348,14 @@ class AdvancedFeatureEngineer:
             DataFrame with additional advanced features
         """
         print("Applying advanced feature engineering...")
+        
+        # Check if BB indicators exist - if not, skip advanced features
+        if 'touched_lower' not in df.columns or 'bb_lower' not in df.columns:
+            print("  Note: BB indicators not yet available, deferring advanced features to training phase")
+            # Create placeholder advanced features
+            for feature_name in self.get_feature_list():
+                df[feature_name] = 0.5
+            return df
         
         # Step 1: Bounce failure memory
         print("  1. Engineering bounce failure memory...")
