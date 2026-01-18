@@ -41,7 +41,11 @@ class ModelEnsemble:
         X_train: pd.DataFrame,
         y_train_support: pd.Series,
         y_train_resistance: pd.Series,
-        y_train_breakout: pd.Series
+        y_train_breakout: pd.Series,
+        X_test: pd.DataFrame = None,
+        y_test_support: pd.Series = None,
+        y_test_resistance: pd.Series = None,
+        y_test_breakout: pd.Series = None
     ) -> Dict[str, Dict[str, float]]:
         """
         Train ensemble models.
@@ -51,6 +55,10 @@ class ModelEnsemble:
             y_train_support: Target support levels
             y_train_resistance: Target resistance levels
             y_train_breakout: Target breakout probability
+            X_test: Test features (optional)
+            y_test_support: Test support levels (optional)
+            y_test_resistance: Test resistance levels (optional)
+            y_test_breakout: Test breakout probability (optional)
 
         Returns:
             Dictionary of metrics for each model
@@ -66,6 +74,12 @@ class ModelEnsemble:
         X_scaled = pd.DataFrame(X_scaled, columns=X_train.columns)
         self.scalers['features'] = scaler
 
+        # Scale test features if provided
+        X_test_scaled = None
+        if X_test is not None:
+            X_test_scaled = scaler.transform(X_test)
+            X_test_scaled = pd.DataFrame(X_test_scaled, columns=X_test.columns)
+
         metrics = {}
 
         # Train support model
@@ -73,27 +87,75 @@ class ModelEnsemble:
         self.models['support'] = self._train_single_model(
             X_scaled, y_train_support, 'support'
         )
-        metrics['support'] = self._evaluate_model(
-            self.models['support'], X_scaled, y_train_support
-        )
+        if X_test_scaled is not None:
+            train_metrics = self._evaluate_model(
+                self.models['support'], X_scaled, y_train_support
+            )
+            test_metrics = self._evaluate_model(
+                self.models['support'], X_test_scaled, y_test_support
+            )
+            metrics['support'] = {
+                'train_rmse': train_metrics['rmse'],
+                'train_mae': train_metrics['mae'],
+                'train_r2': train_metrics['r2'],
+                'test_rmse': test_metrics['rmse'],
+                'test_mae': test_metrics['mae'],
+                'test_r2': test_metrics['r2']
+            }
+        else:
+            metrics['support'] = self._evaluate_model(
+                self.models['support'], X_scaled, y_train_support
+            )
 
         # Train resistance model
         logger.info('Training resistance prediction model...')
         self.models['resistance'] = self._train_single_model(
             X_scaled, y_train_resistance, 'resistance'
         )
-        metrics['resistance'] = self._evaluate_model(
-            self.models['resistance'], X_scaled, y_train_resistance
-        )
+        if X_test_scaled is not None:
+            train_metrics = self._evaluate_model(
+                self.models['resistance'], X_scaled, y_train_resistance
+            )
+            test_metrics = self._evaluate_model(
+                self.models['resistance'], X_test_scaled, y_test_resistance
+            )
+            metrics['resistance'] = {
+                'train_rmse': train_metrics['rmse'],
+                'train_mae': train_metrics['mae'],
+                'train_r2': train_metrics['r2'],
+                'test_rmse': test_metrics['rmse'],
+                'test_mae': test_metrics['mae'],
+                'test_r2': test_metrics['r2']
+            }
+        else:
+            metrics['resistance'] = self._evaluate_model(
+                self.models['resistance'], X_scaled, y_train_resistance
+            )
 
         # Train breakout model
         logger.info('Training breakout probability model...')
         self.models['breakout'] = self._train_single_model(
             X_scaled, y_train_breakout, 'breakout'
         )
-        metrics['breakout'] = self._evaluate_model(
-            self.models['breakout'], X_scaled, y_train_breakout
-        )
+        if X_test_scaled is not None:
+            train_metrics = self._evaluate_model(
+                self.models['breakout'], X_scaled, y_train_breakout
+            )
+            test_metrics = self._evaluate_model(
+                self.models['breakout'], X_test_scaled, y_test_breakout
+            )
+            metrics['breakout'] = {
+                'train_rmse': train_metrics['rmse'],
+                'train_mae': train_metrics['mae'],
+                'train_r2': train_metrics['r2'],
+                'test_rmse': test_metrics['rmse'],
+                'test_mae': test_metrics['mae'],
+                'test_r2': test_metrics['r2']
+            }
+        else:
+            metrics['breakout'] = self._evaluate_model(
+                self.models['breakout'], X_scaled, y_train_breakout
+            )
 
         logger.info('Training completed')
         return metrics
