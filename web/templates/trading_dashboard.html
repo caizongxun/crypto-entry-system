@@ -457,6 +457,21 @@
             font-size: 12px;
             color: var(--color-text-secondary);
         }
+
+        .confidence-bar {
+            width: 100%;
+            height: 6px;
+            background-color: var(--color-border);
+            border-radius: 3px;
+            overflow: hidden;
+            margin-top: 4px;
+        }
+
+        .confidence-fill {
+            height: 100%;
+            background: linear-gradient(90deg, var(--color-danger), var(--color-warning), var(--color-success));
+            transition: width 0.3s ease;
+        }
     </style>
 </head>
 <body>
@@ -500,11 +515,11 @@
                 <div class="header-status">
                     <div class="status-item">
                         <span class="status-dot" id="model-status"></span>
-                        <span>模型: <span id="model-status-text">載入中...</span></span>
+                        <span>模型: <span id="model-status-text">已載入</span></span>
                     </div>
                     <div class="status-item">
                         <span class="status-dot" id="data-status"></span>
-                        <span>資料源: <span id="data-status-text">連接中...</span></span>
+                        <span>資料源: <span id="data-status-text">已連接</span></span>
                     </div>
                 </div>
             </div>
@@ -522,7 +537,7 @@
                         <div class="stats-container">
                             <div class="stat-card">
                                 <div class="stat-label">帳戶餘額</div>
-                                <div class="stat-value" id="balance">載入中...</div>
+                                <div class="stat-value" id="balance">$10,000.00</div>
                                 <div class="stat-change value-positive">初始: $10,000</div>
                             </div>
                             <div class="stat-card">
@@ -606,7 +621,7 @@
                             <div class="data-grid">
                                 <div class="data-row">
                                     <div class="data-cell">
-                                        <div class="data-label">預測訊號</div>
+                                        <div class="data-label">預測信號</div>
                                         <div class="data-value" id="rt-signal">--</div>
                                     </div>
                                     <div class="data-cell">
@@ -616,6 +631,8 @@
                                     <div class="data-cell">
                                         <div class="data-label">置信度</div>
                                         <div class="data-value" id="rt-confidence">--</div>
+                                        <div class="data-label">值</div>
+                                        <div class="data-value value-neutral" id="rt-confidence-value">--</div>
                                     </div>
                                     <div class="data-cell">
                                         <div class="data-label">當前價格</div>
@@ -632,7 +649,7 @@
                                 </div>
                                 <div class="data-row">
                                     <div class="data-cell">
-                                        <div class="data-label">上漲 (BB Upper)</div>
+                                        <div class="data-label">上滸 (BB Upper)</div>
                                         <div class="data-value" id="rt-bb-upper">--</div>
                                     </div>
                                     <div class="data-cell">
@@ -640,7 +657,7 @@
                                         <div class="data-value" id="rt-bb-basis">--</div>
                                     </div>
                                     <div class="data-cell">
-                                        <div class="data-label">下漲 (BB Lower)</div>
+                                        <div class="data-label">下滸 (BB Lower)</div>
                                         <div class="data-value" id="rt-bb-lower">--</div>
                                     </div>
                                     <div class="data-cell">
@@ -818,7 +835,7 @@
             const titles = {
                 'dashboard': '儀表板',
                 'realtime': '實時預測',
-                'chart': 'K 線圖表',
+                'chart': 'K線圖表',
                 'history': '交易歷史',
                 'settings': '系統設定'
             };
@@ -865,12 +882,17 @@
                         data.signals.forEach(signal => {
                             const signalClass = signal.signal === 'BUY' ? 'buy' : 'sell';
                             const timestamp = new Date(signal.timestamp).toLocaleString('zh-TW');
+                            const confidencePercent = (signal.confidence * 100).toFixed(1);
                             html += `
                                 <div class="signal-item ${signalClass}">
-                                    <div class="signal-content">
+                                    <div class="signal-content" style="flex-grow: 1;">
                                         <div class="signal-type">${signal.signal} - ${signal.strength}</div>
                                         <div class="signal-meta">${timestamp} | 價格: $${signal.price.toFixed(2)}</div>
                                         <div class="signal-meta">BB 位置: ${(signal.bb_position * 100).toFixed(1)}% | 範圍: $${(signal.bb_upper - signal.bb_lower).toFixed(2)}</div>
+                                        <div class="signal-meta">信心度: ${confidencePercent}%</div>
+                                        <div class="confidence-bar">
+                                            <div class="confidence-fill" style="width: ${confidencePercent}%"></div>
+                                        </div>
                                     </div>
                                 </div>
                             `;
@@ -937,6 +959,7 @@
                         document.getElementById('rt-signal').textContent = data.prediction.signal_type;
                         document.getElementById('rt-probability').textContent = (data.prediction.bounce_probability * 100).toFixed(2) + '%';
                         document.getElementById('rt-confidence').textContent = data.prediction.confidence;
+                        document.getElementById('rt-confidence-value').textContent = (data.prediction.confidence_value * 100).toFixed(2) + '%';
                         document.getElementById('rt-price').textContent = '$' + data.latest_candle.close.toFixed(2);
                         document.getElementById('rt-rsi').textContent = data.technical_indicators.rsi ? data.technical_indicators.rsi.toFixed(2) : '--';
                         document.getElementById('rt-volatility').textContent = data.technical_indicators.volatility ? data.technical_indicators.volatility.toFixed(6) : '--';
@@ -1023,6 +1046,15 @@
                     
                     dataStatus.style.backgroundColor = '#48bb78';
                     document.getElementById('data-status-text').textContent = '已連接';
+                });
+            
+            fetch('/api/trading/account-summary')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.summary) {
+                        document.getElementById('balance').textContent = '$' + data.summary.total_balance.toFixed(2);
+                        document.getElementById('open-positions').textContent = data.positions ? data.positions.length : 0;
+                    }
                 });
         }
 
