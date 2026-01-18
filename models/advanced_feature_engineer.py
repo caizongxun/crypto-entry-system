@@ -39,7 +39,6 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Check if BB indicators exist - ALL required indicators must be present
         required_bb_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper', 'close', 'low']
         missing_cols = [col for col in required_bb_cols if col not in df.columns]
         
@@ -48,7 +47,6 @@ class AdvancedFeatureEngineer:
             df['bounce_failure_memory'] = 0.5
             return df
         
-        # Bin price into volatility-adjusted levels
         try:
             df['price_bin'] = pd.qcut(df['close'], q=20, duplicates='drop')
         except Exception as e:
@@ -56,24 +54,20 @@ class AdvancedFeatureEngineer:
             df['bounce_failure_memory'] = 0.5
             return df
         
-        # For each bin, calculate historical bounce success
         bounce_success_by_bin = {}
         for price_bin in df['price_bin'].unique():
             bin_data = df[df['price_bin'] == price_bin]
             
             if len(bin_data) < 5:
-                bounce_success_by_bin[price_bin] = 0.5  # Default neutral
+                bounce_success_by_bin[price_bin] = 0.5
                 continue
             
-            # Count successful bounces (used BB touch)
             touch_count = (bin_data['touched_lower'] | bin_data['touched_upper']).sum()
             
             if touch_count == 0:
                 success_rate = 0.5
             else:
-                # For lower touches that failed (continued lower next candle)
                 lower_fails = (bin_data['touched_lower'] & (bin_data['low'].shift(-1) < bin_data['bb_lower'])).sum()
-                # For upper touches that failed (continued upper next candle)  
                 upper_fails = (bin_data['touched_upper'] & (bin_data['low'].shift(-1) > bin_data['bb_upper'])).sum()
                 
                 total_fails = lower_fails + upper_fails
@@ -81,10 +75,9 @@ class AdvancedFeatureEngineer:
             
             bounce_success_by_bin[price_bin] = success_rate
         
-        # Map back to dataframe
-        df['bounce_failure_memory'] = df['price_bin'].map(bounce_success_by_bin).fillna(0.5)
+        df['bounce_failure_memory'] = df['price_bin'].map(bounce_success_by_bin)
+        df['bounce_failure_memory'] = df['bounce_failure_memory'].fillna(0.5).astype(float)
         
-        # Smooth the feature
         df['bounce_failure_memory'] = df['bounce_failure_memory'].rolling(
             window=5, center=True
         ).mean().fillna(0.5)
@@ -104,40 +97,31 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Calculate rolling volume statistics
         df['volume_sma'] = df['volume'].rolling(window=window).mean()
         df['volume_std'] = df['volume'].rolling(window=window).std()
         
-        # Z-score of volume
         df['volume_zscore'] = (df['volume'] - df['volume_sma']) / (df['volume_std'] + 1e-6)
-        df['volume_zscore'] = df['volume_zscore'].clip(-5, 5)  # Clip outliers
+        df['volume_zscore'] = df['volume_zscore'].clip(-5, 5)
         
-        # Ratio of current volume to recent average
         df['volume_ratio'] = df['volume'] / (df['volume_sma'] + 1e-6)
         
-        # Volume momentum (acceleration)
         df['volume_change'] = df['volume'].pct_change()
         df['volume_momentum'] = df['volume_change'].rolling(window=5).mean()
         
-        # Combined volume anomaly score (0-1)
-        # High volume + accelerating = strong signal
         df['volume_anomaly_score'] = 0.0
         
-        # Normalize components to [0, 1] range
         zscore_norm = (df['volume_zscore'] - df['volume_zscore'].min()) / (
             df['volume_zscore'].max() - df['volume_zscore'].min() + 1e-6
         )
-        ratio_norm = (df['volume_ratio'] - 1.0).clip(0, 5) / 5.0  # Cap at 5x
+        ratio_norm = (df['volume_ratio'] - 1.0).clip(0, 5) / 5.0
         momentum_norm = (df['volume_momentum'].clip(-0.5, 0.5) + 0.5) / 1.0
         
-        # Weighted combination
         df['volume_anomaly_score'] = (
-            zscore_norm * 0.4 +  # Z-score weight 40%
-            ratio_norm * 0.4 +   # Ratio weight 40%
-            momentum_norm * 0.2   # Momentum weight 20%
+            zscore_norm * 0.4 +
+            ratio_norm * 0.4 +
+            momentum_norm * 0.2
         )
         
-        # Flag for extreme volume anomalies (signal boosters)
         df['volume_extreme'] = (df['volume_zscore'] > 2.0).astype(int)
         
         return df.drop(['volume_sma', 'volume_std', 'volume_change'], axis=1)
@@ -155,7 +139,6 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Check if BB indicators exist
         required_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper', 'close', 'high', 'low']
         missing_cols = [col for col in required_cols if col not in df.columns]
         
@@ -166,21 +149,17 @@ class AdvancedFeatureEngineer:
             df['reversal_acceleration'] = 0.5
             return df
         
-        # For lower band touches
         df['reversal_speed_lower'] = 0.0
         for i in range(len(df) - lookforward):
             if df['touched_lower'].iloc[i]:
-                # Find how many candles until bounce reaches 0.3%
                 future_prices = df['low'].iloc[i:i+lookforward]
                 bounce_threshold = df['close'].iloc[i] * 1.003
                 
                 for j, future_price in enumerate(future_prices):
                     if future_price >= bounce_threshold:
-                        # Speed score: faster bounce = higher score
                         df['reversal_speed_lower'].iloc[i] = 1.0 - (j / lookforward)
                         break
         
-        # For upper band touches
         df['reversal_speed_upper'] = 0.0
         for i in range(len(df) - lookforward):
             if df['touched_upper'].iloc[i]:
@@ -192,11 +171,9 @@ class AdvancedFeatureEngineer:
                         df['reversal_speed_upper'].iloc[i] = 1.0 - (j / lookforward)
                         break
         
-        # Combined reversal speed
         df['reversal_speed'] = df['reversal_speed_lower'] + df['reversal_speed_upper']
         df['reversal_speed'] = df['reversal_speed'].rolling(window=3, center=True).mean()
         
-        # Reversal magnitude (how far does it go in lookforward period)
         df['future_high_5'] = df['high'].rolling(window=lookforward).max().shift(-lookforward)
         df['future_low_5'] = df['low'].rolling(window=lookforward).min().shift(-lookforward)
         
@@ -204,19 +181,17 @@ class AdvancedFeatureEngineer:
         for i in range(len(df) - lookforward):
             if df['touched_lower'].iloc[i]:
                 magnitude = (df['future_high_5'].iloc[i] - df['close'].iloc[i]) / df['close'].iloc[i]
-                df['reversal_magnitude'].iloc[i] = min(magnitude, 0.05)  # Cap at 5%
+                df['reversal_magnitude'].iloc[i] = min(magnitude, 0.05)
             elif df['touched_upper'].iloc[i]:
                 magnitude = (df['close'].iloc[i] - df['future_low_5'].iloc[i]) / df['close'].iloc[i]
                 df['reversal_magnitude'].iloc[i] = min(magnitude, 0.05)
         
-        # Normalize reversal magnitude to [0, 1]
         max_magnitude = df['reversal_magnitude'].max()
         if max_magnitude > 0:
             df['reversal_magnitude'] = df['reversal_magnitude'] / max_magnitude
         
-        # Reversal acceleration (is it speeding up)
         df['reversal_acceleration'] = df['reversal_speed'].diff().clip(-0.1, 0.1)
-        df['reversal_acceleration'] = (df['reversal_acceleration'] + 0.1) / 0.2  # Normalize to [0, 1]
+        df['reversal_acceleration'] = (df['reversal_acceleration'] + 0.1) / 0.2
         
         return df.drop(['future_high_5', 'future_low_5'], axis=1)
 
@@ -236,7 +211,6 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Convert timestamp to datetime if needed
         if not pd.api.types.is_datetime64_any_dtype(df.index):
             try:
                 df.index = pd.to_datetime(df.index)
@@ -248,48 +222,37 @@ class AdvancedFeatureEngineer:
                 df['time_quality'] = 0.85
                 return df
         
-        # Extract time components
         df['hour'] = df.index.hour
-        df['day_of_week'] = df.index.dayofweek  # 0=Monday, 6=Sunday
+        df['day_of_week'] = df.index.dayofweek
         
-        # Time of day scoring (based on crypto market patterns)
-        # Asian hours (0-8 UTC): Higher volatility, faster reversals (score 0.85)
-        # European hours (8-16 UTC): Stable, reliable reversals (score 0.95)
-        # US hours (16-24 UTC): Moderate volatility (score 0.80)
         time_scores = {
-            0: 0.85, 1: 0.85, 2: 0.85, 3: 0.85, 4: 0.85, 5: 0.85, 6: 0.85, 7: 0.85,  # Asian
-            8: 0.95, 9: 0.95, 10: 0.95, 11: 0.95, 12: 0.95, 13: 0.95, 14: 0.95, 15: 0.95,  # European
-            16: 0.80, 17: 0.80, 18: 0.80, 19: 0.80, 20: 0.80, 21: 0.80, 22: 0.80, 23: 0.80,  # US
+            0: 0.85, 1: 0.85, 2: 0.85, 3: 0.85, 4: 0.85, 5: 0.85, 6: 0.85, 7: 0.85,
+            8: 0.95, 9: 0.95, 10: 0.95, 11: 0.95, 12: 0.95, 13: 0.95, 14: 0.95, 15: 0.95,
+            16: 0.80, 17: 0.80, 18: 0.80, 19: 0.80, 20: 0.80, 21: 0.80, 22: 0.80, 23: 0.80,
         }
         df['time_of_day_score'] = df['hour'].map(time_scores).fillna(0.75)
         
-        # Day of week scoring
-        # Monday-Thursday: Normal (1.0)
-        # Friday: Lower volatility (0.90)
-        # Saturday-Sunday: Higher noise (0.70)
         day_scores = {
-            0: 1.0,  # Monday
-            1: 1.0,  # Tuesday
-            2: 1.0,  # Wednesday
-            3: 1.0,  # Thursday
-            4: 0.90,  # Friday
-            5: 0.70,  # Saturday
-            6: 0.70,  # Sunday
+            0: 1.0,
+            1: 1.0,
+            2: 1.0,
+            3: 1.0,
+            4: 0.90,
+            5: 0.70,
+            6: 0.70,
         }
         df['day_of_week_score'] = df['day_of_week'].map(day_scores)
         
-        # Session type encoding
         session_map = {}
         for hour in range(0, 8):
-            session_map[hour] = 1  # Asian
+            session_map[hour] = 1
         for hour in range(8, 16):
-            session_map[hour] = 2  # European
+            session_map[hour] = 2
         for hour in range(16, 24):
-            session_map[hour] = 3  # US
+            session_map[hour] = 3
         
         df['session_type'] = df['hour'].map(session_map)
         
-        # Combined time quality score
         df['time_quality'] = df['time_of_day_score'] * df['day_of_week_score']
         
         return df.drop(['hour', 'day_of_week'], axis=1)
@@ -305,7 +268,6 @@ class AdvancedFeatureEngineer:
         """
         df = df.copy()
         
-        # Ensure all components exist
         required_cols = [
             'bounce_failure_memory',
             'volume_anomaly_score',
@@ -318,7 +280,6 @@ class AdvancedFeatureEngineer:
                 print(f"Warning: {col} not found, creating neutral values")
                 df[col] = 0.5
         
-        # Normalize each component to [0, 1] range
         for col in required_cols:
             col_min = df[col].min()
             col_max = df[col].max()
@@ -327,15 +288,13 @@ class AdvancedFeatureEngineer:
             else:
                 df[f'{col}_norm'] = 0.5
         
-        # Weighted combination (ensemble)
         df['advanced_reversal_score'] = (
             df['bounce_failure_memory_norm'] * 0.40 +
-            df['volume_anomaly_score'] * 0.30 +  # Already normalized
+            df['volume_anomaly_score'] * 0.30 +
             df['reversal_speed_norm'] * 0.20 +
-            df['time_quality'] * 0.10  # Already normalized (0-1)
+            df['time_quality'] * 0.10
         )
         
-        # Quality indicators
         df['is_strong_setup'] = (
             (df['bounce_failure_memory'] > 0.60) &
             (df['volume_anomaly_score'] > 0.50) &
@@ -348,7 +307,6 @@ class AdvancedFeatureEngineer:
             (df['reversal_speed'] < 0.20)
         ).astype(int)
         
-        # Clean up normalized columns
         norm_cols = [col for col in df.columns if col.endswith('_norm')]
         df = df.drop(norm_cols, axis=1)
         
@@ -368,35 +326,28 @@ class AdvancedFeatureEngineer:
         """
         print("Applying advanced ML-optimized features...")
         
-        # Check if BB indicators exist - if not, skip advanced features
         required_bb_cols = ['touched_lower', 'touched_upper', 'bb_lower', 'bb_upper']
         missing_cols = [col for col in required_bb_cols if col not in df.columns]
         
         if missing_cols:
             print(f"  Note: BB indicators not yet available ({missing_cols}), using neutral advanced features")
-            # Create placeholder advanced features with neutral values
             for feature_name in self.get_feature_list():
                 df[feature_name] = 0.5
             print("  Advanced features initialized with neutral values (0.5)")
             return df
         
-        # Step 1: Bounce failure memory
         print("  1. Engineering bounce failure memory...")
         df = self.engineer_bounce_failure_memory(df)
         
-        # Step 2: Volume anomaly detection
         print("  2. Engineering volume anomaly detection...")
         df = self.engineer_volume_anomaly(df)
         
-        # Step 3: Reversal strength
         print("  3. Engineering reversal strength...")
         df = self.engineer_reversal_strength(df)
         
-        # Step 4: Time structure
         print("  4. Engineering time structure features...")
         df = self.engineer_time_structure(df)
         
-        # Step 5: Combined signal
         print("  5. Creating combined reversal signal...")
         df = self.engineer_combined_reversal_signal(df)
         
