@@ -1,0 +1,428 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>AI Trading Bot</title>
+    <script src="https://s3.tradingview.com/tv.js"></script>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+        }
+        body {
+            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
+            background: #0f1419;
+            color: #e1e8ed;
+        }
+        .container {
+            display: grid;
+            grid-template-columns: 2fr 1fr;
+            gap: 16px;
+            padding: 16px;
+            max-width: 1920px;
+            margin: 0 auto;
+        }
+        .header {
+            grid-column: 1 / -1;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 24px;
+            border-radius: 12px;
+            margin-bottom: 8px;
+        }
+        .header h1 {
+            font-size: 28px;
+            margin-bottom: 8px;
+        }
+        .panel {
+            background: #1a1f2e;
+            border-radius: 12px;
+            padding: 16px;
+            border: 1px solid #2a3044;
+        }
+        .panel-title {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 16px;
+            color: #fff;
+        }
+        #chart-container {
+            background: #0f1419;
+            border-radius: 8px;
+            height: 500px;
+        }
+        .prediction-item {
+            background: #252d3d;
+            padding: 12px;
+            margin-bottom: 8px;
+            border-radius: 8px;
+            border-left: 4px solid #667eea;
+            cursor: pointer;
+        }
+        .button {
+            padding: 8px 16px;
+            background: #667eea;
+            color: white;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+        }
+        .stats-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .stat-card {
+            background: #252d3d;
+            padding: 12px;
+            border-radius: 8px;
+            text-align: center;
+        }
+        .stat-value {
+            font-size: 20px;
+            font-weight: 700;
+            color: #2ecc71;
+            margin-top: 4px;
+        }
+        .trades-grid {
+            max-height: 400px;
+            overflow-y: auto;
+        }
+        .trade-row {
+            background: #252d3d;
+            padding: 10px;
+            border-radius: 6px;
+            margin-bottom: 8px;
+            border-left: 3px solid #2ecc71;
+        }
+        input, select {
+            padding: 6px 8px;
+            background: #1a1f2e;
+            border: 1px solid #2a3044;
+            color: #e1e8ed;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        .control-panel {
+            background: #252d3d;
+            padding: 12px;
+            border-radius: 8px;
+            margin-bottom: 16px;
+        }
+        .input-group {
+            margin-bottom: 8px;
+            display: flex;
+            gap: 8px;
+        }
+        .input-group label {
+            min-width: 80px;
+            font-size: 12px;
+        }
+        .account-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 16px;
+            border-radius: 12px;
+            color: white;
+        }
+        .account-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 14px;
+        }
+        ::-webkit-scrollbar {
+            width: 6px;
+        }
+        ::-webkit-scrollbar-thumb {
+            background: #2a3044;
+            border-radius: 3px;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <div class="header">
+            <h1>AI Trading Bot Control Panel</h1>
+            <div style="display: flex; gap: 32px; font-size: 14px;">
+                <div>
+                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Model Status</div>
+                    <div style="font-weight: 600; margin-top: 4px;">LightGBM Online</div>
+                </div>
+                <div>
+                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Trading Pair</div>
+                    <div style="font-weight: 600; margin-top: 4px;">BTCUSDT</div>
+                </div>
+                <div>
+                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Timeframe</div>
+                    <div style="font-weight: 600; margin-top: 4px;">15M</div>
+                </div>
+                <div>
+                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Last Update</div>
+                    <div style="font-weight: 600; margin-top: 4px;" id="last-update">-</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel">
+            <div class="panel-title">
+                BTC/USDT Real-time Chart
+            </div>
+            <div id="chart-container"></div>
+        </div>
+        
+        <div style="display: flex; flex-direction: column; gap: 16px;">
+            <div class="panel">
+                <div class="panel-title">Account Overview</div>
+                <div class="account-section">
+                    <h3 style="font-size: 14px; margin-bottom: 12px; opacity: 0.9;">Paper Trading Account</h3>
+                    <div class="account-stat">
+                        <span>Initial Balance:</span>
+                        <span id="initial-balance">$10,000.00</span>
+                    </div>
+                    <div class="account-stat">
+                        <span>Current Balance:</span>
+                        <span id="current-balance">$10,000.00</span>
+                    </div>
+                    <div class="account-stat">
+                        <span>Used Margin:</span>
+                        <span id="used-margin">$0.00</span>
+                    </div>
+                    <div class="account-stat">
+                        <span>Total Equity:</span>
+                        <span id="equity">$10,000.00</span>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-title">Trading Statistics</div>
+                <div class="stats-grid">
+                    <div class="stat-card">
+                        <div style="font-size: 12px; color: #95a5a6;">Win Rate</div>
+                        <div class="stat-value" id="win-rate">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 12px; color: #95a5a6;">Profit Rate</div>
+                        <div class="stat-value" id="profit-rate">-</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 12px; color: #95a5a6;">Total Trades</div>
+                        <div class="stat-value" id="total-trades">0</div>
+                    </div>
+                    <div class="stat-card">
+                        <div style="font-size: 12px; color: #95a5a6;">Losses</div>
+                        <div class="stat-value" id="loss-count">0</div>
+                    </div>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-title">Trading Controls</div>
+                <div class="control-panel">
+                    <div class="input-group">
+                        <label>Position Size</label>
+                        <input type="number" id="position-size" value="0.1" step="0.01">
+                    </div>
+                    <div class="input-group">
+                        <label>Leverage</label>
+                        <select id="leverage-select">
+                            <option value="1">1x</option>
+                            <option value="2">2x</option>
+                            <option value="5">5x</option>
+                            <option value="10">10x</option>
+                            <option value="20">20x</option>
+                        </select>
+                    </div>
+                    <button class="button" style="width: 100%; margin-top: 8px;" onclick="toggleAutoTrading()">Enable Auto Trading</button>
+                </div>
+            </div>
+            
+            <div class="panel">
+                <div class="panel-title">Latest Signals (Precision: 69.19%, Recall: 80.43%)</div>
+                <div style="max-height: 500px; overflow-y: auto;" id="predictions-container">
+                    <div style="text-align: center; padding: 20px; color: #95a5a6;">Loading signals...</div>
+                </div>
+            </div>
+        </div>
+        
+        <div class="panel" style="grid-column: 1 / -1; margin-top: 16px;">
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
+                <div class="panel-title" style="margin: 0;">Trade History</div>
+                <button class="button" onclick="refreshTrades()">Refresh</button>
+            </div>
+            <div class="trades-grid" id="trades-container">
+                <div style="text-align: center; padding: 20px; color: #95a5a6;">No trades yet</div>
+            </div>
+        </div>
+    </div>
+    
+    <script>
+        let autoTradingEnabled = false;
+        const BITGET_MAKER_FEE = 0.0002;
+        const BITGET_TAKER_FEE = 0.0005;
+        
+        function initChart() {
+            new TradingView.widget({
+                "autosize": true,
+                "symbol": "BINANCE:BTCUSDT",
+                "interval": "15",
+                "timezone": "Asia/Shanghai",
+                "theme": "dark",
+                "style": "1",
+                "locale": "zh",
+                "toolbar_bg": "#1a1f2e",
+                "enable_publishing": false,
+                "allow_symbol_change": true,
+                "container_id": "chart-container"
+            });
+        }
+        
+        function loadPredictions() {
+            fetch('/api/ml-prediction-15m?symbol=BTCUSDT')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success' && data.predictions) {
+                        const container = document.getElementById('predictions-container');
+                        const html = data.predictions.map(pred => {
+                            const signalClass = pred.signal_type === 'BUY' ? '#2ecc71' : '#e74c3c';
+                            const prob = (pred.bounce_probability * 100).toFixed(1);
+                            return `
+                                <div class="prediction-item" onclick="executeSignal('${pred.signal_type}', ${pred.price})" style="border-left-color: ${signalClass};">
+                                    <strong style="color: ${signalClass};">${pred.signal_type}</strong> @ \$${pred.price.toFixed(2)}
+                                    <br><span style="color: #95a5a6; font-size: 12px;">Confidence: ${prob}% | BB Position: ${(pred.bb_position * 100).toFixed(1)}%</span>
+                                </div>
+                            `;
+                        }).join('');
+                        container.innerHTML = html || '<div style="padding: 20px; color: #95a5a6;">No signals</div>';
+                    }
+                })
+                .catch(err => console.error('Error:', err));
+        }
+        
+        function loadAccountSummary() {
+            fetch('/api/trading/account-summary')
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        const summary = data.summary;
+                        document.getElementById('current-balance').textContent = `\$${summary.available_balance.toFixed(2)}`;
+                        document.getElementById('equity').textContent = `\$${summary.equity.toFixed(2)}`;
+                        document.getElementById('used-margin').textContent = `\$${summary.used_margin.toFixed(2)}`;
+                        
+                        const trades = data.trade_history || [];
+                        const wins = trades.filter(t => t.profit > 0).length;
+                        document.getElementById('total-trades').textContent = trades.length;
+                        document.getElementById('loss-count').textContent = trades.filter(t => t.profit < 0).length;
+                        document.getElementById('win-rate').textContent = trades.length > 0 ? 
+                            `${((wins / trades.length) * 100).toFixed(1)}%` : '-';
+                        
+                        const totalProfit = trades.reduce((sum, t) => sum + t.profit, 0);
+                        const profitRate = (totalProfit / 10000 * 100).toFixed(2);
+                        document.getElementById('profit-rate').textContent = `${profitRate}%`;
+                        
+                        loadTradeHistory(trades);
+                    }
+                })
+                .catch(err => console.error('Error:', err));
+        }
+        
+        function loadTradeHistory(trades) {
+            const container = document.getElementById('trades-container');
+            if (!trades || trades.length === 0) {
+                container.innerHTML = '<div style="padding: 20px; color: #95a5a6;">No trades yet</div>';
+                return;
+            }
+            
+            const html = trades.map(trade => {
+                const fee = trade.quantity * trade.entry_price * BITGET_TAKER_FEE;
+                const profit = (trade.profit - fee).toFixed(2);
+                const profitColor = profit >= 0 ? '#2ecc71' : '#e74c3c';
+                return `
+                    <div class="trade-row">
+                        <div style="display: flex; justify-content: space-between; width: 100%;">
+                            <div>
+                                <strong>${trade.symbol}</strong> | ${trade.order_type}
+                                <br><span style="color: #95a5a6; font-size: 11px;">${new Date(trade.open_time).toLocaleString('zh-CN')}</span>
+                            </div>
+                            <div>
+                                <div>${trade.quantity.toFixed(4)} BTC</div>
+                                <div style="color: #95a5a6; font-size: 11px;">Entry: \$${trade.entry_price.toFixed(2)}</div>
+                            </div>
+                            <div style="text-align: right; color: ${profitColor};">
+                                <strong>${profit} USDT</strong>
+                                <br><span style="color: #95a5a6; font-size: 11px;">Fee: ${fee.toFixed(2)}</span>
+                            </div>
+                        </div>
+                    </div>
+                `;
+            }).join('');
+            container.innerHTML = html;
+        }
+        
+        function executeSignal(signalType, price) {
+            if (!autoTradingEnabled && !confirm('Auto Trading disabled. Execute trade manually?')) return;
+            
+            const positionSize = parseFloat(document.getElementById('position-size').value);
+            const leverage = parseFloat(document.getElementById('leverage-select').value);
+            const stopLoss = price * (signalType === 'BUY' ? 0.98 : 1.02);
+            const takeProfit = price * (signalType === 'BUY' ? 1.03 : 0.97);
+            
+            fetch('/api/trading/open-position', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    symbol: 'BTCUSDT',
+                    order_type: signalType,
+                    quantity: positionSize * leverage,
+                    entry_price: price,
+                    stop_loss: stopLoss,
+                    take_profit: takeProfit,
+                    notes: `${signalType} @ \$${price.toFixed(2)}, ${leverage}x`
+                })
+            })
+            .then(res => res.json())
+            .then(data => {
+                if (data.status === 'success') {
+                    alert('Trade opened successfully!');
+                    loadAccountSummary();
+                } else {
+                    alert('Error: ' + data.message);
+                }
+            })
+            .catch(err => alert('Error: ' + err.message));
+        }
+        
+        function toggleAutoTrading() {
+            autoTradingEnabled = !autoTradingEnabled;
+            const btn = event.target;
+            if (autoTradingEnabled) {
+                btn.textContent = 'Disable Auto Trading';
+                btn.style.background = '#e74c3c';
+                alert('Auto Trading Enabled!');
+            } else {
+                btn.textContent = 'Enable Auto Trading';
+                btn.style.background = '#667eea';
+                alert('Auto Trading Disabled!');
+            }
+        }
+        
+        function refreshTrades() {
+            loadAccountSummary();
+            alert('Trades refreshed!');
+        }
+        
+        document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
+        
+        initChart();
+        loadPredictions();
+        loadAccountSummary();
+        
+        setInterval(loadPredictions, 60000);
+        setInterval(loadAccountSummary, 30000);
+        setInterval(() => {
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
+        }, 1000);
+    </script>
+</body>
+</html>
