@@ -223,6 +223,11 @@
             transform: translateY(-2px);
         }
 
+        .button-primary:disabled {
+            opacity: 0.5;
+            cursor: not-allowed;
+        }
+
         .button-secondary {
             background-color: var(--color-bg-tertiary);
             color: var(--color-text-primary);
@@ -372,6 +377,12 @@
             border: 1px solid rgba(66, 153, 225, 0.3);
         }
 
+        .alert-success {
+            background-color: rgba(72, 187, 120, 0.1);
+            color: var(--color-success);
+            border: 1px solid rgba(72, 187, 120, 0.3);
+        }
+
         .scrollbar {
             scrollbar-color: var(--color-border) var(--color-bg-secondary);
             scrollbar-width: thin;
@@ -401,6 +412,16 @@
             overflow: hidden;
             border: 1px solid var(--color-border);
         }
+
+        .update-status {
+            font-size: 12px;
+            color: var(--color-text-secondary);
+            margin-top: 10px;
+            padding: 10px;
+            background-color: var(--color-bg-tertiary);
+            border-radius: 4px;
+            text-align: center;
+        }
     </style>
 </head>
 <body>
@@ -428,7 +449,7 @@
                     <span>交易歷史</span>
                 </div>
                 <div class="nav-item" onclick="switchTab('settings', this)">
-                    <span class="icon">⚙️</span>
+                    <span class="icon">設定</span>
                     <span>系統設定</span>
                 </div>
             </div>
@@ -512,11 +533,11 @@
                         <div class="input-group">
                             <div class="input-field">
                                 <label class="input-label">交易對</label>
-                                <input type="text" id="rt-symbol" value="BTCUSDT" />
+                                <input type="text" id="rt-symbol" value="BTCUSDT" onchange="stopAutoFetch()" />
                             </div>
                             <div class="input-field">
                                 <label class="input-label">時間框架</label>
-                                <select id="rt-timeframe">
+                                <select id="rt-timeframe" onchange="stopAutoFetch()">
                                     <option value="15m">15 分鐘</option>
                                     <option value="1h">1 小時</option>
                                     <option value="1d">1 天</option>
@@ -524,18 +545,27 @@
                             </div>
                             <div class="input-field">
                                 <label class="input-label">K 線數量 (最小 50)</label>
-                                <input type="number" id="rt-limit" value="50" min="50" />
+                                <input type="number" id="rt-limit" value="50" min="50" onchange="stopAutoFetch()" />
                             </div>
                             <div class="input-field" style="display: flex; align-items: flex-end;">
-                                <button class="button button-primary" onclick="fetchRealtimePrediction()">
-                                    取得預測
-                                </button>
+                                <button class="button button-primary" id="fetch-btn" onclick="startAutoFetch()">開始自動更新</button>
                             </div>
                         </div>
 
+                        <div class="input-field" style="margin-bottom: 15px;">
+                            <label class="input-label">更新間隔 (秒)</label>
+                            <select id="update-interval" onchange="changeUpdateInterval()">
+                                <option value="1">1 秒</option>
+                                <option value="2" selected>2 秒</option>
+                                <option value="3">3 秒</option>
+                                <option value="5">5 秒</option>
+                                <option value="10">10 秒</option>
+                            </select>
+                        </div>
+
                         <div id="rt-result" style="display: none;">
-                            <div class="alert alert-info">
-                                <strong>提示:</strong> 使用已完成的 K 線進行預測，當前形成的 K 線被排除
+                            <div class="alert alert-success">
+                                <strong>自動更新中: </strong><span id="update-timer">-</span>
                             </div>
 
                             <div class="data-grid">
@@ -703,20 +733,7 @@
                         </div>
 
                         <div class="input-group">
-                            <div class="input-field">
-                                <label class="input-label">自動更新數字間隔 (秒)</label>
-                                <select id="update-interval" onchange="startAutoUpdate()">
-                                    <option value="1">1 秒</option>
-                                    <option value="2" selected>2 秒</option>
-                                    <option value="5">5 秒</option>
-                                    <option value="10">10 秒</option>
-                                    <option value="0">停用自動更新</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="input-group">
-                            <button class="button button-success" onclick="saveSettings()" style="background-color: var(--color-success); color: white;">保存設定</button>
+                            <button class="button" onclick="saveSettings()" style="background-color: var(--color-success); color: white;">保存設定</button>
                             <button class="button button-secondary" onclick="resetSettings()">恢復預設</button>
                         </div>
                     </div>
@@ -752,8 +769,9 @@
     </div>
 
     <script>
-        let updateIntervalId = null;
-        let lastPredictionData = null;
+        let autoFetchIntervalId = null;
+        let lastPredictionParams = null;
+        let updateCount = 0;
 
         function switchTab(tabName, element) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -793,64 +811,54 @@
             }
         }
 
-        function updateNumbersOnly() {
-            if (!lastPredictionData) return;
-            
-            const data = lastPredictionData;
-            
-            if (data.latest_candle) {
-                document.getElementById('rt-price').textContent = '$' + data.latest_candle.close.toFixed(2);
-            }
-            
-            if (data.technical_indicators) {
-                if (data.technical_indicators.rsi) {
-                    document.getElementById('rt-rsi').textContent = data.technical_indicators.rsi.toFixed(2);
-                }
-                if (data.technical_indicators.volatility) {
-                    document.getElementById('rt-volatility').textContent = data.technical_indicators.volatility.toFixed(6);
-                }
-            }
-            
-            document.getElementById('balance').textContent = '$' + (10000 + Math.random() * 100).toFixed(2);
-        }
-
-        function startAutoUpdate() {
-            if (updateIntervalId) clearInterval(updateIntervalId);
-            
-            const interval = parseInt(document.getElementById('update-interval').value);
-            if (interval === 0) return;
-            
-            updateIntervalId = setInterval(updateNumbersOnly, interval * 1000);
-        }
-
-        function refreshStatus() {
-            fetch('/api/system/status')
-                .then(r => r.json())
-                .then(data => {
-                    const modelStatus = document.getElementById('model-status');
-                    const dataStatus = document.getElementById('data-status');
-                    
-                    modelStatus.style.backgroundColor = '#48bb78';
-                    document.getElementById('model-status-text').textContent = '已載入';
-                    
-                    dataStatus.style.backgroundColor = '#48bb78';
-                    document.getElementById('data-status-text').textContent = '已連接';
-                });
-        }
-
-        function fetchRealtimePrediction() {
+        function startAutoFetch() {
             const symbol = document.getElementById('rt-symbol').value;
             const timeframe = document.getElementById('rt-timeframe').value;
             const limit = document.getElementById('rt-limit').value;
 
+            if (!symbol || !timeframe || !limit) {
+                alert('請填入所有參數');
+                return;
+            }
+
+            lastPredictionParams = { symbol, timeframe, limit };
+            document.getElementById('fetch-btn').textContent = '停止更新';
+            document.getElementById('fetch-btn').onclick = stopAutoFetch;
+            document.getElementById('rt-result').style.display = 'block';
+
+            fetchRealtimePrediction();
+            const interval = parseInt(document.getElementById('update-interval').value);
+            autoFetchIntervalId = setInterval(fetchRealtimePrediction, interval * 1000);
+        }
+
+        function stopAutoFetch() {
+            if (autoFetchIntervalId) {
+                clearInterval(autoFetchIntervalId);
+                autoFetchIntervalId = null;
+            }
+            document.getElementById('fetch-btn').textContent = '開始自動更新';
+            document.getElementById('fetch-btn').onclick = startAutoFetch;
+            updateCount = 0;
+        }
+
+        function changeUpdateInterval() {
+            if (autoFetchIntervalId) {
+                stopAutoFetch();
+                startAutoFetch();
+            }
+        }
+
+        function fetchRealtimePrediction() {
+            if (!lastPredictionParams) return;
+
+            const { symbol, timeframe, limit } = lastPredictionParams;
+            updateCount++;
+            document.getElementById('update-timer').textContent = 'X' + updateCount;
+
             fetch(`/api/realtime/prediction?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`)
                 .then(r => r.json())
                 .then(data => {
-                    const result = document.getElementById('rt-result');
-                    
                     if (data.status === 'success') {
-                        lastPredictionData = data;
-                        
                         document.getElementById('rt-signal').textContent = data.prediction.signal_type;
                         document.getElementById('rt-probability').textContent = (data.prediction.bounce_probability * 100).toFixed(2) + '%';
                         document.getElementById('rt-confidence').textContent = data.prediction.confidence;
@@ -862,14 +870,11 @@
                         document.getElementById('rt-bb-lower').textContent = '$' + (data.latest_candle.bb_lower ? data.latest_candle.bb_lower.toFixed(2) : '--');
                         document.getElementById('rt-bb-position').textContent = data.latest_candle.bb_position ? (data.latest_candle.bb_position * 100).toFixed(2) + '%' : '--';
                         document.getElementById('rt-candles-used').textContent = data.candles_used;
-                        
-                        result.style.display = 'block';
-                        startAutoUpdate();
                     } else {
-                        alert('錯誤: ' + data.message);
+                        console.error('API錯誤:', data.message);
                     }
                 })
-                .catch(err => alert('取得預測失敗: ' + err.message));
+                .catch(err => console.error('獲取預測失敗:', err));
         }
 
         function fetchCandleStatus() {
@@ -931,8 +936,22 @@
                 });
         }
 
+        function refreshStatus() {
+            fetch('/api/system/status')
+                .then(r => r.json())
+                .then(data => {
+                    const modelStatus = document.getElementById('model-status');
+                    const dataStatus = document.getElementById('data-status');
+                    
+                    modelStatus.style.backgroundColor = '#48bb78';
+                    document.getElementById('model-status-text').textContent = '已載入';
+                    
+                    dataStatus.style.backgroundColor = '#48bb78';
+                    document.getElementById('data-status-text').textContent = '已連接';
+                });
+        }
+
         function saveSettings() {
-            startAutoUpdate();
             alert('設定已保存');
         }
 
@@ -941,13 +960,15 @@
             document.getElementById('default-timeframe').value = '15m';
             document.getElementById('min-candles').value = 50;
             document.getElementById('initial-balance').value = 10000;
-            document.getElementById('update-interval').value = '2';
             alert('已恢復預設設定');
         }
 
         window.addEventListener('load', () => {
             refreshStatus();
-            startAutoUpdate();
+        });
+
+        window.addEventListener('beforeunload', () => {
+            stopAutoFetch();
         });
     </script>
 </body>
