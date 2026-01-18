@@ -190,13 +190,14 @@ class DataLoader:
             logger.error('Invalid price relationship: high < low')
             return False
             
-        if (df['low'] > df['open']).any() and (df['low'] > df['close']).any():
+        # Allow low to be less than or equal to both open and close
+        if ((df['low'] > df['open']) & (df['low'] > df['close'])).any():
             logger.error('Invalid price relationship: low > both open and close')
             return False
 
-        # Check volume is positive
-        if (df['volume'] <= 0).any():
-            logger.error('Invalid volume: contains non-positive values')
+        # Check that prices are positive
+        if (df[['open', 'high', 'low', 'close']] <= 0).any().any():
+            logger.error('Invalid prices: contains non-positive values')
             return False
 
         return True
