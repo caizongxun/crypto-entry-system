@@ -35,7 +35,7 @@ class CryptoEntryModel:
 
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
                  model_type: str = 'xgboost', optimization_level: str = 'balanced',
-                 use_multi_timeframe: bool = True, use_feature_selection: bool = True,
+                 use_multi_timeframe: bool = True, use_feature_selection: bool = False,
                  enable_debug: bool = False):
         self.symbol = symbol
         self.timeframe = timeframe
@@ -74,35 +74,36 @@ class CryptoEntryModel:
         self.debug_info = {}
 
     def _apply_optimization_config(self):
-        """Apply optimization-specific configuration."""
+        """Apply optimization-specific configuration with aggressive overfitting prevention."""
         if self.optimization_level == 'conservative':
             self.use_smote = True
-            self.smote_ratio = 0.2
+            self.smote_ratio = 0.1
             self.bounce_threshold_multiplier = 1.2
             self.use_ensemble = True
             self.hyperparams = {
-                'max_depth': 6,
-                'learning_rate': 0.05,
-                'n_estimators': 200,
+                'max_depth': 5,
+                'learning_rate': 0.03,
+                'n_estimators': 80,
             }
         elif self.optimization_level == 'aggressive':
-            self.use_smote = False
-            self.bounce_threshold_multiplier = 0.8
-            self.use_ensemble = False
-            self.hyperparams = {
-                'max_depth': 8,
-                'learning_rate': 0.1,
-                'n_estimators': 100,
-            }
-        else:
             self.use_smote = True
-            self.smote_ratio = 0.2
-            self.bounce_threshold_multiplier = 1.0
+            self.smote_ratio = 0.15
+            self.bounce_threshold_multiplier = 0.8
             self.use_ensemble = False
             self.hyperparams = {
                 'max_depth': 7,
                 'learning_rate': 0.08,
-                'n_estimators': 150,
+                'n_estimators': 120,
+            }
+        else:
+            self.use_smote = True
+            self.smote_ratio = 0.1
+            self.bounce_threshold_multiplier = 1.0
+            self.use_ensemble = False
+            self.hyperparams = {
+                'max_depth': 6,
+                'learning_rate': 0.05,
+                'n_estimators': 100,
             }
         
         self.timeframe_config['bounce_threshold'] *= self.bounce_threshold_multiplier
@@ -355,6 +356,7 @@ class CryptoEntryModel:
             X_smote, y_smote = smote.fit_resample(X, y)
             print(f"Borderline-SMOTE completed: {X_smote.shape[0]} samples (from {X.shape[0]})")
             print(f"Class distribution: {(y_smote == 0).sum()} negative, {(y_smote == 1).sum()} positive")
+            print(f"Augmentation ratio: {(X_smote.shape[0] / X.shape[0]):.2f}x")
             print(f"Note: Borderline-SMOTE generates fewer samples near decision boundary to reduce noise.")
             
             self.debug_info['smote_original_samples'] = X.shape[0]
@@ -410,38 +412,54 @@ class CryptoEntryModel:
             predictions_test = self._ensemble_predict(self.X_test)
         else:
             if self.model_type == 'xgboost':
+                scale_pos_weight = (self.y_train == 0).sum() / max((self.y_train == 1).sum(), 1)
                 self.model = XGBClassifier(
-                    n_estimators=self.hyperparams.get('n_estimators', 150),
-                    max_depth=self.hyperparams.get('max_depth', 7),
-                    learning_rate=self.hyperparams.get('learning_rate', 0.08),
-                    subsample=self.hyperparams.get('subsample', 0.8),
-                    colsample_bytree=self.hyperparams.get('colsample_bytree', 0.8),
-                    min_child_weight=self.hyperparams.get('min_child_weight', 5),
-                    reg_lambda=self.hyperparams.get('reg_lambda', 1.0),
-                    reg_alpha=self.hyperparams.get('reg_alpha', 0.5),
+                    n_estimators=self.hyperparams.get('n_estimators', 100),
+                    max_depth=self.hyperparams.get('max_depth', 6),
+                    learning_rate=self.hyperparams.get('learning_rate', 0.05),
+                    subsample=0.75,
+                    colsample_bytree=0.75,
+                    min_child_weight=10,
+                    reg_lambda=10.0,
+                    reg_alpha=1.0,
                     random_state=42,
                     eval_metric='logloss',
-                    scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
+                    scale_pos_weight=scale_pos_weight,
+                    early_stopping_rounds=20,
+                    verbosity=0
                 )
-                self.model.fit(self.X_train, self.y_train, verbose=0)
+                
+                eval_set = [(self.X_test, self.y_test)]
+                self.model.fit(
+                    self.X_train, self.y_train,
+                    eval_set=eval_set,
+                    verbose=False
+                )
             elif self.model_type == 'lightgbm':
+                scale_pos_weight = (self.y_train == 0).sum() / max((self.y_train == 1).sum(), 1)
                 self.model = LGBMClassifier(
-                    n_estimators=self.hyperparams.get('n_estimators', 150),
-                    max_depth=self.hyperparams.get('max_depth', 7),
-                    learning_rate=self.hyperparams.get('learning_rate', 0.08),
+                    n_estimators=self.hyperparams.get('n_estimators', 100),
+                    max_depth=self.hyperparams.get('max_depth', 6),
+                    learning_rate=self.hyperparams.get('learning_rate', 0.05),
+                    num_leaves=31,
+                    subsample=0.75,
+                    colsample_bytree=0.75,
+                    reg_lambda=10.0,
+                    reg_alpha=1.0,
                     random_state=42,
                     verbose=-1,
-                    scale_pos_weight=(self.y_train == 0).sum() / (self.y_train == 1).sum()
+                    scale_pos_weight=scale_pos_weight
                 )
                 self.model.fit(self.X_train, self.y_train)
             elif self.model_type == 'random_forest':
                 self.model = RandomForestClassifier(
-                    n_estimators=150,
-                    max_depth=15,
-                    min_samples_split=10,
-                    min_samples_leaf=5,
+                    n_estimators=100,
+                    max_depth=10,
+                    min_samples_split=20,
+                    min_samples_leaf=10,
                     random_state=42,
-                    class_weight='balanced'
+                    class_weight='balanced',
+                    n_jobs=-1
                 )
                 self.model.fit(self.X_train, self.y_train)
             else:
@@ -497,24 +515,25 @@ class CryptoEntryModel:
         print("Training ensemble models...")
         models = [
             XGBClassifier(
-                n_estimators=self.hyperparams.get('n_estimators', 150),
-                max_depth=self.hyperparams.get('max_depth', 7),
-                learning_rate=self.hyperparams.get('learning_rate', 0.08),
+                n_estimators=self.hyperparams.get('n_estimators', 100),
+                max_depth=self.hyperparams.get('max_depth', 6),
+                learning_rate=self.hyperparams.get('learning_rate', 0.05),
                 random_state=42,
                 eval_metric='logloss',
                 verbose=0,
             ),
             RandomForestClassifier(
-                n_estimators=150,
-                max_depth=15,
-                min_samples_split=10,
+                n_estimators=100,
+                max_depth=10,
+                min_samples_split=20,
                 random_state=42,
-                class_weight='balanced'
+                class_weight='balanced',
+                n_jobs=-1
             ),
             LGBMClassifier(
-                n_estimators=self.hyperparams.get('n_estimators', 150),
-                max_depth=self.hyperparams.get('max_depth', 7),
-                learning_rate=self.hyperparams.get('learning_rate', 0.08),
+                n_estimators=self.hyperparams.get('n_estimators', 100),
+                max_depth=self.hyperparams.get('max_depth', 6),
+                learning_rate=self.hyperparams.get('learning_rate', 0.05),
                 random_state=42,
                 verbose=-1,
             )
