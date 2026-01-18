@@ -88,6 +88,8 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
     Train model using previously optimized hyperparameters.
     Applies SMOTE and feature selection during training.
     
+    During training, increases regularization to prevent overfitting on SMOTE-augmented data.
+    
     Args:
         symbol: Trading pair (e.g., BTCUSDT)
         timeframe: Candle timeframe (e.g., 15m)
@@ -118,8 +120,21 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
         optimized_params = results.get('best_params', {})
         if optimized_params:
             model.hyperparams.update(optimized_params)
+            
             print(f"Loaded optimized parameters from {results_path}")
-            print(f"Parameters: {model.hyperparams}")
+            print(f"Original parameters: {model.hyperparams}")
+            
+            print(f"\nApplying anti-overfitting adjustments for final training:")
+            if model_type == 'xgboost':
+                model.hyperparams['subsample'] = min(0.85, model.hyperparams.get('subsample', 0.9))
+                model.hyperparams['colsample_bytree'] = min(0.85, model.hyperparams.get('colsample_bytree', 0.9))
+                model.hyperparams['reg_lambda'] = model.hyperparams.get('reg_lambda', 1.0) * 1.5
+                model.hyperparams['reg_alpha'] = model.hyperparams.get('reg_alpha', 0.5)
+                print(f"  - Reduced subsample to {model.hyperparams['subsample']:.4f}")
+                print(f"  - Reduced colsample_bytree to {model.hyperparams['colsample_bytree']:.4f}")
+                print(f"  - Increased reg_lambda to {model.hyperparams['reg_lambda']:.4f}")
+            
+            print(f"\nAdjusted parameters: {model.hyperparams}")
             print()
 
     print("Step 1: Loading data...")
@@ -141,6 +156,18 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
         else:
             print(f"{key}: {value}")
     print("="*60)
+    
+    overfitting_gap = training_results.get('train_precision', 0) - training_results.get('test_precision', 0)
+    print(f"\nOverfitting gap (Precision): {overfitting_gap:.4f}")
+    if overfitting_gap > 0.15:
+        print("WARNING: Overfitting detected. Consider:")
+        print("  - Reducing n_estimators")
+        print("  - Increasing regularization (reg_lambda, reg_alpha)")
+        print("  - Using fewer features")
+    elif overfitting_gap > 0.05:
+        print("NOTICE: Moderate overfitting present.")
+    else:
+        print("GOOD: Model generalization is healthy.")
 
     return training_results
 
