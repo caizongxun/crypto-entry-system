@@ -10,7 +10,7 @@ import joblib
 from pathlib import Path
 
 try:
-    from imblearn.over_sampling import SMOTE
+    from imblearn.over_sampling import BorderlineSMOTE
     SMOTE_AVAILABLE = True
 except ImportError:
     SMOTE_AVAILABLE = False
@@ -73,7 +73,7 @@ class CryptoEntryModel:
         """Apply optimization-specific configuration."""
         if self.optimization_level == 'conservative':
             self.use_smote = True
-            self.smote_ratio = 0.3
+            self.smote_ratio = 0.2
             self.bounce_threshold_multiplier = 1.2
             self.use_ensemble = True
             self.hyperparams = {
@@ -92,7 +92,7 @@ class CryptoEntryModel:
             }
         else:
             self.use_smote = True
-            self.smote_ratio = 0.3
+            self.smote_ratio = 0.2
             self.bounce_threshold_multiplier = 1.0
             self.use_ensemble = False
             self.hyperparams = {
@@ -319,18 +319,23 @@ class CryptoEntryModel:
         return X_selected, selected_names
 
     def _apply_smote(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
-        """Apply SMOTE balancing to training data with reduced ratio to prevent overfitting."""
+        """Apply Borderline-SMOTE balancing to training data.
+        
+        Borderline-SMOTE only generates synthetic samples near decision boundaries,
+        reducing noise compared to standard SMOTE.
+        """
         if not SMOTE_AVAILABLE:
             print("Warning: imbalanced-learn not installed. Skipping SMOTE.")
             print("Install with: pip install imbalanced-learn")
             return X, y
         
-        print(f"Applying SMOTE balancing (ratio={self.smote_ratio})...")
+        print(f"Applying Borderline-SMOTE balancing (ratio={self.smote_ratio})...")
         try:
-            smote = SMOTE(sampling_strategy=self.smote_ratio, random_state=42)
+            smote = BorderlineSMOTE(sampling_strategy=self.smote_ratio, random_state=42, kind='borderline-2')
             X_smote, y_smote = smote.fit_resample(X, y)
-            print(f"SMOTE completed: {X_smote.shape[0]} samples (from {X.shape[0]})")
+            print(f"Borderline-SMOTE completed: {X_smote.shape[0]} samples (from {X.shape[0]})")
             print(f"Class distribution: {(y_smote == 0).sum()} negative, {(y_smote == 1).sum()} positive")
+            print(f"Note: Borderline-SMOTE generates fewer samples near decision boundary to reduce noise.")
             return X_smote, y_smote
         except Exception as e:
             print(f"SMOTE error: {str(e)}. Continuing without SMOTE.")
