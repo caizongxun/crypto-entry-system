@@ -9,7 +9,10 @@ from models.hyperparameter_optimizer import HyperparameterOptimizer, Optimizatio
 def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str, 
                             optimization_level: str, n_trials: int = 50):
     """
-    Optimize hyperparameters for the specified model configuration.
+    Optimize hyperparameters using raw data without SMOTE or feature selection.
+    
+    This ensures parameters reflect true generalization capability. SMOTE and
+    feature selection are applied only during final model training.
     
     Args:
         symbol: Trading pair (e.g., BTCUSDT)
@@ -39,21 +42,24 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
         model_type=model_type,
         optimization_level=optimization_level,
         use_multi_timeframe=True,
-        use_feature_selection=True
+        use_feature_selection=False
     )
 
     print("Step 1: Loading and engineering features...")
     model.load_data()
     model.engineer_features()
+    
+    print("Step 2: Preparing raw training data (no SMOTE, no feature selection)...")
     X, y, feature_names = model.prepare_training_data()
 
-    print(f"Training data shape: {X.shape}")
+    print(f"Raw training data shape: {X.shape}")
     print(f"Feature count: {len(feature_names)}")
     print(f"Positive samples: {(y == 1).sum()}")
     print(f"Negative samples: {(y == 0).sum()}")
+    print(f"Positive ratio: {(y == 1).sum() / len(y) * 100:.2f}%")
     print()
 
-    print("Step 2: Running hyperparameter optimization...")
+    print("Step 3: Running hyperparameter optimization on raw data...")
     print()
 
     metric = OptimizationMetric.BALANCED
@@ -66,10 +72,11 @@ def optimize_hyperparameters(symbol: str, timeframe: str, model_type: str,
     optimizer.save_results(str(results_path))
 
     print(f"\nOptimization results saved to: {results_path}")
-    print(f"\nTo use these parameters, update the hyperparams in ml_model.py:")
-    print(f"  'max_depth': {result.best_params.get('max_depth')},")
-    print(f"  'learning_rate': {result.best_params.get('learning_rate'):.4f},")
-    print(f"  'n_estimators': {result.best_params.get('n_estimators')},")
+    print(f"\nRecommendation:")
+    print(f"These parameters were optimized on raw data without SMOTE.")
+    print(f"Use train mode to apply SMOTE during final training:")
+    print(f"\n  python main_v2.py --mode train --symbol {symbol} --timeframe {timeframe} \")
+    print(f"    --model-type {model_type} --results-path {results_path}")
 
     return result
 
@@ -78,6 +85,7 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
                                optimization_level: str, results_path: str = None):
     """
     Train model using previously optimized hyperparameters.
+    Applies SMOTE and feature selection during training.
     
     Args:
         symbol: Trading pair (e.g., BTCUSDT)
@@ -119,7 +127,7 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
     print("Step 2: Engineering features...")
     model.engineer_features()
 
-    print("Step 3: Training model...")
+    print("Step 3: Training model (with SMOTE and feature selection)...")
     training_results = model.train()
 
     print()
