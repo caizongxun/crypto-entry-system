@@ -100,31 +100,31 @@ TIMEFRAME_CONFIGS = {
     '15m': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'bb_touch_tolerance_upper': 0.01,  # 1% above BB upper
-        'bb_touch_tolerance_lower': 0.01,  # 1% below BB lower
+        'bb_touch_tolerance_upper': 0.02,
+        'bb_touch_tolerance_lower': 0.02,
         'lookforward': 24,
-        'bounce_threshold': 0.005,  # Increased from 0.002 for stricter bounce definition
+        'bounce_threshold': 0.003,
         'model_type': 'xgboost',
-        'scale_pos_weight_multiplier': 2.0,  # Increase positive class weight for better precision
+        'scale_pos_weight_multiplier': 1.3,
     },
     '1h': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'bb_touch_tolerance_upper': 0.01,
-        'bb_touch_tolerance_lower': 0.01,
+        'bb_touch_tolerance_upper': 0.02,
+        'bb_touch_tolerance_lower': 0.02,
         'lookforward': 8,
-        'bounce_threshold': 0.007,  # Increased from 0.003
+        'bounce_threshold': 0.004,
         'model_type': 'xgboost',
-        'scale_pos_weight_multiplier': 2.0,
+        'scale_pos_weight_multiplier': 1.3,
     },
     '1d': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'bb_touch_tolerance_upper': 0.01,
-        'bb_touch_tolerance_lower': 0.01,
+        'bb_touch_tolerance_upper': 0.02,
+        'bb_touch_tolerance_lower': 0.02,
         'lookforward': 5,
-        'bounce_threshold': 0.008,  # Increased from 0.005
+        'bounce_threshold': 0.006,
         'model_type': 'xgboost',
-        'scale_pos_weight_multiplier': 2.0,
+        'scale_pos_weight_multiplier': 1.3,
     },
 }
