@@ -101,14 +101,14 @@ TIMEFRAME_CONFIGS = {
         'bb_period': 20,
         'bb_std': 2.0,
         'lookforward': 24,
-        'bounce_threshold': 0.002,
+        'bounce_threshold': 0.003,
         'model_type': 'xgboost',
     },
     '1h': {
         'bb_period': 20,
         'bb_std': 2.0,
         'lookforward': 8,
-        'bounce_threshold': 0.003,
+        'bounce_threshold': 0.004,
         'model_type': 'xgboost',
     },
     '1d': {
