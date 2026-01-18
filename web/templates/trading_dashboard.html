@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI Trading Bot</title>
+    <title>AI交易机器人</title>
     <script src="https://s3.tradingview.com/tv.js"></script>
     <style>
         * {
@@ -12,15 +12,15 @@
             box-sizing: border-box;
         }
         body {
-            font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, sans-serif;
-            background: #0f1419;
-            color: #e1e8ed;
+            font-family: 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif;
+            background: #0a0e27;
+            color: #e0e8f0;
         }
         .container {
             display: grid;
-            grid-template-columns: 2fr 1fr;
-            gap: 16px;
-            padding: 16px;
+            grid-template-columns: 2fr 1.2fr;
+            gap: 20px;
+            padding: 20px;
             max-width: 1920px;
             margin: 0 auto;
         }
@@ -29,230 +29,498 @@
             background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
             padding: 24px;
             border-radius: 12px;
-            margin-bottom: 8px;
+            margin-bottom: 4px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
         }
-        .header h1 {
+        .header-left h1 {
             font-size: 28px;
             margin-bottom: 8px;
+            font-weight: 700;
+        }
+        .header-stats {
+            display: flex;
+            gap: 32px;
+            font-size: 13px;
+            margin-top: 8px;
+        }
+        .header-stat {
+            display: flex;
+            flex-direction: column;
+        }
+        .header-stat-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 11px;
+            margin-bottom: 4px;
+        }
+        .header-stat-value {
+            font-weight: 600;
+        }
+        .header-right {
+            text-align: right;
+            font-size: 13px;
+        }
+        .header-right-item {
+            margin-bottom: 8px;
+        }
+        .header-right-label {
+            color: rgba(255, 255, 255, 0.7);
+            font-size: 11px;
+        }
+        .header-right-value {
+            font-weight: 600;
         }
         .panel {
-            background: #1a1f2e;
+            background: #1a1f3a;
             border-radius: 12px;
             padding: 16px;
-            border: 1px solid #2a3044;
+            border: 1px solid #2a3555;
+            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
         }
         .panel-title {
-            font-size: 16px;
+            font-size: 14px;
             font-weight: 600;
             margin-bottom: 16px;
             color: #fff;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .panel-title-right {
+            font-size: 12px;
+            color: #95a5a6;
+            font-weight: 400;
         }
         #chart-container {
-            background: #0f1419;
+            background: #0a0e27;
             border-radius: 8px;
-            height: 500px;
+            height: 520px;
+            border: 1px solid #2a3555;
         }
         .prediction-item {
-            background: #252d3d;
+            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
             padding: 12px;
-            margin-bottom: 8px;
+            margin-bottom: 10px;
             border-radius: 8px;
-            border-left: 4px solid #667eea;
+            border-left: 3px solid #667eea;
             cursor: pointer;
+            transition: all 0.3s ease;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+        .prediction-item:hover {
+            border-left-color: #764ba2;
+            transform: translateX(4px);
+        }
+        .prediction-item.buy {
+            border-left-color: #2ecc71;
+        }
+        .prediction-item.sell {
+            border-left-color: #e74c3c;
+        }
+        .pred-left {
+            flex: 1;
+        }
+        .pred-signal {
+            font-weight: 600;
+            font-size: 13px;
+            margin-bottom: 4px;
+        }
+        .pred-signal.buy {
+            color: #2ecc71;
+        }
+        .pred-signal.sell {
+            color: #e74c3c;
+        }
+        .pred-price {
+            font-size: 12px;
+            color: #95a5a6;
+        }
+        .pred-right {
+            text-align: right;
+        }
+        .pred-confidence {
+            font-weight: 600;
+            font-size: 12px;
+            color: #f1c40f;
+        }
+        .pred-bb-position {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-top: 4px;
         }
         .button {
-            padding: 8px 16px;
+            padding: 8px 12px;
             background: #667eea;
             color: white;
             border: none;
             border-radius: 6px;
             cursor: pointer;
+            font-size: 12px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        .button:hover {
+            background: #764ba2;
+            transform: translateY(-2px);
+            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
+        }
+        .button.secondary {
+            background: #2a3555;
+            color: #e0e8f0;
+        }
+        .button.secondary:hover {
+            background: #3a4575;
+        }
+        .button.success {
+            background: #2ecc71;
+        }
+        .button.success:hover {
+            background: #27ae60;
+        }
+        .button.danger {
+            background: #e74c3c;
+        }
+        .button.danger:hover {
+            background: #c0392b;
         }
         .stats-grid {
             display: grid;
             grid-template-columns: 1fr 1fr;
-            gap: 8px;
+            gap: 12px;
         }
         .stat-card {
-            background: #252d3d;
+            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
             padding: 12px;
             border-radius: 8px;
             text-align: center;
+            border: 1px solid #3a4575;
+        }
+        .stat-label {
+            font-size: 11px;
+            color: #95a5a6;
+            margin-bottom: 6px;
         }
         .stat-value {
-            font-size: 20px;
+            font-size: 18px;
             font-weight: 700;
             color: #2ecc71;
-            margin-top: 4px;
+        }
+        .stat-value.negative {
+            color: #e74c3c;
+        }
+        .control-panel {
+            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
+            padding: 12px;
+            border-radius: 8px;
+            border: 1px solid #3a4575;
+            margin-bottom: 16px;
+        }
+        .input-group {
+            margin-bottom: 10px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+        }
+        .input-group label {
+            min-width: 70px;
+            font-size: 12px;
+            color: #95a5a6;
+        }
+        input, select {
+            flex: 1;
+            padding: 6px 8px;
+            background: #0a0e27;
+            border: 1px solid #3a4575;
+            color: #e0e8f0;
+            border-radius: 4px;
+            font-size: 12px;
+        }
+        input:focus, select:focus {
+            outline: none;
+            border-color: #667eea;
+            box-shadow: 0 0 8px rgba(102, 126, 234, 0.3);
+        }
+        .account-section {
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            padding: 12px;
+            border-radius: 12px;
+            color: white;
+            margin-bottom: 16px;
+        }
+        .account-stat {
+            display: flex;
+            justify-content: space-between;
+            margin-bottom: 8px;
+            font-size: 12px;
+        }
+        .account-stat-label {
+            opacity: 0.8;
+        }
+        .account-stat-value {
+            font-weight: 600;
         }
         .trades-grid {
             max-height: 400px;
             overflow-y: auto;
         }
         .trade-row {
-            background: #252d3d;
+            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
             padding: 10px;
             border-radius: 6px;
             margin-bottom: 8px;
             border-left: 3px solid #2ecc71;
-        }
-        input, select {
-            padding: 6px 8px;
-            background: #1a1f2e;
-            border: 1px solid #2a3044;
-            color: #e1e8ed;
-            border-radius: 4px;
             font-size: 12px;
         }
-        .control-panel {
-            background: #252d3d;
-            padding: 12px;
-            border-radius: 8px;
-            margin-bottom: 16px;
+        .trade-row.loss {
+            border-left-color: #e74c3c;
         }
-        .input-group {
-            margin-bottom: 8px;
-            display: flex;
-            gap: 8px;
-        }
-        .input-group label {
-            min-width: 80px;
-            font-size: 12px;
-        }
-        .account-section {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 16px;
-            border-radius: 12px;
-            color: white;
-        }
-        .account-stat {
+        .trade-row-header {
             display: flex;
             justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 14px;
+            margin-bottom: 6px;
         }
-        ::-webkit-scrollbar {
+        .trade-row-symbol {
+            font-weight: 600;
+            color: #e0e8f0;
+        }
+        .trade-row-type {
+            color: #95a5a6;
+            font-size: 11px;
+        }
+        .trade-row-profit {
+            font-weight: 600;
+        }
+        .trade-row-profit.gain {
+            color: #2ecc71;
+        }
+        .trade-row-profit.loss {
+            color: #e74c3c;
+        }
+        .trade-row-details {
+            font-size: 11px;
+            color: #95a5a6;
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 8px;
+        }
+        .side-panel {
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+        }
+        .scroll-container {
+            overflow-y: auto;
+            max-height: 600px;
+        }
+        .scroll-container::-webkit-scrollbar {
             width: 6px;
         }
-        ::-webkit-scrollbar-thumb {
-            background: #2a3044;
-            border-radius: 3px;
+        .scroll-container::-webkit-scrollbar-track {
+            background: #1a1f3a;
+            border-radius: 10px;
+        }
+        .scroll-container::-webkit-scrollbar-thumb {
+            background: #3a4575;
+            border-radius: 10px;
+        }
+        .scroll-container::-webkit-scrollbar-thumb:hover {
+            background: #4a5585;
+        }
+        .full-width {
+            width: 100%;
+        }
+        .grid-2col {
+            grid-column: 1 / -1;
+        }
+        .toggle-switch {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            margin: 10px 0;
+        }
+        .toggle-checkbox {
+            width: 40px;
+            height: 22px;
+            background: #3a4575;
+            border-radius: 11px;
+            cursor: pointer;
+            position: relative;
+            transition: background 0.3s ease;
+            border: none;
+            padding: 0;
+        }
+        .toggle-checkbox.active {
+            background: #2ecc71;
+        }
+        .toggle-checkbox::after {
+            content: '';
+            position: absolute;
+            width: 18px;
+            height: 18px;
+            background: white;
+            border-radius: 50%;
+            top: 2px;
+            left: 2px;
+            transition: left 0.3s ease;
+        }
+        .toggle-checkbox.active::after {
+            left: 20px;
+        }
+        .alert {
+            padding: 10px;
+            border-radius: 6px;
+            font-size: 12px;
+            margin-bottom: 8px;
+        }
+        .alert.warning {
+            background: rgba(241, 196, 15, 0.2);
+            color: #f1c40f;
+            border: 1px solid #f1c40f;
+        }
+        .alert.info {
+            background: rgba(52, 152, 219, 0.2);
+            color: #3498db;
+            border: 1px solid #3498db;
         }
     </style>
 </head>
 <body>
     <div class="container">
         <div class="header">
-            <h1>AI Trading Bot Control Panel</h1>
-            <div style="display: flex; gap: 32px; font-size: 14px;">
-                <div>
-                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Model Status</div>
-                    <div style="font-weight: 600; margin-top: 4px;">LightGBM Online</div>
+            <div class="header-left">
+                <h1>AI交易机器人</h1>
+                <div class="header-stats">
+                    <div class="header-stat">
+                        <span class="header-stat-label">模型状态</span>
+                        <span class="header-stat-value">LightGBM (在线)</span>
+                    </div>
+                    <div class="header-stat">
+                        <span class="header-stat-label">交易对</span>
+                        <span class="header-stat-value">BTCUSDT</span>
+                    </div>
+                    <div class="header-stat">
+                        <span class="header-stat-label">时间框架</span>
+                        <span class="header-stat-value">15分钟</span>
+                    </div>
+                    <div class="header-stat">
+                        <span class="header-stat-label">模型性能</span>
+                        <span class="header-stat-value">精准度69.2% | 召回率80.4%</span>
+                    </div>
                 </div>
-                <div>
-                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Trading Pair</div>
-                    <div style="font-weight: 600; margin-top: 4px;">BTCUSDT</div>
+            </div>
+            <div class="header-right">
+                <div class="header-right-item">
+                    <div class="header-right-label">最后更新</div>
+                    <div class="header-right-value" id="last-update">-</div>
                 </div>
-                <div>
-                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Timeframe</div>
-                    <div style="font-weight: 600; margin-top: 4px;">15M</div>
-                </div>
-                <div>
-                    <div style="color: rgba(255,255,255,0.7); font-size: 12px;">Last Update</div>
-                    <div style="font-weight: 600; margin-top: 4px;" id="last-update">-</div>
+                <div class="header-right-item">
+                    <div class="header-right-label">系统状态</div>
+                    <div class="header-right-value" id="system-status" style="color: #2ecc71;">运行中</div>
                 </div>
             </div>
         </div>
         
         <div class="panel">
             <div class="panel-title">
-                BTC/USDT Real-time Chart
+                BTC/USDT 实时图表
+                <span class="panel-title-right">数据来源: TradingView</span>
             </div>
             <div id="chart-container"></div>
         </div>
         
-        <div style="display: flex; flex-direction: column; gap: 16px;">
+        <div class="side-panel">
             <div class="panel">
-                <div class="panel-title">Account Overview</div>
+                <div class="panel-title">账户概览 (模拟账户)</div>
                 <div class="account-section">
-                    <h3 style="font-size: 14px; margin-bottom: 12px; opacity: 0.9;">Paper Trading Account</h3>
                     <div class="account-stat">
-                        <span>Initial Balance:</span>
-                        <span id="initial-balance">$10,000.00</span>
+                        <span class="account-stat-label">初始余额</span>
+                        <span class="account-stat-value">$10,000</span>
                     </div>
                     <div class="account-stat">
-                        <span>Current Balance:</span>
-                        <span id="current-balance">$10,000.00</span>
+                        <span class="account-stat-label">当前余额</span>
+                        <span class="account-stat-value" id="current-balance">$10,000</span>
                     </div>
                     <div class="account-stat">
-                        <span>Used Margin:</span>
-                        <span id="used-margin">$0.00</span>
+                        <span class="account-stat-label">已用保证金</span>
+                        <span class="account-stat-value" id="used-margin">$0</span>
                     </div>
                     <div class="account-stat">
-                        <span>Total Equity:</span>
-                        <span id="equity">$10,000.00</span>
+                        <span class="account-stat-label">总权益</span>
+                        <span class="account-stat-value" id="equity">$10,000</span>
                     </div>
                 </div>
             </div>
             
             <div class="panel">
-                <div class="panel-title">Trading Statistics</div>
+                <div class="panel-title">交易统计</div>
                 <div class="stats-grid">
                     <div class="stat-card">
-                        <div style="font-size: 12px; color: #95a5a6;">Win Rate</div>
+                        <div class="stat-label">胜率</div>
                         <div class="stat-value" id="win-rate">-</div>
                     </div>
                     <div class="stat-card">
-                        <div style="font-size: 12px; color: #95a5a6;">Profit Rate</div>
+                        <div class="stat-label">利润率</div>
                         <div class="stat-value" id="profit-rate">-</div>
                     </div>
                     <div class="stat-card">
-                        <div style="font-size: 12px; color: #95a5a6;">Total Trades</div>
+                        <div class="stat-label">总交易数</div>
                         <div class="stat-value" id="total-trades">0</div>
                     </div>
                     <div class="stat-card">
-                        <div style="font-size: 12px; color: #95a5a6;">Losses</div>
-                        <div class="stat-value" id="loss-count">0</div>
+                        <div class="stat-label">亏损次数</div>
+                        <div class="stat-value negative" id="loss-count">0</div>
                     </div>
                 </div>
             </div>
             
             <div class="panel">
-                <div class="panel-title">Trading Controls</div>
+                <div class="panel-title">交易控制</div>
                 <div class="control-panel">
                     <div class="input-group">
-                        <label>Position Size</label>
-                        <input type="number" id="position-size" value="0.1" step="0.01">
+                        <label>手仓位量</label>
+                        <input type="number" id="position-size" value="0.1" step="0.01" min="0.01">
                     </div>
                     <div class="input-group">
-                        <label>Leverage</label>
+                        <label>杠杆倍数</label>
                         <select id="leverage-select">
-                            <option value="1">1x</option>
+                            <option value="1">1x (无杠杆)</option>
                             <option value="2">2x</option>
                             <option value="5">5x</option>
                             <option value="10">10x</option>
                             <option value="20">20x</option>
                         </select>
                     </div>
-                    <button class="button" style="width: 100%; margin-top: 8px;" onclick="toggleAutoTrading()">Enable Auto Trading</button>
+                    <div class="toggle-switch">
+                        <label style="font-size: 12px; color: #95a5a6;">自动交易</label>
+                        <button class="toggle-checkbox" id="auto-trading-toggle" onclick="toggleAutoTrading()"></button>
+                    </div>
+                    <button class="button full-width" style="margin-top: 8px;" onclick="refreshAllData()">刷新数据</button>
                 </div>
             </div>
             
             <div class="panel">
-                <div class="panel-title">Latest Signals (Precision: 69.19%, Recall: 80.43%)</div>
-                <div style="max-height: 500px; overflow-y: auto;" id="predictions-container">
-                    <div style="text-align: center; padding: 20px; color: #95a5a6;">Loading signals...</div>
+                <div class="panel-title">
+                    最新信号
+                    <span class="panel-title-right">精准度69.2% | 召回率80.4%</span>
+                </div>
+                <div class="scroll-container" id="predictions-container">
+                    <div style="text-align: center; padding: 20px; color: #95a5a6; font-size: 12px;">加载中...</div>
                 </div>
             </div>
         </div>
         
-        <div class="panel" style="grid-column: 1 / -1; margin-top: 16px;">
+        <div class="panel grid-2col">
             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <div class="panel-title" style="margin: 0;">Trade History</div>
-                <button class="button" onclick="refreshTrades()">Refresh</button>
+                <div class="panel-title" style="margin: 0; flex: 1;">
+                    交易历史
+                </div>
+                <button class="button secondary" onclick="refreshTrades()" style="padding: 6px 10px;">刷新</button>
             </div>
             <div class="trades-grid" id="trades-container">
-                <div style="text-align: center; padding: 20px; color: #95a5a6;">No trades yet</div>
+                <div style="text-align: center; padding: 20px; color: #95a5a6; font-size: 12px;">暂无交易</div>
             </div>
         </div>
     </div>
@@ -264,17 +532,17 @@
         
         function initChart() {
             new TradingView.widget({
-                "autosize": true,
-                "symbol": "BINANCE:BTCUSDT",
-                "interval": "15",
-                "timezone": "Asia/Shanghai",
-                "theme": "dark",
-                "style": "1",
-                "locale": "zh",
-                "toolbar_bg": "#1a1f2e",
-                "enable_publishing": false,
-                "allow_symbol_change": true,
-                "container_id": "chart-container"
+                autosize: true,
+                symbol: "BINANCE:BTCUSDT",
+                interval: "15",
+                timezone: "Asia/Shanghai",
+                theme: "dark",
+                style: "1",
+                locale: "zh",
+                toolbar_bg: "#1a1f3a",
+                enable_publishing: false,
+                allow_symbol_change: true,
+                container_id: "chart-container"
             });
         }
         
@@ -285,16 +553,24 @@
                     if (data.status === 'success' && data.predictions) {
                         const container = document.getElementById('predictions-container');
                         const html = data.predictions.map(pred => {
-                            const signalClass = pred.signal_type === 'BUY' ? '#2ecc71' : '#e74c3c';
-                            const prob = (pred.bounce_probability * 100).toFixed(1);
+                            const signalClass = pred.signal_type === 'BUY' ? 'buy' : 'sell';
+                            const signalColor = pred.signal_type === 'BUY' ? '#2ecc71' : '#e74c3c';
+                            const confidence = (pred.bounce_probability * 100).toFixed(1);
+                            const bbPos = (pred.bb_position * 100).toFixed(1);
                             return `
-                                <div class="prediction-item" onclick="executeSignal('${pred.signal_type}', ${pred.price})" style="border-left-color: ${signalClass};">
-                                    <strong style="color: ${signalClass};">${pred.signal_type}</strong> @ \$${pred.price.toFixed(2)}
-                                    <br><span style="color: #95a5a6; font-size: 12px;">Confidence: ${prob}% | BB Position: ${(pred.bb_position * 100).toFixed(1)}%</span>
+                                <div class="prediction-item ${signalClass}" onclick="executeSignal('${pred.signal_type}', ${pred.price})">
+                                    <div class="pred-left">
+                                        <div class="pred-signal ${signalClass}">${pred.signal_type === 'BUY' ? '买入' : '卖出'}</div>
+                                        <div class="pred-price">$${pred.price.toFixed(2)}</div>
+                                    </div>
+                                    <div class="pred-right">
+                                        <div class="pred-confidence">${confidence}%</div>
+                                        <div class="pred-bb-position">BB位置: ${bbPos}%</div>
+                                    </div>
                                 </div>
                             `;
                         }).join('');
-                        container.innerHTML = html || '<div style="padding: 20px; color: #95a5a6;">No signals</div>';
+                        container.innerHTML = html || '<div style="padding: 20px; color: #95a5a6; text-align: center; font-size: 12px;">无信号</div>';
                     }
                 })
                 .catch(err => console.error('Error:', err));
@@ -306,9 +582,9 @@
                 .then(data => {
                     if (data.status === 'success') {
                         const summary = data.summary;
-                        document.getElementById('current-balance').textContent = `\$${summary.available_balance.toFixed(2)}`;
-                        document.getElementById('equity').textContent = `\$${summary.equity.toFixed(2)}`;
-                        document.getElementById('used-margin').textContent = `\$${summary.used_margin.toFixed(2)}`;
+                        document.getElementById('current-balance').textContent = `$${summary.available_balance.toFixed(2)}`;
+                        document.getElementById('equity').textContent = `$${summary.equity.toFixed(2)}`;
+                        document.getElementById('used-margin').textContent = `$${summary.used_margin.toFixed(2)}`;
                         
                         const trades = data.trade_history || [];
                         const wins = trades.filter(t => t.profit > 0).length;
@@ -319,7 +595,9 @@
                         
                         const totalProfit = trades.reduce((sum, t) => sum + t.profit, 0);
                         const profitRate = (totalProfit / 10000 * 100).toFixed(2);
-                        document.getElementById('profit-rate').textContent = `${profitRate}%`;
+                        const profitElement = document.getElementById('profit-rate');
+                        profitElement.textContent = `${profitRate}%`;
+                        profitElement.className = 'stat-value' + (totalProfit >= 0 ? '' : ' negative');
                         
                         loadTradeHistory(trades);
                     }
@@ -330,28 +608,32 @@
         function loadTradeHistory(trades) {
             const container = document.getElementById('trades-container');
             if (!trades || trades.length === 0) {
-                container.innerHTML = '<div style="padding: 20px; color: #95a5a6;">No trades yet</div>';
+                container.innerHTML = '<div style="padding: 20px; color: #95a5a6; text-align: center; font-size: 12px;">暂无交易</div>';
                 return;
             }
             
             const html = trades.map(trade => {
                 const fee = trade.quantity * trade.entry_price * BITGET_TAKER_FEE;
-                const profit = (trade.profit - fee).toFixed(2);
-                const profitColor = profit >= 0 ? '#2ecc71' : '#e74c3c';
+                const netProfit = trade.profit - fee;
+                const profitClass = netProfit >= 0 ? 'gain' : 'loss';
+                const tradeClass = netProfit >= 0 ? '' : ' loss';
                 return `
-                    <div class="trade-row">
-                        <div style="display: flex; justify-content: space-between; width: 100%;">
+                    <div class="trade-row${tradeClass}">
+                        <div class="trade-row-header">
+                            <span>
+                                <span class="trade-row-symbol">${trade.symbol}</span>
+                                <span class="trade-row-type"> | ${trade.order_type}</span>
+                            </span>
+                            <span class="trade-row-profit ${profitClass}">${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USDT</span>
+                        </div>
+                        <div class="trade-row-details">
                             <div>
-                                <strong>${trade.symbol}</strong> | ${trade.order_type}
-                                <br><span style="color: #95a5a6; font-size: 11px;">${new Date(trade.open_time).toLocaleString('zh-CN')}</span>
+                                <div style="color: #95a5a6; font-size: 11px;">数量: ${trade.quantity.toFixed(4)} BTC</div>
+                                <div style="color: #95a5a6; font-size: 11px;">开仓: $${trade.entry_price.toFixed(2)}</div>
                             </div>
                             <div>
-                                <div>${trade.quantity.toFixed(4)} BTC</div>
-                                <div style="color: #95a5a6; font-size: 11px;">Entry: \$${trade.entry_price.toFixed(2)}</div>
-                            </div>
-                            <div style="text-align: right; color: ${profitColor};">
-                                <strong>${profit} USDT</strong>
-                                <br><span style="color: #95a5a6; font-size: 11px;">Fee: ${fee.toFixed(2)}</span>
+                                <div style="color: #95a5a6; font-size: 11px;">手续费: ${fee.toFixed(2)} USDT</div>
+                                <div style="color: #95a5a6; font-size: 11px;">${new Date(trade.open_time).toLocaleString('zh-CN')}</div>
                             </div>
                         </div>
                     </div>
@@ -361,7 +643,7 @@
         }
         
         function executeSignal(signalType, price) {
-            if (!autoTradingEnabled && !confirm('Auto Trading disabled. Execute trade manually?')) return;
+            if (!autoTradingEnabled && !confirm('自动交易未启用。是否手动执行交易?')) return;
             
             const positionSize = parseFloat(document.getElementById('position-size').value);
             const leverage = parseFloat(document.getElementById('leverage-select').value);
@@ -378,51 +660,56 @@
                     entry_price: price,
                     stop_loss: stopLoss,
                     take_profit: takeProfit,
-                    notes: `${signalType} @ \$${price.toFixed(2)}, ${leverage}x`
+                    notes: `${signalType === 'BUY' ? '买入' : '卖出'} @ $${price.toFixed(2)}, ${leverage}x杠杆`
                 })
             })
             .then(res => res.json())
             .then(data => {
                 if (data.status === 'success') {
-                    alert('Trade opened successfully!');
+                    alert('交易已开单!');
                     loadAccountSummary();
                 } else {
-                    alert('Error: ' + data.message);
+                    alert('错误: ' + data.message);
                 }
             })
-            .catch(err => alert('Error: ' + err.message));
+            .catch(err => alert('错误: ' + err.message));
         }
         
         function toggleAutoTrading() {
             autoTradingEnabled = !autoTradingEnabled;
-            const btn = event.target;
+            const toggle = document.getElementById('auto-trading-toggle');
             if (autoTradingEnabled) {
-                btn.textContent = 'Disable Auto Trading';
-                btn.style.background = '#e74c3c';
-                alert('Auto Trading Enabled!');
+                toggle.classList.add('active');
+                alert('自动交易已启用!');
             } else {
-                btn.textContent = 'Enable Auto Trading';
-                btn.style.background = '#667eea';
-                alert('Auto Trading Disabled!');
+                toggle.classList.remove('active');
+                alert('自动交易已禁用!');
             }
         }
         
         function refreshTrades() {
             loadAccountSummary();
-            alert('Trades refreshed!');
+            alert('交易数据已刷新!');
         }
         
-        document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
+        function refreshAllData() {
+            loadPredictions();
+            loadAccountSummary();
+            alert('所有数据已刷新!');
+        }
+        
+        function updateTimestamp() {
+            document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
+        }
         
         initChart();
         loadPredictions();
         loadAccountSummary();
+        updateTimestamp();
         
         setInterval(loadPredictions, 60000);
         setInterval(loadAccountSummary, 30000);
-        setInterval(() => {
-            document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
-        }, 1000);
+        setInterval(updateTimestamp, 1000);
     </script>
 </body>
 </html>
