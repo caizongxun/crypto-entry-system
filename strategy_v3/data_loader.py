@@ -33,11 +33,6 @@ class DataLoader:
 
         os.makedirs(cache_dir, exist_ok=True)
 
-        if verbose:
-            logger.enable('strategy_v3')
-        else:
-            logger.disable('strategy_v3')
-
     def load_data(
         self,
         symbol: str,
@@ -45,7 +40,7 @@ class DataLoader:
         cache: bool = True
     ) -> pd.DataFrame:
         """
-        Load OHLCV data.
+        Load OHLCV data from HuggingFace dataset.
 
         Args:
             symbol: Trading symbol (e.g., 'BTCUSDT')
@@ -53,20 +48,20 @@ class DataLoader:
             cache: Use cached data if available
 
         Returns:
-            DataFrame with OHLCV data
+            DataFrame with OHLCV data indexed by open_time
         """
-        # Extract base asset from symbol
+        # Extract base asset from symbol (BTCUSDT -> BTC)
         base = symbol.replace('USDT', '').replace('BUSD', '')
         filename = f'{base}_{timeframe}.parquet'
 
-        # Construct remote path
+        # Construct remote path following the dataset structure
         remote_path = f'klines/{symbol}/{filename}'
 
-        # Try to download and cache
         try:
             if self.verbose:
                 logger.info(f'Downloading {symbol} {timeframe} data from HuggingFace...')
 
+            # Download from HuggingFace
             local_path = hf_hub_download(
                 repo_id=self.hf_repo,
                 filename=remote_path,
@@ -78,6 +73,7 @@ class DataLoader:
             if self.verbose:
                 logger.info(f'Loading data from {local_path}')
 
+            # Read parquet file
             df = pd.read_parquet(local_path)
             return self._preprocess_data(df)
 
@@ -87,52 +83,52 @@ class DataLoader:
 
     def _preprocess_data(self, df: pd.DataFrame) -> pd.DataFrame:
         """
-        Preprocess OHLCV data.
+        Preprocess OHLCV data from HuggingFace dataset.
 
         Args:
-            df: Raw DataFrame
+            df: Raw DataFrame from parquet file
 
         Returns:
-            Preprocessed DataFrame
+            Preprocessed DataFrame with proper index and columns
         """
         # Create copy to avoid modifying original
         df = df.copy()
 
-        # Ensure correct column names
-        expected_cols = {'open', 'high', 'low', 'close', 'volume'}
-        actual_cols = set(df.columns.str.lower())
+        # Convert open_time to datetime and set as index
+        if 'open_time' in df.columns:
+            df['open_time'] = pd.to_datetime(df['open_time'])
+            df.set_index('open_time', inplace=True)
+        else:
+            raise ValueError('Missing open_time column in dataset')
 
-        if not expected_cols.issubset(actual_cols):
-            raise ValueError(f'Missing required columns. Expected {expected_cols}, got {actual_cols}')
+        # Select required OHLCV columns
+        required_cols = ['open', 'high', 'low', 'close', 'volume']
+        
+        # Check if all required columns exist
+        if not all(col in df.columns for col in required_cols):
+            raise ValueError(f'Missing required columns. Expected {required_cols}, got {list(df.columns)}')
 
-        # Normalize column names to lowercase
-        df.columns = df.columns.str.lower()
-
-        # Handle timestamp
-        if 'timestamp' in df.columns:
-            df['timestamp'] = pd.to_datetime(df['timestamp'])
-            df.set_index('timestamp', inplace=True)
-        elif 'date' in df.columns:
-            df['date'] = pd.to_datetime(df['date'])
-            df.set_index('date', inplace=True)
-
-        # Sort by index
-        df = df.sort_index()
-
-        # Handle missing values
-        df = df.fillna(method='ffill')
-        df = df.fillna(method='bfill')
+        # Keep only OHLCV columns
+        df = df[required_cols].copy()
 
         # Ensure numeric types
-        for col in ['open', 'high', 'low', 'close', 'volume']:
+        for col in required_cols:
             df[col] = pd.to_numeric(df[col], errors='coerce')
+
+        # Handle missing values using new pandas API
+        df = df.ffill()
+        df = df.bfill()
 
         # Remove any remaining NaN rows
         df = df.dropna()
 
+        # Sort by index (should already be sorted, but ensure it)
+        df = df.sort_index()
+
         if self.verbose:
             logger.info(f'Loaded {len(df)} candles')
             logger.info(f'Date range: {df.index[0]} to {df.index[-1]}')
+            logger.info(f'Columns: {list(df.columns)}')
 
         return df
 
@@ -156,15 +152,15 @@ class DataLoader:
         test_df = df.iloc[split_idx:].copy()
 
         if self.verbose:
-            logger.info(f'Train set: {len(train_df)} candles')
-            logger.info(f'Test set: {len(test_df)} candles')
+            logger.info(f'Train set: {len(train_df)} candles ({train_ratio*100:.1f}%)')
+            logger.info(f'Test set: {len(test_df)} candles ({(1-train_ratio)*100:.1f}%)')
 
         return train_df, test_df
 
     @staticmethod
     def validate_data(df: pd.DataFrame, min_candles: int = 50) -> bool:
         """
-        Validate OHLCV data.
+        Validate OHLCV data quality.
 
         Args:
             df: Input DataFrame
@@ -173,21 +169,34 @@ class DataLoader:
         Returns:
             True if valid, False otherwise
         """
+        # Check minimum candles
         if len(df) < min_candles:
+            logger.error(f'Insufficient data: {len(df)} candles < {min_candles} minimum')
             return False
 
+        # Check required columns
         required_cols = {'open', 'high', 'low', 'close', 'volume'}
         if not required_cols.issubset(set(df.columns)):
+            logger.error(f'Missing required columns: {required_cols - set(df.columns)}')
             return False
 
         # Check for NaN values
         if df[['open', 'high', 'low', 'close', 'volume']].isna().any().any():
+            logger.error('Data contains NaN values')
             return False
 
         # Check price relationships
         if (df['high'] < df['low']).any():
+            logger.error('Invalid price relationship: high < low')
             return False
-        if (df['low'] < df['open']).any() or (df['low'] < df['close']).any():
+            
+        if (df['low'] > df['open']).any() and (df['low'] > df['close']).any():
+            logger.error('Invalid price relationship: low > both open and close')
+            return False
+
+        # Check volume is positive
+        if (df['volume'] <= 0).any():
+            logger.error('Invalid volume: contains non-positive values')
             return False
 
         return True
