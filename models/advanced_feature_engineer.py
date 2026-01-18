@@ -75,8 +75,8 @@ class AdvancedFeatureEngineer:
             
             bounce_success_by_bin[price_bin] = success_rate
         
-        df['bounce_failure_memory'] = df['price_bin'].map(bounce_success_by_bin)
-        df['bounce_failure_memory'] = df['bounce_failure_memory'].fillna(0.5).astype(float)
+        df['bounce_failure_memory'] = df['price_bin'].map(bounce_success_by_bin).astype(float)
+        df['bounce_failure_memory'] = df['bounce_failure_memory'].fillna(0.5)
         
         df['bounce_failure_memory'] = df['bounce_failure_memory'].rolling(
             window=5, center=True
