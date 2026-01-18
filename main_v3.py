@@ -79,44 +79,61 @@ def train_model(args):
 
     logger.info(f'Loaded {len(df)} candles')
 
-    # Engineer features
+    # Split data FIRST before feature engineering to avoid data leakage
+    logger.info('Splitting data into train/test sets...')
+    train_df, test_df = loader.split_train_test(df, train_ratio=0.7)
+
+    # Engineer features on full dataset (using raw OHLCV only)
     logger.info('Engineering features...')
     engineer = FeatureEngineer(config)
     df_features = engineer.engineer_features(df)
 
     logger.info(f'Total features: {len(df_features.columns) - 5}')
 
-    # Create targets
+    # Create targets using the full dataset
     logger.info('Creating targets...')
     
-    # Support: 5-candle low
-    y_support = df_features['low'].rolling(window=5).min().shift(-5)
+    # Support: 5-candle low (looking forward)
+    y_support = df['low'].rolling(window=5).min().shift(-5)
     
-    # Resistance: 5-candle high
-    y_resistance = df_features['high'].rolling(window=5).max().shift(-5)
+    # Resistance: 5-candle high (looking forward)
+    y_resistance = df['high'].rolling(window=5).max().shift(-5)
     
     # Breakout probability: if price breaks resistance within 5 candles
-    future_high = df_features['high'].rolling(window=5).max().shift(-5)
-    y_breakout = (future_high > df_features['resistance'].fillna(df_features['high'])).astype(float)
+    future_high = df['high'].rolling(window=5).max().shift(-5)
+    y_breakout = (future_high > df['high']).astype(float)
 
     # Remove rows with NaN targets
     mask = y_support.notna() & y_resistance.notna() & y_breakout.notna()
     df_clean = df_features[mask].copy()
-    y_support = y_support[mask]
-    y_resistance = y_resistance[mask]
-    y_breakout = y_breakout[mask]
+    y_support_clean = y_support[mask]
+    y_resistance_clean = y_resistance[mask]
+    y_breakout_clean = y_breakout[mask]
 
     logger.info(f'Clean data: {len(df_clean)} samples')
 
-    # Split train/test
-    train_df, test_df = loader.split_train_test(df_clean, train_ratio=0.7)
-    y_train_support = y_support[train_df.index]
-    y_train_resistance = y_resistance[train_df.index]
-    y_train_breakout = y_breakout[train_df.index]
+    # Split train/test by index alignment
+    train_mask = df_clean.index.isin(train_df.index)
+    test_mask = df_clean.index.isin(test_df.index)
+
+    df_train = df_clean[train_mask].copy()
+    df_test = df_clean[test_mask].copy()
+    
+    y_train_support = y_support_clean[train_mask]
+    y_train_resistance = y_resistance_clean[train_mask]
+    y_train_breakout = y_breakout_clean[train_mask]
+    
+    y_test_support = y_support_clean[test_mask]
+    y_test_resistance = y_resistance_clean[test_mask]
+    y_test_breakout = y_breakout_clean[test_mask]
+
+    logger.info(f'Training samples: {len(df_train)}')
+    logger.info(f'Testing samples: {len(df_test)}')
 
     # Get feature columns (exclude OHLCV)
     feature_cols = [col for col in df_clean.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
-    X_train = train_df[feature_cols]
+    X_train = df_train[feature_cols]
+    X_test = df_test[feature_cols]
 
     # Train models
     logger.info('Training models...')
@@ -126,7 +143,11 @@ def train_model(args):
         X_train=X_train,
         y_train_support=y_train_support,
         y_train_resistance=y_train_resistance,
-        y_train_breakout=y_train_breakout
+        y_train_breakout=y_train_breakout,
+        X_test=X_test,
+        y_test_support=y_test_support,
+        y_test_resistance=y_test_resistance,
+        y_test_breakout=y_test_breakout
     )
 
     # Save models
@@ -140,19 +161,44 @@ def train_model(args):
     
     results_data = []
     for model_name, model_metrics in metrics.items():
-        results_data.append({
-            'model': model_name,
-            'rmse': model_metrics['rmse'],
-            'mae': model_metrics['mae'],
-            'r2': model_metrics['r2'],
-            'timestamp': datetime.now().isoformat()
-        })
+        if isinstance(model_metrics.get('test_r2'), (int, float)):
+            # Has test metrics
+            results_data.append({
+                'model': model_name,
+                'train_rmse': model_metrics['train_rmse'],
+                'train_mae': model_metrics['train_mae'],
+                'train_r2': model_metrics['train_r2'],
+                'test_rmse': model_metrics['test_rmse'],
+                'test_mae': model_metrics['test_mae'],
+                'test_r2': model_metrics['test_r2'],
+                'timestamp': datetime.now().isoformat()
+            })
+        else:
+            # Only training metrics
+            results_data.append({
+                'model': model_name,
+                'train_rmse': model_metrics['rmse'],
+                'train_mae': model_metrics['mae'],
+                'train_r2': model_metrics['r2'],
+                'test_rmse': None,
+                'test_mae': None,
+                'test_r2': None,
+                'timestamp': datetime.now().isoformat()
+            })
     
     results_df = pd.DataFrame(results_data)
     results_df.to_csv(results_file, index=False)
 
     logger.info(f'Training results saved to {results_file}')
     logger.info('Model training completed successfully')
+
+    # Print summary
+    logger.info('Training Summary:')
+    for idx, row in results_df.iterrows():
+        logger.info(f"\n{row['model'].upper()}:")
+        logger.info(f"  Train R2: {row['train_r2']:.6f}")
+        if pd.notna(row['test_r2']):
+            logger.info(f"  Test R2:  {row['test_r2']:.6f}")
 
     return True
 
@@ -285,9 +331,9 @@ def backtest_strategy(args):
     df_features = engineer.engineer_features(df)
 
     # Create targets for analysis
-    y_support = df_features['low'].rolling(window=5).min().shift(-5)
-    y_resistance = df_features['high'].rolling(window=5).max().shift(-5)
-    y_breakout = (df_features['high'].rolling(window=5).max().shift(-5) > df_features['close']).astype(float)
+    y_support = df['low'].rolling(window=5).min().shift(-5)
+    y_resistance = df['high'].rolling(window=5).max().shift(-5)
+    y_breakout = (df['high'].rolling(window=5).max().shift(-5) > df['close']).astype(float)
 
     # Remove NaN
     mask = y_support.notna() & y_resistance.notna()
