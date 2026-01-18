@@ -89,6 +89,7 @@ else:
     client = None
     print('Warning: Binance API keys not configured or python-binance not installed. Using public endpoints.')
 
+recent_signals_cache = []
 
 class RealtimeCandleProvider:
     TIMEFRAME_MS = {
@@ -332,6 +333,84 @@ def system_status():
             'realtime_fetcher': 'initialized'
         }
     })
+
+
+@app.route('/api/realtime/signals', methods=['GET'])
+def get_recent_signals():
+    try:
+        symbol = request.args.get('symbol', 'BTCUSDT')
+        limit = int(request.args.get('limit', 10))
+        
+        if not symbol.endswith('USDT'):
+            symbol = symbol + 'USDT'
+        
+        candles = RealtimeCandleProvider.get_completed_candles_binance(symbol, '15m', 100)
+        
+        if not candles or len(candles) < 50:
+            return jsonify({
+                'status': 'success',
+                'signals': [],
+                'message': 'Insufficient data for signals'
+            })
+        
+        df = pd.DataFrame(candles)
+        df['timestamp'] = pd.to_datetime(df['open_time'], unit='ms')
+        
+        df['bb_basis'] = df['close'].rolling(window=20).mean()
+        std = df['close'].rolling(window=20).std()
+        df['bb_upper'] = df['bb_basis'] + (std * 2)
+        df['bb_lower'] = df['bb_basis'] - (std * 2)
+        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
+        
+        signals = []
+        for idx in range(len(df)):
+            row = df.iloc[idx]
+            
+            if pd.isna(row['bb_upper']) or pd.isna(row['bb_lower']):
+                continue
+            
+            signal_type = 'NEUTRAL'
+            signal_strength = 'LOW'
+            
+            if row['close'] >= row['bb_upper']:
+                signal_type = 'SELL'
+                signal_strength = 'HIGH'
+            elif row['close'] <= row['bb_lower']:
+                signal_type = 'BUY'
+                signal_strength = 'HIGH'
+            elif row['bb_position'] > 0.8:
+                signal_type = 'SELL'
+                signal_strength = 'MEDIUM'
+            elif row['bb_position'] < 0.2:
+                signal_type = 'BUY'
+                signal_strength = 'MEDIUM'
+            
+            if signal_type != 'NEUTRAL':
+                signals.append({
+                    'timestamp': row['timestamp'].isoformat(),
+                    'signal': signal_type,
+                    'strength': signal_strength,
+                    'price': float(row['close']),
+                    'bb_position': float(row['bb_position']),
+                    'bb_upper': float(row['bb_upper']),
+                    'bb_lower': float(row['bb_lower'])
+                })
+        
+        recent = signals[-limit:] if len(signals) > limit else signals
+        
+        return jsonify({
+            'status': 'success',
+            'symbol': symbol,
+            'signals': recent,
+            'total_signals': len(signals)
+        })
+    
+    except Exception as e:
+        return jsonify({
+            'status': 'error',
+            'message': str(e),
+            'signals': []
+        }), 500
 
 
 @app.route('/api/realtime/prediction', methods=['GET'])
