@@ -68,7 +68,7 @@ class OptimizationResult:
 
 
 class HyperparameterOptimizer:
-    """Optimize hyperparameters for ML models."""
+    """Optimize hyperparameters for ML models using raw data without SMOTE."""
 
     def __init__(self, model_type: str = 'xgboost', metric: OptimizationMetric = OptimizationMetric.BALANCED):
         self.model_type = model_type
@@ -102,7 +102,7 @@ class HyperparameterOptimizer:
 
     def _objective_function(self, trial, X: np.ndarray, y: np.ndarray,
                            scale_pos_weight: float) -> float:
-        """Objective function for Optuna optimization."""
+        """Objective function for Optuna optimization using raw data without SMOTE."""
         max_depth = trial.suggest_int('max_depth', self.search_space.max_depth[0], 
                                       self.search_space.max_depth[1])
         learning_rate = trial.suggest_float('learning_rate', self.search_space.learning_rate[0],
@@ -183,7 +183,11 @@ class HyperparameterOptimizer:
 
     def optimize(self, X: np.ndarray, y: np.ndarray, n_trials: int = 50,
                 verbose: bool = True) -> OptimizationResult:
-        """Run hyperparameter optimization using Optuna."""
+        """Run hyperparameter optimization using raw data without SMOTE or feature selection.
+        
+        This ensures found hyperparameters reflect true generalization capability.
+        SMOTE will only be applied during final model training, not during search.
+        """
         if not OPTUNA_AVAILABLE:
             raise ImportError("Optuna not installed. Install with: pip install optuna")
 
@@ -200,6 +204,7 @@ class HyperparameterOptimizer:
             print(f"Model: {self.model_type}")
             print(f"Metric: {self.metric.value}")
             print(f"Trials: {n_trials}")
+            print(f"Data shape: {X.shape} (raw data without SMOTE)")
             print()
 
         study.optimize(objective_wrapper, n_trials=n_trials, show_progress_bar=verbose)
@@ -216,7 +221,7 @@ class HyperparameterOptimizer:
 
     def _evaluate_best_params(self, X: np.ndarray, y: np.ndarray,
                             params: Dict, scale_pos_weight: float) -> OptimizationResult:
-        """Evaluate best parameters on full dataset."""
+        """Evaluate best parameters on raw data to ensure realistic performance estimates."""
         X_train, X_test, y_train, y_test = train_test_split(X, y, test_size=0.2,
                                                              random_state=42, stratify=y)
 
@@ -278,6 +283,7 @@ class HyperparameterOptimizer:
             'metric': self.metric.value,
             'model_type': self.model_type,
             'timestamp': pd.Timestamp.now().isoformat(),
+            'note': 'Parameters optimized on raw data without SMOTE. SMOTE applied only during final training.',
         }
 
         path = Path(filepath)
@@ -318,10 +324,14 @@ class HyperparameterOptimizer:
                 print(f"  {key}: {value:.4f}")
             else:
                 print(f"  {key}: {value}")
-        print("\nPerformance Metrics:")
+        print("\nPerformance Metrics (on raw data):")
         print(f"  Train Precision: {result.train_precision:.4f}")
         print(f"  Train Recall: {result.train_recall:.4f}")
         print(f"  Test Precision: {result.test_precision:.4f}")
         print(f"  Test Recall: {result.test_recall:.4f}")
         print(f"  Test F1 Score: {result.test_f1:.4f}")
+        print(f"  Overfitting Gap (Precision): {result.train_precision - result.test_precision:.4f}")
+        print(f"  Overfitting Gap (Recall): {result.train_recall - result.test_recall:.4f}")
+        print("\nNote: These metrics are on raw data without SMOTE.")
+        print("Final model will use SMOTE during training for improved recall.")
         print("="*60)
