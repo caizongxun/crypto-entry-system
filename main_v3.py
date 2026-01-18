@@ -110,10 +110,6 @@ def train_model(args):
 
     logger.info(f'Loaded {len(df)} candles')
 
-    # Split data FIRST before feature engineering
-    logger.info('Splitting data into train/test sets...')
-    train_df, test_df = loader.split_train_test(df, train_ratio=0.7)
-
     # Engineer features on full dataset
     logger.info('Engineering features...')
     engineer = FeatureEngineer(config)
@@ -127,7 +123,7 @@ def train_model(args):
         df, lookback=20, forward_lookback=20
     )
     
-    # Remove rows with NaN
+    # Remove rows with NaN - this creates clean aligned data
     mask = future_support.notna() & future_resistance.notna()
     df_clean = df_features[mask].copy()
     future_support_clean = future_support[mask]
@@ -136,20 +132,20 @@ def train_model(args):
 
     logger.info(f'Clean data: {len(df_clean)} samples')
 
-    # Split train/test by index alignment
-    train_mask = df_clean.index.isin(train_df.index)
-    test_mask = df_clean.index.isin(test_df.index)
-
-    df_train = df_clean[train_mask].copy()
-    df_test = df_clean[test_mask].copy()
+    # Now split the CLEAN data into train/test
+    logger.info('Splitting clean data into train/test sets...')
+    split_idx = int(len(df_clean) * 0.7)
     
-    y_train_support = future_support_clean[train_mask]
-    y_train_resistance = future_resistance_clean[train_mask]
-    y_train_breakout = (future_resistance_clean[train_mask] > df['close'][train_mask]).astype(float)
+    df_train = df_clean.iloc[:split_idx].copy()
+    df_test = df_clean.iloc[split_idx:].copy()
     
-    y_test_support = future_support_clean[test_mask]
-    y_test_resistance = future_resistance_clean[test_mask]
-    y_test_breakout = (future_resistance_clean[test_mask] > df['close'][test_mask]).astype(float)
+    y_train_support = future_support_clean.iloc[:split_idx]
+    y_train_resistance = future_resistance_clean.iloc[:split_idx]
+    y_train_breakout = (future_resistance_clean.iloc[:split_idx] > df_train['close']).astype(float)
+    
+    y_test_support = future_support_clean.iloc[split_idx:]
+    y_test_resistance = future_resistance_clean.iloc[split_idx:]
+    y_test_breakout = (future_resistance_clean.iloc[split_idx:] > df_test['close']).astype(float)
 
     logger.info(f'Training samples: {len(df_train)}')
     logger.info(f'Testing samples: {len(df_test)}')
@@ -376,11 +372,13 @@ def backtest_strategy(args):
     future_support = future_support[mask]
     future_resistance = future_resistance[mask]
 
-    # Split and get test set
-    train_df, test_df = loader.split_train_test(df_clean, train_ratio=0.7)
-    y_test_support = future_support[test_df.index]
-    y_test_resistance = future_resistance[test_df.index]
-    y_test_breakout = (future_resistance[test_df.index] > df['close'][test_df.index]).astype(float)
+    # Split into train/test
+    split_idx = int(len(df_clean) * 0.7)
+    df_test = df_clean.iloc[split_idx:].copy()
+    
+    y_test_support = future_support.iloc[split_idx:]
+    y_test_resistance = future_resistance.iloc[split_idx:]
+    y_test_breakout = (future_resistance.iloc[split_idx:] > df_test['close']).astype(float)
 
     # Load models
     logger.info('Loading trained models...')
@@ -395,14 +393,14 @@ def backtest_strategy(args):
     # Generate predictions on test set
     logger.info('Generating backtest predictions...')
     feature_cols = ensemble.selected_features
-    X_test = test_df[feature_cols]
+    X_test = df_test[feature_cols]
 
     support_pred, resistance_pred, breakout_pred = ensemble.predict(X_test)
 
     # Generate signals
     logger.info('Creating backtest signals...')
     signal_gen = SignalGenerator(config)
-    signals_df = signal_gen.generate_signals(test_df, support_pred, resistance_pred, breakout_pred)
+    signals_df = signal_gen.generate_signals(df_test, support_pred, resistance_pred, breakout_pred)
 
     # Get summary
     summary = signal_gen.get_signal_summary(signals_df)
