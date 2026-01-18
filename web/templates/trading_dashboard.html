@@ -97,10 +97,6 @@
             color: var(--color-accent-blue);
         }
 
-        .nav-item .icon {
-            font-size: 18px;
-        }
-
         .sidebar-footer {
             padding: 20px;
             border-top: 1px solid var(--color-border);
@@ -165,7 +161,7 @@
 
         .tab-content {
             display: none;
-            height: 100%;
+            min-height: 100%;
         }
 
         .tab-content.active {
@@ -223,11 +219,6 @@
             transform: translateY(-2px);
         }
 
-        .button-primary:disabled {
-            opacity: 0.5;
-            cursor: not-allowed;
-        }
-
         .button-secondary {
             background-color: var(--color-bg-tertiary);
             color: var(--color-text-primary);
@@ -236,6 +227,24 @@
 
         .button-secondary:hover {
             background-color: var(--color-border);
+        }
+
+        .button-success {
+            background-color: var(--color-success);
+            color: white;
+        }
+
+        .button-success:hover {
+            opacity: 0.9;
+        }
+
+        .button-danger {
+            background-color: var(--color-danger);
+            color: white;
+        }
+
+        .button-danger:hover {
+            opacity: 0.9;
         }
 
         .input-group {
@@ -367,7 +376,8 @@
             border-radius: 6px;
             margin-bottom: 15px;
             display: flex;
-            align-items: gap;
+            align-items: center;
+            gap: 10px;
             font-size: 14px;
         }
 
@@ -381,6 +391,12 @@
             background-color: rgba(72, 187, 120, 0.1);
             color: var(--color-success);
             border: 1px solid rgba(72, 187, 120, 0.3);
+        }
+
+        .alert-warning {
+            background-color: rgba(237, 137, 54, 0.1);
+            color: var(--color-warning);
+            border: 1px solid rgba(237, 137, 54, 0.3);
         }
 
         .scrollbar {
@@ -405,12 +421,17 @@
             background: var(--color-accent-blue);
         }
 
-        #tradingview-chart {
+        .chart-container {
             width: 100%;
-            height: 600px;
             border-radius: 8px;
             overflow: hidden;
             border: 1px solid var(--color-border);
+            background-color: var(--color-bg-tertiary);
+        }
+
+        #tradingview-chart {
+            width: 100%;
+            height: 600px;
         }
 
         .update-status {
@@ -446,6 +467,7 @@
             display: flex;
             flex-direction: column;
             gap: 4px;
+            flex-grow: 1;
         }
 
         .signal-type {
@@ -472,6 +494,47 @@
             background: linear-gradient(90deg, var(--color-danger), var(--color-warning), var(--color-success));
             transition: width 0.3s ease;
         }
+
+        .modal {
+            display: none;
+            position: fixed;
+            z-index: 1000;
+            left: 0;
+            top: 0;
+            width: 100%;
+            height: 100%;
+            background-color: rgba(0, 0, 0, 0.5);
+        }
+
+        .modal-content {
+            background-color: var(--color-bg-secondary);
+            margin: 5% auto;
+            padding: 30px;
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            width: 90%;
+            max-width: 500px;
+            box-shadow: 0 10px 40px rgba(0, 0, 0, 0.3);
+        }
+
+        .modal-header {
+            font-size: 18px;
+            font-weight: 600;
+            margin-bottom: 20px;
+            color: var(--color-text-primary);
+        }
+
+        .close {
+            float: right;
+            font-size: 28px;
+            font-weight: bold;
+            cursor: pointer;
+            color: var(--color-text-secondary);
+        }
+
+        .close:hover {
+            color: var(--color-text-primary);
+        }
     </style>
 </head>
 <body>
@@ -479,27 +542,27 @@
         <div class="sidebar">
             <div class="sidebar-header">
                 <h1>交易分析系統</h1>
-                <p>BB 通道反彈預測</p>
+                <p>BB通道反彈預測</p>
             </div>
             <div class="sidebar-nav">
                 <div class="nav-item active" onclick="switchTab('dashboard', this)">
-                    <span class="icon">📊</span>
+                    <span>📊</span>
                     <span>儀表板</span>
                 </div>
                 <div class="nav-item" onclick="switchTab('realtime', this)">
-                    <span class="icon">📈</span>
+                    <span>📈</span>
                     <span>實時預測</span>
                 </div>
                 <div class="nav-item" onclick="switchTab('chart', this)">
-                    <span class="icon">📉</span>
+                    <span>📉</span>
                     <span>K線圖表</span>
                 </div>
                 <div class="nav-item" onclick="switchTab('history', this)">
-                    <span class="icon">📋</span>
+                    <span>📋</span>
                     <span>交易歷史</span>
                 </div>
                 <div class="nav-item" onclick="switchTab('settings', this)">
-                    <span class="icon">設定</span>
+                    <span>⚙️</span>
                     <span>系統設定</span>
                 </div>
             </div>
@@ -518,8 +581,8 @@
                         <span>模型: <span id="model-status-text">已載入</span></span>
                     </div>
                     <div class="status-item">
-                        <span class="status-dot" id="data-status"></span>
-                        <span>資料源: <span id="data-status-text">已連接</span></span>
+                        <span class="status-dot" id="auto-trading-status"></span>
+                        <span>自動交易: <span id="auto-trading-status-text">已啟用</span></span>
                     </div>
                 </div>
             </div>
@@ -537,23 +600,23 @@
                         <div class="stats-container">
                             <div class="stat-card">
                                 <div class="stat-label">帳戶餘額</div>
-                                <div class="stat-value" id="balance">$10,000.00</div>
-                                <div class="stat-change value-positive">初始: $10,000</div>
+                                <div class="stat-value" id="balance">$1,000.00</div>
+                                <div class="stat-change value-positive">初始: $1,000</div>
                             </div>
                             <div class="stat-card">
                                 <div class="stat-label">未平倉頭寸</div>
                                 <div class="stat-value" id="open-positions">0</div>
-                                <div class="stat-change">總收益: $0</div>
+                                <div class="stat-change">已平倉: 0</div>
                             </div>
                             <div class="stat-card">
                                 <div class="stat-label">勝率</div>
                                 <div class="stat-value" id="win-rate">--</div>
-                                <div class="stat-change">成功交易數</div>
+                                <div class="stat-change" id="win-rate-detail">成功交易數</div>
                             </div>
                             <div class="stat-card">
-                                <div class="stat-label">模型精度</div>
-                                <div class="stat-value">69.2%</div>
-                                <div class="stat-change">LightGBM</div>
+                                <div class="stat-label">淨損益</div>
+                                <div class="stat-value" id="profit-loss">$0.00</div>
+                                <div class="stat-change">LightGBM 69.2%</div>
                             </div>
                         </div>
                     </div>
@@ -569,6 +632,19 @@
                             <p style="text-align: center; color: var(--color-text-secondary); padding: 40px 0;">載入中...</p>
                         </div>
                     </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">自動交易設定</div>
+                                <div class="card-subtitle">信心度 50% 以上自動執行</div>
+                            </div>
+                        </div>
+                        <div class="alert alert-info">
+                            自動交易已啟用。系統將自動執行置信度達 50% 以上的交易信號。
+                        </div>
+                        <button class="button button-warning" onclick="openAutoTradingModal()">查看自動交易設定</button>
+                    </div>
                 </div>
 
                 <div id="realtime" class="tab-content">
@@ -583,19 +659,19 @@
                         <div class="input-group">
                             <div class="input-field">
                                 <label class="input-label">交易對</label>
-                                <input type="text" id="rt-symbol" value="BTCUSDT" onchange="stopAutoFetch()" />
+                                <input type="text" id="rt-symbol" value="BTCUSDT" />
                             </div>
                             <div class="input-field">
                                 <label class="input-label">時間框架</label>
-                                <select id="rt-timeframe" onchange="stopAutoFetch()">
+                                <select id="rt-timeframe">
                                     <option value="15m">15 分鐘</option>
-                                    <option value="1h">1 小時</option>
+                                    <option value="1h" selected>1 小時</option>
                                     <option value="1d">1 天</option>
                                 </select>
                             </div>
                             <div class="input-field">
                                 <label class="input-label">K 線數量 (最小 50)</label>
-                                <input type="number" id="rt-limit" value="50" min="50" onchange="stopAutoFetch()" />
+                                <input type="number" id="rt-limit" value="50" min="50" />
                             </div>
                             <div class="input-field" style="display: flex; align-items: flex-end;">
                                 <button class="button button-primary" id="fetch-btn" onclick="startAutoFetch()">開始自動更新</button>
@@ -631,25 +707,19 @@
                                     <div class="data-cell">
                                         <div class="data-label">置信度</div>
                                         <div class="data-value" id="rt-confidence">--</div>
-                                        <div class="data-label">值</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">置信度值</div>
                                         <div class="data-value value-neutral" id="rt-confidence-value">--</div>
                                     </div>
                                     <div class="data-cell">
                                         <div class="data-label">當前價格</div>
                                         <div class="data-value" id="rt-price">--</div>
                                     </div>
-                                    <div class="data-cell">
-                                        <div class="data-label">RSI</div>
-                                        <div class="data-value" id="rt-rsi">--</div>
-                                    </div>
-                                    <div class="data-cell">
-                                        <div class="data-label">波動率</div>
-                                        <div class="data-value" id="rt-volatility">--</div>
-                                    </div>
                                 </div>
                                 <div class="data-row">
                                     <div class="data-cell">
-                                        <div class="data-label">上滸 (BB Upper)</div>
+                                        <div class="data-label">上溝 (BB Upper)</div>
                                         <div class="data-value" id="rt-bb-upper">--</div>
                                     </div>
                                     <div class="data-cell">
@@ -657,7 +727,7 @@
                                         <div class="data-value" id="rt-bb-basis">--</div>
                                     </div>
                                     <div class="data-cell">
-                                        <div class="data-label">下滸 (BB Lower)</div>
+                                        <div class="data-label">下溝 (BB Lower)</div>
                                         <div class="data-value" id="rt-bb-lower">--</div>
                                     </div>
                                     <div class="data-cell">
@@ -667,32 +737,6 @@
                                     <div class="data-cell">
                                         <div class="data-label">使用 K 線數</div>
                                         <div class="data-value" id="rt-candles-used">--</div>
-                                    </div>
-                                </div>
-                            </div>
-                        </div>
-                    </div>
-
-                    <div class="card">
-                        <div class="card-header">
-                            <div class="card-title">K 線狀態監測</div>
-                            <div class="card-subtitle">當前 K 線形成進度</div>
-                        </div>
-                        <button class="button button-secondary" onclick="fetchCandleStatus()">檢查狀態</button>
-                        <div id="candle-status-result" style="margin-top: 15px; display: none;">
-                            <div class="data-grid">
-                                <div class="data-row">
-                                    <div class="data-cell">
-                                        <div class="data-label">狀態</div>
-                                        <div class="data-value" id="cs-status">--</div>
-                                    </div>
-                                    <div class="data-cell">
-                                        <div class="data-label">進度</div>
-                                        <div class="data-value" id="cs-progress">--</div>
-                                    </div>
-                                    <div class="data-cell">
-                                        <div class="data-label">當前價格</div>
-                                        <div class="data-value" id="cs-price">--</div>
                                     </div>
                                 </div>
                             </div>
@@ -708,7 +752,9 @@
                                 <div class="card-subtitle">TradingView 官方圖表</div>
                             </div>
                         </div>
-                        <div id="tradingview-chart"></div>
+                        <div class="chart-container">
+                            <div id="tradingview-chart"></div>
+                        </div>
                     </div>
                 </div>
 
@@ -716,13 +762,11 @@
                     <div class="card">
                         <div class="card-header">
                             <div class="card-title">交易歷史</div>
-                            <div class="card-subtitle">模擬交易記錄</div>
+                            <div class="card-subtitle">所有已平倉交易記錄</div>
                         </div>
-                        <button class="button button-secondary" onclick="loadTradeHistory()">
-                            載入歷史
-                        </button>
+                        <button class="button button-secondary" onclick="loadTradeHistory()">載入歷史</button>
                         <div id="trade-history" style="margin-top: 15px;">
-                            <p style="text-align: center; color: var(--color-text-secondary);">點擊載入歷史按鈕</p>
+                            <p style="text-align: center; color: var(--color-text-secondary);">點擊載入歷史按鍵</p>
                         </div>
                     </div>
                 </div>
@@ -736,6 +780,32 @@
 
                         <div class="input-group">
                             <div class="input-field">
+                                <label class="input-label">初始資金 ($)</label>
+                                <input type="number" id="initial-balance" value="1000" step="100" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">每筆交易百分比 (%)</label>
+                                <input type="number" id="position-size" value="10" min="0.1" max="100" step="0.1" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">置信度閾值 (%)</label>
+                                <select id="confidence-threshold">
+                                    <option value="0.4">40% (極低)</option>
+                                    <option value="0.5" selected>50% (低)</option>
+                                    <option value="0.6">60% (中低)</option>
+                                    <option value="0.7">70% (中)</option>
+                                    <option value="0.8">80% (高)</option>
+                                    <option value="0.9">90% (非常高)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">K線圖表高度 (px)</label>
+                                <input type="number" id="chart-height" value="600" min="300" max="1000" step="50" />
+                            </div>
+                            <div class="input-field">
                                 <label class="input-label">資料源</label>
                                 <select id="data-source">
                                     <option value="binance">Binance API</option>
@@ -746,47 +816,17 @@
                                 <label class="input-label">預設交易對</label>
                                 <input type="text" id="default-symbol" value="BTCUSDT" />
                             </div>
-                            <div class="input-field">
-                                <label class="input-label">預設時間框架</label>
-                                <select id="default-timeframe">
-                                    <option value="15m">15 分鐘</option>
-                                    <option value="1h">1 小時</option>
-                                    <option value="1d">1 天</option>
-                                </select>
-                            </div>
                         </div>
 
                         <div class="input-group">
-                            <div class="input-field">
-                                <label class="input-label">最小 K 線數 (用於預測)</label>
-                                <input type="number" id="min-candles" value="50" min="20" max="200" />
-                            </div>
-                            <div class="input-field">
-                                <label class="input-label">預測置信度閾值</label>
-                                <select id="confidence-threshold">
-                                    <option value="0.5">50% (低)</option>
-                                    <option value="0.6">60% (中低)</option>
-                                    <option value="0.7" selected>70% (中)</option>
-                                    <option value="0.8">80% (高)</option>
-                                    <option value="0.9">90% (非常高)</option>
-                                </select>
-                            </div>
-                        </div>
-
-                        <div class="input-group">
-                            <div class="input-field">
-                                <label class="input-label">帳戶初始餘額 ($)</label>
-                                <input type="number" id="initial-balance" value="10000" />
-                            </div>
-                            <div class="input-field">
-                                <label class="input-label">每筆交易頭寸大小 (%)</label>
-                                <input type="number" id="position-size" value="5" min="0.1" max="100" />
-                            </div>
-                        </div>
-
-                        <div class="input-group">
-                            <button class="button" onclick="saveSettings()" style="background-color: var(--color-success); color: white;">保存設定</button>
+                            <button class="button button-success" onclick="saveSettings()">保存設定</button>
                             <button class="button button-secondary" onclick="resetSettings()">恢復預設</button>
+                            <button class="button button-danger" onclick="resetTrading()">重置交易</button>
+                        </div>
+
+                        <div class="input-group" style="margin-top: 20px; padding-top: 20px; border-top: 1px solid var(--color-border);">
+                            <button class="button button-warning" onclick="clearCookies()">清除快取</button>
+                            <button class="button" style="background-color: var(--color-info); color: white;" onclick="exportSettings()">匯出設定</button>
                         </div>
                     </div>
 
@@ -809,8 +849,8 @@
                                     <div class="data-value">69.2%</div>
                                 </div>
                                 <div class="data-cell">
-                                    <div class="data-label">召回率</div>
-                                    <div class="data-value">80.4%</div>
+                                    <div class="data-label">手續費比率</div>
+                                    <div class="data-value">0.05% (Bitget)</div>
                                 </div>
                             </div>
                         </div>
@@ -820,10 +860,61 @@
         </div>
     </div>
 
+    <div id="autoTradingModal" class="modal">
+        <div class="modal-content">
+            <span class="close" onclick="closeAutoTradingModal()">&times;</span>
+            <div class="modal-header">自動交易設定</div>
+            <div id="auto-trading-params">
+                <div class="data-grid">
+                    <div class="data-row">
+                        <div class="data-cell">
+                            <div class="data-label">置信度閾值</div>
+                            <div class="data-value" id="modal-confidence-threshold">50%</div>
+                        </div>
+                        <div class="data-cell">
+                            <div class="data-label">初始資金</div>
+                            <div class="data-value" id="modal-initial-balance">$1,000</div>
+                        </div>
+                        <div class="data-cell">
+                            <div class="data-label">位置規模</div>
+                            <div class="data-value" id="modal-position-size">10%</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <script src="/static/js/cookie_manager.js"></script>
     <script>
         let autoFetchIntervalId = null;
         let lastPredictionParams = null;
         let updateCount = 0;
+
+        window.addEventListener('load', () => {
+            loadSettingsFromCookies();
+            refreshStatus();
+            loadRecentSignals();
+        });
+
+        function loadSettingsFromCookies() {
+            const settings = cookieManager.getAllSettings();
+            document.getElementById('initial-balance').value = settings.initialBalance;
+            document.getElementById('position-size').value = settings.positionSize;
+            document.getElementById('confidence-threshold').value = settings.confidenceThreshold;
+            document.getElementById('chart-height').value = settings.chartHeight;
+            document.getElementById('data-source').value = settings.dataSource;
+            document.getElementById('default-symbol').value = settings.defaultSymbol;
+            document.getElementById('rt-symbol').value = settings.defaultSymbol;
+            document.getElementById('rt-timeframe').value = settings.defaultTimeframe;
+            document.getElementById('update-interval').value = settings.updateInterval;
+
+            const chartHeight = settings.chartHeight;
+            const chartElement = document.getElementById('tradingview-chart');
+            if (chartElement) {
+                chartElement.style.height = chartHeight + 'px';
+            }
+        }
 
         function switchTab(tabName, element) {
             document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
@@ -845,38 +936,36 @@
                 setTimeout(initTradingViewChart, 100);
                 window.chartInitialized = true;
             }
-
-            if (tabName === 'dashboard' && !window.signalsLoaded) {
-                loadRecentSignals();
-                window.signalsLoaded = true;
-            }
         }
 
         function initTradingViewChart() {
             const container = document.getElementById('tradingview-chart');
-            if (container.innerHTML.trim() === '') {
+            if (container && container.children.length === 0) {
                 new TradingView.widget({
-                    autosize: true,
+                    autosize: false,
+                    width: '100%',
+                    height: document.getElementById('chart-height').value,
                     symbol: 'BINANCE:BTCUSDT',
-                    interval: '15',
-                    timezone: 'Etc/UTC',
+                    interval: '60',
+                    timezone: 'Asia/Taipei',
                     theme: 'dark',
                     style: '1',
                     locale: 'zh_TW',
                     container_id: 'tradingview-chart',
                     enable_publishing: false,
-                    allow_symbol_change: true
+                    allow_symbol_change: true,
+                    hide_side_toolbar: false,
+                    toolbar_bg: '#1a1f3a'
                 });
             }
         }
 
         function loadRecentSignals() {
-            const symbol = 'BTCUSDT';
+            const symbol = document.getElementById('default-symbol').value || 'BTCUSDT';
             fetch(`/api/realtime/signals?symbol=${symbol}&limit=10`)
                 .then(r => r.json())
                 .then(data => {
                     const container = document.getElementById('recent-signals');
-                    
                     if (data.status === 'success' && data.signals && data.signals.length > 0) {
                         let html = '';
                         data.signals.forEach(signal => {
@@ -885,7 +974,7 @@
                             const confidencePercent = (signal.confidence * 100).toFixed(1);
                             html += `
                                 <div class="signal-item ${signalClass}">
-                                    <div class="signal-content" style="flex-grow: 1;">
+                                    <div class="signal-content">
                                         <div class="signal-type">${signal.signal} - ${signal.strength}</div>
                                         <div class="signal-meta">${timestamp} | 價格: $${signal.price.toFixed(2)}</div>
                                         <div class="signal-meta">BB 位置: ${(signal.bb_position * 100).toFixed(1)}% | 範圍: $${(signal.bb_upper - signal.bb_lower).toFixed(2)}</div>
@@ -904,8 +993,22 @@
                 })
                 .catch(err => {
                     console.error('載入信號失敗:', err);
-                    document.getElementById('recent-signals').innerHTML = '<p style="text-align: center; color: var(--color-danger); padding: 40px 0;">無法載入信號</p>';
                 });
+        }
+
+        function refreshStatus() {
+            fetch('/api/trading/account-summary')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.summary) {
+                        document.getElementById('balance').textContent = '$' + data.summary.total_balance.toFixed(2);
+                        document.getElementById('open-positions').textContent = data.summary.open_trades;
+                        document.getElementById('win-rate').textContent = (data.summary.win_rate * 100).toFixed(1) + '%';
+                        document.getElementById('win-rate-detail').textContent = `勝: ${data.summary.winning_trades} 敗: ${data.summary.losing_trades}`;
+                        document.getElementById('profit-loss').textContent = '$' + data.summary.total_profit_loss.toFixed(2);
+                    }
+                })
+                .catch(err => console.error('狀態更新失敗:', err));
         }
 
         function startAutoFetch() {
@@ -961,118 +1064,162 @@
                         document.getElementById('rt-confidence').textContent = data.prediction.confidence;
                         document.getElementById('rt-confidence-value').textContent = (data.prediction.confidence_value * 100).toFixed(2) + '%';
                         document.getElementById('rt-price').textContent = '$' + data.latest_candle.close.toFixed(2);
-                        document.getElementById('rt-rsi').textContent = data.technical_indicators.rsi ? data.technical_indicators.rsi.toFixed(2) : '--';
-                        document.getElementById('rt-volatility').textContent = data.technical_indicators.volatility ? data.technical_indicators.volatility.toFixed(6) : '--';
                         document.getElementById('rt-bb-upper').textContent = '$' + (data.latest_candle.bb_upper ? data.latest_candle.bb_upper.toFixed(2) : '--');
                         document.getElementById('rt-bb-basis').textContent = '$' + (data.latest_candle.bb_basis ? data.latest_candle.bb_basis.toFixed(2) : '--');
                         document.getElementById('rt-bb-lower').textContent = '$' + (data.latest_candle.bb_lower ? data.latest_candle.bb_lower.toFixed(2) : '--');
                         document.getElementById('rt-bb-position').textContent = data.latest_candle.bb_position ? (data.latest_candle.bb_position * 100).toFixed(2) + '%' : '--';
                         document.getElementById('rt-candles-used').textContent = data.candles_used;
-                    } else {
-                        console.error('API錯誤:', data.message);
                     }
                 })
-                .catch(err => console.error('獲取預測失敗:', err));
-        }
-
-        function fetchCandleStatus() {
-            const symbol = document.getElementById('rt-symbol').value;
-            const timeframe = document.getElementById('rt-timeframe').value;
-
-            fetch(`/api/realtime/candle-status?symbol=${symbol}&timeframe=${timeframe}`)
-                .then(r => r.json())
-                .then(data => {
-                    const result = document.getElementById('candle-status-result');
-                    
-                    if (data.candle_status && data.candle_status.status !== 'error') {
-                        const status = data.candle_status;
-                        document.getElementById('cs-status').textContent = status.status === 'completed' ? '已完成' : '形成中';
-                        document.getElementById('cs-progress').textContent = status.progress_percentage + '%';
-                        document.getElementById('cs-price').textContent = '$' + status.current_price.toFixed(2);
-                        result.style.display = 'block';
-                    }
-                });
+                .catch(err => console.error('預測失敗:', err));
         }
 
         function loadTradeHistory() {
-            fetch('/api/trading/account-summary')
+            fetch('/api/trading/trade-history?limit=100')
                 .then(r => r.json())
                 .then(data => {
                     let html = '<div class="data-grid">';
-                    if (data.trade_history && data.trade_history.length > 0) {
-                        data.trade_history.forEach(trade => {
+                    if (data.trades && data.trades.length > 0) {
+                        data.trades.forEach(trade => {
+                            const entryTime = new Date(trade.entry_time).toLocaleString('zh-TW');
+                            const exitTime = trade.exit_time ? new Date(trade.exit_time).toLocaleString('zh-TW') : '--';
+                            const plClass = trade.profit_loss >= 0 ? 'value-positive' : 'value-negative';
                             html += `
                                 <div class="data-row">
                                     <div class="data-cell">
-                                        <div class="data-label">時間</div>
-                                        <div class="data-value">${new Date(trade.timestamp).toLocaleString('zh-TW')}</div>
+                                        <div class="data-label">交易ID</div>
+                                        <div class="data-value">${trade.trade_id}</div>
                                     </div>
                                     <div class="data-cell">
                                         <div class="data-label">方向</div>
                                         <div class="data-value">${trade.order_type}</div>
                                     </div>
                                     <div class="data-cell">
-                                        <div class="data-label">數量</div>
-                                        <div class="data-value">${trade.quantity}</div>
+                                        <div class="data-label">進場價</div>
+                                        <div class="data-value">$${trade.entry_price.toFixed(2)}</div>
                                     </div>
                                     <div class="data-cell">
-                                        <div class="data-label">進價</div>
-                                        <div class="data-value">${trade.entry_price}</div>
+                                        <div class="data-label">出場價</div>
+                                        <div class="data-value">${trade.exit_price ? '$' + trade.exit_price.toFixed(2) : '--'}</div>
                                     </div>
                                     <div class="data-cell">
-                                        <div class="data-label">狀態</div>
-                                        <div class="data-value">${trade.status}</div>
+                                        <div class="data-label">損益</div>
+                                        <div class="data-value ${plClass}">$${trade.profit_loss.toFixed(2)} (${(trade.profit_loss_percent * 100).toFixed(2)}%)</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">手續費</div>
+                                        <div class="data-value">$${trade.commission.toFixed(4)}</div>
                                     </div>
                                 </div>
                             `;
                         });
                     } else {
-                        html += '<p style="text-align: center; color: var(--color-text-secondary);">暫無交易記錄</p>';
+                        html += '<p style="text-align: center; color: var(--color-text-secondary); padding: 20px;">尚無交易記錄</p>';
                     }
                     html += '</div>';
                     document.getElementById('trade-history').innerHTML = html;
-                });
-        }
-
-        function refreshStatus() {
-            fetch('/api/system/status')
-                .then(r => r.json())
-                .then(data => {
-                    const modelStatus = document.getElementById('model-status');
-                    const dataStatus = document.getElementById('data-status');
-                    
-                    modelStatus.style.backgroundColor = '#48bb78';
-                    document.getElementById('model-status-text').textContent = '已載入';
-                    
-                    dataStatus.style.backgroundColor = '#48bb78';
-                    document.getElementById('data-status-text').textContent = '已連接';
-                });
-            
-            fetch('/api/trading/account-summary')
-                .then(r => r.json())
-                .then(data => {
-                    if (data.summary) {
-                        document.getElementById('balance').textContent = '$' + data.summary.total_balance.toFixed(2);
-                        document.getElementById('open-positions').textContent = data.positions ? data.positions.length : 0;
-                    }
-                });
+                })
+                .catch(err => console.error('歷史載入失敗:', err));
         }
 
         function saveSettings() {
-            alert('設定已保存');
+            const settings = {
+                initialBalance: parseFloat(document.getElementById('initial-balance').value),
+                positionSize: parseFloat(document.getElementById('position-size').value),
+                confidenceThreshold: parseFloat(document.getElementById('confidence-threshold').value),
+                chartHeight: parseInt(document.getElementById('chart-height').value),
+                dataSource: document.getElementById('data-source').value,
+                defaultSymbol: document.getElementById('default-symbol').value,
+                defaultTimeframe: document.getElementById('default-timeframe').value || '1h',
+                updateInterval: parseInt(document.getElementById('update-interval').value) || 2
+            };
+
+            cookieManager.saveSettings(settings);
+
+            fetch('/api/trading/parameters', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    initial_balance: settings.initialBalance,
+                    position_size_percent: settings.positionSize / 100,
+                    confidence_threshold: settings.confidenceThreshold
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                alert('設定已保存');
+                refreshStatus();
+            })
+            .catch(err => console.error('保存失敗:', err));
         }
 
         function resetSettings() {
-            document.getElementById('default-symbol').value = 'BTCUSDT';
-            document.getElementById('default-timeframe').value = '15m';
-            document.getElementById('min-candles').value = 50;
-            document.getElementById('initial-balance').value = 10000;
+            cookieManager.resetToDefaults();
+            loadSettingsFromCookies();
             alert('已恢復預設設定');
         }
 
-        window.addEventListener('load', () => {
-            refreshStatus();
-        });
+        function resetTrading() {
+            if (!confirm('確定要重置所有交易嗎?此操作無法復原。')) return;
+            
+            fetch('/api/trading/reset', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    initial_balance: parseFloat(document.getElementById('initial-balance').value)
+                })
+            })
+            .then(r => r.json())
+            .then(data => {
+                alert('交易已重置');
+                refreshStatus();
+            })
+            .catch(err => console.error('重置失敗:', err));
+        }
+
+        function clearCookies() {
+            if (!confirm('確定要清除所有快取嗎?')) return;
+            cookieManager.clearAllSettings();
+            alert('快取已清除');
+            location.reload();
+        }
+
+        function exportSettings() {
+            const settings = cookieManager.getAllSettings();
+            const json = JSON.stringify(settings, null, 2);
+            const blob = new Blob([json], { type: 'application/json' });
+            const url = URL.createObjectURL(blob);
+            const a = document.createElement('a');
+            a.href = url;
+            a.download = 'trading_settings.json';
+            a.click();
+            URL.revokeObjectURL(url);
+        }
+
+        function openAutoTradingModal() {
+            fetch('/api/trading/auto-trading/status')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.parameters) {
+                        document.getElementById('modal-confidence-threshold').textContent = (data.parameters.confidence_threshold * 100).toFixed(0) + '%';
+                        document.getElementById('modal-initial-balance').textContent = '$' + data.parameters.initial_balance.toFixed(2);
+                        document.getElementById('modal-position-size').textContent = (data.parameters.position_size_percent * 100).toFixed(0) + '%';
+                    }
+                    document.getElementById('autoTradingModal').style.display = 'block';
+                })
+                .catch(err => console.error('狀態載入失敗:', err));
+        }
+
+        function closeAutoTradingModal() {
+            document.getElementById('autoTradingModal').style.display = 'none';
+        }
+
+        window.onclick = function(event) {
+            const modal = document.getElementById('autoTradingModal');
+            if (event.target === modal) {
+                modal.style.display = 'none';
+            }
+        };
 
         window.addEventListener('beforeunload', () => {
             stopAutoFetch();
