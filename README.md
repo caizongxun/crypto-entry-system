@@ -1,253 +1,262 @@
-# Crypto Entry System
+# Crypto Entry System - Strategy V3
 
-Advanced machine learning system for identifying Bollinger Band bounce trading opportunities in cryptocurrency markets using multi-timeframe analysis and automatic hyperparameter optimization.
+Advanced machine learning-based cryptocurrency entry signal system using XGBoost multi-output regression with comprehensive technical indicators.
 
-## Overview
+## Features
 
-This project leverages gradient boosting models (XGBoost, LightGBM) combined with technical analysis to predict effective bounce entries when prices touch or break Bollinger Band boundaries. The system incorporates multi-timeframe feature engineering and automated hyperparameter optimization to maximize precision while maintaining adequate recall rates.
+### Core Capabilities
+- **Multi-Output Regression**: Simultaneous prediction of support levels, resistance levels, and breakout probability
+- **40+ Technical Indicators**: Comprehensive technical analysis including SMA, EMA, RSI, MACD, Bollinger Bands, Stochastic, ATR, and more
+- **Ensemble Learning**: XGBoost models for robust and accurate predictions
+- **Automated Signal Generation**: Buy/Sell signals with confidence scoring based on technical indicators
+- **Risk Management**: Built-in risk parameters for slippage and commission considerations
 
-## Key Features
-
-- **Multi-Timeframe Analysis**: Integrates higher timeframe context (1h, 4h) with base timeframe signals (15m, 1h)
-- **Advanced Feature Engineering**: 68 technical indicators including price action, momentum, and volatility metrics
-- **Automatic Feature Selection**: Identifies 25 most important features to reduce noise and improve model precision
-- **Hyperparameter Optimization**: Bayesian optimization using Optuna to find optimal model parameters
-- **Balanced Optimization**: Customizable optimization profiles (conservative, balanced, aggressive)
-- **Real-Time Evaluation**: Current entry signal assessment with bounce probability estimates
-
-## System Architecture
-
-```
-models/
-  ml_model.py                  - Core ML model with training pipeline
-  feature_engineer.py          - Technical indicator calculation
-  multi_timeframe_engineer.py  - Cross-timeframe feature integration
-  feature_selector.py          - Automated feature selection module
-  hyperparameter_optimizer.py  - Bayesian optimization engine
-  signal_evaluator.py          - Signal quality evaluation
-  config.py                    - Configuration management
-  cache/                       - Model artifacts and optimization results
-
-main.py          - Production training and inference
-main_v2.py       - Hyperparameter optimization experiments
-README.md        - Documentation
-```
+### Training Modes
+- **train**: Train models on historical data with automatic train/test splitting
+- **predict**: Generate real-time signals on latest market data
+- **backtest**: Evaluate strategy performance on unseen test data
 
 ## Installation
 
-Requirements:
-- Python 3.8 or higher
-- pandas >= 1.3.0
-- numpy >= 1.21.0
-- scikit-learn >= 1.0.0
-- xgboost >= 1.5.0
-- lightgbm >= 3.3.0
-- optuna >= 3.0.0 (for optimization)
-- imbalanced-learn >= 0.8.0 (for SMOTE)
-
-Setup:
-
 ```bash
+# Clone the repository
 git clone https://github.com/caizongxun/crypto-entry-system.git
 cd crypto-entry-system
-python -m venv .venv
-source .venv/bin/activate  # Linux/Mac
-.venv\Scripts\activate     # Windows
+
+# Install dependencies
 pip install -r requirements.txt
 ```
 
-## Usage Guide
+## Dependencies
 
-### Production Training
+- Python 3.8+
+- pandas >= 2.0.0
+- numpy >= 1.24.0
+- scikit-learn >= 1.3.0
+- xgboost >= 2.0.0
+- loguru >= 0.7.0
+- huggingface-hub >= 0.16.0
+- pyarrow >= 12.0.0
 
-Train model with balanced default parameters:
+## Quick Start
 
-```bash
-python main.py --train --symbol BTCUSDT --timeframe 15m --model-type xgboost --opt balanced
-```
-
-Evaluate current trading signals:
-
-```bash
-python main.py --eval --symbol BTCUSDT --timeframe 15m
-```
-
-### Hyperparameter Optimization
-
-Find optimal hyperparameters using Bayesian optimization (50 trials):
+### 1. Train Models
 
 ```bash
-python main_v2.py --mode optimize --symbol BTCUSDT --timeframe 15m --model-type xgboost --n-trials 50
+python main_v3.py --mode train --symbol BTCUSDT --timeframe 15m --verbose
 ```
 
-Train using optimized parameters:
+This will:
+- Download OHLCV data from HuggingFace dataset
+- Engineer 40+ technical indicators
+- Train XGBoost models for support, resistance, and breakout prediction
+- Save models to `./models/v3/`
+- Generate training metrics
+
+### 2. Generate Signals
 
 ```bash
-python main_v2.py --mode train --symbol BTCUSDT --timeframe 15m --model-type xgboost \
-  --results-path models/cache/optimization/BTCUSDT_15m_xgboost_results.json
+python main_v3.py --mode predict --symbol BTCUSDT --timeframe 15m --verbose
 ```
 
-Compare performance across optimization levels:
+This will:
+- Load latest market data
+- Generate real-time trading signals
+- Display signal summary and recent signals
+- Save signals to `./results/v3/`
+
+### 3. Backtest Strategy
 
 ```bash
-python main_v2.py --mode compare --symbol BTCUSDT --timeframe 15m --model-type xgboost
+python main_v3.py --mode backtest --symbol BTCUSDT --timeframe 15m --verbose
 ```
 
-## Model Performance
+This will:
+- Load market data and split into train/test sets
+- Generate predictions on unseen test data
+- Evaluate strategy performance
+- Save backtest results
 
-Current performance on BTCUSDT 15m (with feature selection and improved bounce criteria):
+## Project Structure
 
-| Metric | Train | Test |
-|--------|-------|------|
-| Accuracy | 84.30% | 82.88% |
-| Precision | 74.24% | 72.41% |
-| Recall | 80.99% | 78.58% |
-| F1 Score | 0.7745 | 0.7546 |
-
-Expected trading profitability (assuming 2% win / 1% loss ratio):
-- Win Rate: 72.41%
-- Expected Return per Trade: 1.17%
-- Monthly Return (20 trades): 23.4%
+```
+crypto-entry-system/
+├── strategy_v3/
+│   ├── __init__.py              # Package initialization
+│   ├── config.py                # Configuration dataclasses
+│   ├── data_loader.py           # OHLCV data loading and preprocessing
+│   ├── feature_engineer.py      # Technical indicator computation
+│   ├── models.py                # XGBoost ensemble models
+│   └── signal_generator.py      # Trading signal generation
+├── main_v3.py                   # Main entry point
+├── requirements.txt             # Project dependencies
+├── README.md                    # This file
+├── models/v3/                   # Saved trained models
+├── results/v3/                  # Generated signals and results
+└── data_cache/                  # Cached OHLCV data
+```
 
 ## Configuration
 
-Model hyperparameters configured in `models/config.py`:
+All configuration is managed through `StrategyConfig` dataclasses in `strategy_v3/config.py`:
+
+### Technical Indicators Configuration
+```python
+config.indicators.sma_short = 10
+config.indicators.rsi_period = 14
+config.indicators.bb_period = 20
+config.indicators.macd_fast = 12
+```
+
+### Model Configuration
+```python
+config.model.max_depth = 6
+config.model.learning_rate = 0.05
+config.model.n_estimators = 200
+```
+
+### Signal Generation Thresholds
+```python
+config.signals.min_confidence = 0.40
+config.signals.buy_signal_threshold = 0.45
+config.signals.sell_signal_threshold = 0.45
+```
+
+### Predefined Configurations
 
 ```python
-TIMEFRAME_CONFIGS = {
-    '15m': {
-        'bb_period': 20,
-        'bb_std': 2.0,
-        'lookforward': 5,
-        'bounce_threshold': 0.005,
-    },
-    '1h': {...},
-}
+# Conservative (higher confidence, fewer signals)
+config = StrategyConfig.get_conservative()
+
+# Aggressive (lower confidence, more signals)
+config = StrategyConfig.get_aggressive()
+
+# Default (balanced)
+config = StrategyConfig.get_default()
 ```
 
-Optimization levels adjust bounce criteria and ensemble settings:
-- **Conservative**: Ensemble model, stricter criteria, higher precision
-- **Balanced**: Single optimized model, standard criteria, 72-73% precision
-- **Aggressive**: Relaxed criteria, maximum trades, requires strict risk management
+## Technical Indicators
 
-## Optimization Workflow
+The system computes 40+ technical indicators:
 
-### Step 1: Run Optimization
-Let Optuna search for best hyperparameters across 50 trials:
-```bash
-python main_v2.py --mode optimize --symbol BTCUSDT --timeframe 15m --n-trials 50
+### Trend Indicators
+- Simple Moving Averages (SMA): 10, 20, 50 periods
+- Exponential Moving Averages (EMA): 12, 26 periods
+- MACD (Moving Average Convergence Divergence)
+
+### Momentum Indicators
+- RSI (Relative Strength Index)
+- Stochastic Oscillator (%K, %D)
+- MACD Histogram
+
+### Volatility Indicators
+- Bollinger Bands (position, width)
+- ATR (Average True Range)
+
+### Support/Resistance
+- Dynamic support (20-period rolling minimum)
+- Dynamic resistance (20-period rolling maximum)
+
+### Candlestick Patterns
+- High-Low ratio
+- Open-Close ratio
+- Upper/Lower shadows
+- Body size
+
+### Volume Analysis
+- Volume SMA
+- Volume ratio
+- Volume change
+
+## Model Architecture
+
+### Support & Resistance Models
+- **Target**: Predicted support/resistance levels for next 5 candles
+- **Type**: XGBoost Regressor
+- **Output**: Continuous price levels
+- **Metrics**: RMSE, MAE, R²
+
+### Breakout Model
+- **Target**: Probability of price breakout within 5 candles
+- **Type**: XGBoost Regressor
+- **Output**: Probability [0, 1]
+- **Metrics**: RMSE, MAE, R²
+
+## Signal Generation Logic
+
+### Buy Signal Confidence
+Calculated from:
+1. **RSI Component** (25%): Low RSI indicates oversold
+2. **MACD Component** (25%): Positive momentum
+3. **Bollinger Bands** (25%): Price near lower band
+4. **ATR Component** (25%): Increasing volatility
+
+### Sell Signal Confidence
+Calculated from:
+1. **RSI Component** (25%): High RSI indicates overbought
+2. **MACD Component** (25%): Negative momentum
+3. **Bollinger Bands** (25%): Price near upper band
+4. **ATR Component** (25%): Increasing volatility
+
+### Signal Rules
+- **BUY**: Confidence > threshold AND Price > Support AND Buy > Sell
+- **SELL**: Confidence > threshold AND Price < Resistance AND Sell > Buy
+- **HOLD**: Otherwise
+
+## Output Files
+
+### Training Results
+```
+results/v3/{SYMBOL}_{TIMEFRAME}_training_results.csv
+- model: Model name (support, resistance, breakout)
+- rmse: Root Mean Square Error
+- mae: Mean Absolute Error
+- r2: R² score
 ```
 
-Results saved to: `models/cache/optimization/BTCUSDT_15m_xgboost_results.json`
-
-### Step 2: Review Results
-Examine the generated JSON file to verify:
-- Best score achieved
-- Optimal parameters (max_depth, learning_rate, n_estimators)
-- Train/test precision and recall metrics
-
-### Step 3: Train with Optimized Parameters
-Train model using discovered optimal hyperparameters:
-```bash
-python main_v2.py --mode train --results-path models/cache/optimization/BTCUSDT_15m_xgboost_results.json
+### Prediction Signals
+```
+results/v3/{SYMBOL}_{TIMEFRAME}_latest_signals.csv
+- open, high, low, close, volume: OHLCV data
+- support, resistance: Predicted levels
+- breakout_prob: Breakout probability
+- buy_confidence, sell_confidence: Signal confidence scores
+- signal_type: BUY/SELL/HOLD
 ```
 
-### Step 4: Validate Performance
-Use production script to evaluate on real data:
-```bash
-python main.py --eval --symbol BTCUSDT --timeframe 15m
+### Backtest Results
+```
+results/v3/{SYMBOL}_{TIMEFRAME}_backtest_signals.csv
+- Same format as prediction signals
+- Generated on test data (30% of total)
 ```
 
-## Feature Engineering
+## Performance Tips
 
-**Base Features (36)**:
-- Price action: SMA, EMA, momentum
-- Oscillators: RSI, MACD, Stochastic
-- Volatility: ATR, Bollinger Bands width
-- Volume: OBV, volume momentum
+1. **Data Quality**: Ensure continuous, high-quality OHLCV data
+2. **Hyperparameter Tuning**: Adjust model parameters in `config.py` for your market
+3. **Signal Tuning**: Modify thresholds for buy/sell confidence based on risk tolerance
+4. **Regular Retraining**: Retrain models regularly with fresh data
+5. **Symbol Selection**: Works best on liquid cryptocurrencies (BTC, ETH, etc.)
 
-**Multi-Timeframe Features (32)**:
-- Timeframe confirmation using RSI alignment
-- Trend alignment via SMA comparison
-- Volatility context detection
-- Momentum divergence analysis
+## Supported Symbols & Timeframes
 
-**Selected Features (25)**:
-Automatic feature selection identifies most predictive features, reducing from 68 to 25 dimensions.
+**Symbols**: BTCUSDT, ETHUSDT, BNBUSDT, XRPUSDT, etc.
 
-## Data Requirements
+**Timeframes**: 15m, 1h, 1d (configurable, based on available data)
 
-- Minimum 6 months historical OHLCV data for training
-- Format: Open, High, Low, Close, Volume, Timestamp
-- Supported sources:
-  - Binance Futures API
-  - Local parquet files
+## Contributing
 
-## Risk Management
-
-Before production deployment:
-
-1. Backtest on out-of-sample data (different time periods)
-2. Start with position sizes 1-2% of account
-3. Implement stop-loss at 1% loss threshold
-4. Monitor model performance weekly
-5. Reoptimize monthly with fresh data
-6. Account for 0.1-0.2% transaction costs
-7. Use position sizing appropriate to risk tolerance
-
-## Development Practices
-
-- All source files modified in-place (no version files)
-- Optimization results saved to `models/cache/optimization/`
-- Results tracked with JSON metadata for reproducibility
-- Main production entry point remains `main.py`
-- Experimental optimizations use `main_v2.py`
-- All code and documentation free of emojis or symbols
-
-## Troubleshooting
-
-**Model precision not improving**:
-- Verify feature engineering output
-- Check data integrity (no gaps, outliers)
-- Increase optimization trials to 100
-- Try alternative timeframes
-
-**Memory constraints**:
-- Reduce historical data window
-- Lower SMOTE sampling ratio
-- Disable multi-timeframe features temporarily
-
-**Optuna library missing**:
-```bash
-pip install optuna
-```
-
-## Performance Tuning
-
-To improve precision:
-
-1. Increase optimization trials: `--n-trials 100`
-2. Tighten bounce criteria: Lower `bounce_threshold` in config
-3. Reduce feature dimensions: Select top 20 features only
-4. Use ensemble: Set optimization level to conservative
-5. Add domain-specific features: Extend feature engineering
-
-## References
-
-System based on established quantitative trading practices:
-- Multi-timeframe technical analysis principles
-- Machine learning model selection and optimization
-- Proper backtesting and performance evaluation methodology
+Contributions are welcome! Please feel free to submit issues or pull requests.
 
 ## License
 
-Private project for quantitative trading research.
+MIT License - See LICENSE file for details
 
-## Repository Maintenance
+## Disclaimer
 
-Maintain professional structure:
-- Clean commit history with descriptive messages
-- No experimental branches in main repository
-- Documentation kept current with code changes
-- Results tracked in dedicated cache directory
-- Consistent code style and naming conventions
+This system is for educational and research purposes. Use at your own risk. Always conduct thorough backtesting and validation before using in live trading.
+
+## Contact
+
+For questions or support, please open an issue on GitHub.
