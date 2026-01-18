@@ -35,13 +35,15 @@ class CryptoEntryModel:
 
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
                  model_type: str = 'xgboost', optimization_level: str = 'balanced',
-                 use_multi_timeframe: bool = True, use_feature_selection: bool = True):
+                 use_multi_timeframe: bool = True, use_feature_selection: bool = True,
+                 enable_debug: bool = False):
         self.symbol = symbol
         self.timeframe = timeframe
         self.model_type = model_type
         self.optimization_level = optimization_level
         self.use_multi_timeframe = use_multi_timeframe
         self.use_feature_selection = use_feature_selection
+        self.enable_debug = enable_debug
         
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
@@ -68,6 +70,8 @@ class CryptoEntryModel:
         self.model = None
         self.ensemble_models = None
         self.model_path = Path(__file__).parent / f"cache/{symbol}_{timeframe}_{model_type}.joblib"
+        
+        self.debug_info = {}
 
     def _apply_optimization_config(self):
         """Apply optimization-specific configuration."""
@@ -303,6 +307,10 @@ class CryptoEntryModel:
         print(f"Timeframe: {self.timeframe}")
         print(f"Effective bounces: {(y == 1).sum()}, Ineffective: {(y == 0).sum()}")
         print(f"Bounce rate: {(y == 1).sum() / len(y) * 100:.2f}%")
+        
+        self.debug_info['raw_positive_count'] = (y == 1).sum()
+        self.debug_info['raw_negative_count'] = (y == 0).sum()
+        self.debug_info['raw_bounce_rate'] = (y == 1).sum() / len(y) * 100
 
         return X, y, feature_cols
 
@@ -313,9 +321,21 @@ class CryptoEntryModel:
             return X, feature_names
         
         print("\nApplying feature selection...")
+        print(f"Selecting top 25 features using random forest importance...")
         X_selected, selected_names = self.feature_selector.select_by_random_forest(X, y, feature_names)
         self.selected_feature_names = selected_names
+        print(f"Selected {len(selected_names)} features\n")
+        
+        if self.enable_debug:
+            print("Top selected features:")
+            for i, feat in enumerate(selected_names[:10], 1):
+                print(f"  {i}. {feat}")
+        
         print(f"Reduced from {len(feature_names)} to {len(selected_names)} features\n")
+        
+        self.debug_info['original_feature_count'] = len(feature_names)
+        self.debug_info['selected_feature_count'] = len(selected_names)
+        
         return X_selected, selected_names
 
     def _apply_smote(self, X: np.ndarray, y: np.ndarray) -> Tuple[np.ndarray, np.ndarray]:
@@ -336,6 +356,12 @@ class CryptoEntryModel:
             print(f"Borderline-SMOTE completed: {X_smote.shape[0]} samples (from {X.shape[0]})")
             print(f"Class distribution: {(y_smote == 0).sum()} negative, {(y_smote == 1).sum()} positive")
             print(f"Note: Borderline-SMOTE generates fewer samples near decision boundary to reduce noise.")
+            
+            self.debug_info['smote_original_samples'] = X.shape[0]
+            self.debug_info['smote_augmented_samples'] = X_smote.shape[0]
+            self.debug_info['smote_augmentation_ratio'] = X_smote.shape[0] / X.shape[0]
+            self.debug_info['smote_synthetic_positive'] = (y_smote == 1).sum() - (y == 1).sum()
+            
             return X_smote, y_smote
         except Exception as e:
             print(f"SMOTE error: {str(e)}. Continuing without SMOTE.")
@@ -365,6 +391,15 @@ class CryptoEntryModel:
         self.X_test = self.scaler.transform(X_test)
         self.y_train = y_train
         self.y_test = y_test
+        
+        self.debug_info['train_set_size'] = len(X_train)
+        self.debug_info['test_set_size'] = len(X_test)
+        self.debug_info['train_positive'] = (y_train == 1).sum()
+        self.debug_info['train_negative'] = (y_train == 0).sum()
+        self.debug_info['test_positive'] = (y_test == 1).sum()
+        self.debug_info['test_negative'] = (y_test == 0).sum()
+        self.debug_info['train_positive_ratio'] = (y_train == 1).sum() / len(y_train) * 100
+        self.debug_info['test_positive_ratio'] = (y_test == 1).sum() / len(y_test) * 100
 
         print(f"Training {self.model_type} model for {self.timeframe}...")
         print(f"Hyperparameters: {self.hyperparams}")
@@ -422,10 +457,20 @@ class CryptoEntryModel:
         test_precision = self._calculate_precision(predictions_test, self.y_test)
         train_recall = self._calculate_recall(predictions_train, self.y_train)
         test_recall = self._calculate_recall(predictions_test, self.y_test)
+        
+        train_f1 = 2 * (train_precision * train_recall) / (train_precision + train_recall) if (train_precision + train_recall) > 0 else 0
+        test_f1 = 2 * (test_precision * test_recall) / (test_precision + test_recall) if (test_precision + test_recall) > 0 else 0
 
         print(f"Model training completed for {self.timeframe}:")
         print(f"  Train accuracy: {train_score:.4f}, Precision: {train_precision:.4f}, Recall: {train_recall:.4f}")
         print(f"  Test accuracy: {test_score:.4f}, Precision: {test_precision:.4f}, Recall: {test_recall:.4f}")
+        
+        self.debug_info['train_predictions_positive'] = (predictions_train == 1).sum()
+        self.debug_info['train_predictions_negative'] = (predictions_train == 0).sum()
+        self.debug_info['test_predictions_positive'] = (predictions_test == 1).sum()
+        self.debug_info['test_predictions_negative'] = (predictions_test == 0).sum()
+        self.debug_info['train_f1'] = train_f1
+        self.debug_info['test_f1'] = test_f1
 
         self.save_model()
 
@@ -436,12 +481,15 @@ class CryptoEntryModel:
             'test_precision': test_precision,
             'train_recall': train_recall,
             'test_recall': test_recall,
+            'train_f1': train_f1,
+            'test_f1': test_f1,
             'model_type': self.model_type,
             'symbol': self.symbol,
             'timeframe': self.timeframe,
             'optimization': self.optimization_level,
             'multi_timeframe': self.use_multi_timeframe,
             'feature_selection': self.use_feature_selection,
+            'feature_count': len(feature_names),
         }
 
     def _train_ensemble(self):
@@ -623,5 +671,6 @@ class CryptoEntryModel:
                 'path': str(self.model_path) if self.model_path else None,
                 'multi_timeframe': self.use_multi_timeframe,
                 'feature_selection': self.use_feature_selection,
-            }
+            },
+            'debug_info': self.debug_info if self.enable_debug else {}
         }
