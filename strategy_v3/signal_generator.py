@@ -1,365 +1,205 @@
 """
-Trading Signal Generation based on ML predictions and technical analysis
+Signal generator module for Strategy V3.
+
+Combines model predictions with technical indicators to generate trading signals.
 """
 
-import logging
-from typing import Dict, List, Tuple, Optional
 import pandas as pd
 import numpy as np
-from dataclasses import dataclass
-
-from .config import Config, SignalConfig
-
-
-logger = logging.getLogger(__name__)
-
-
-@dataclass
-class TradeSignal:
-    """Represents a trading signal"""
-    timestamp: pd.Timestamp
-    signal_type: str  # 'BUY', 'SELL', 'NONE'
-    confidence: float  # 0.0 to 1.0
-    entry_price: float
-    support_level: float
-    resistance_level: float
-    stop_loss: float
-    take_profit: float
-    reasoning: str
-    atr_value: float
-    
-    def __repr__(self):
-        return f"Signal({self.signal_type}, conf={self.confidence:.2f}, entry={self.entry_price:.2f}, SL={self.stop_loss:.2f}, TP={self.take_profit:.2f})"
+from typing import Dict, List, Tuple
+from loguru import logger
 
 
 class SignalGenerator:
-    """Generate trading signals from ML predictions and technical indicators"""
-    
-    def __init__(self, config: Config):
+    """
+    Generates trading signals based on model predictions and technical indicators.
+    """
+
+    def __init__(self, config):
         """
-        Initialize SignalGenerator
-        
+        Initialize SignalGenerator.
+
         Args:
-            config: Configuration object
+            config: StrategyConfig object
         """
-        self.config = config
-        self.signal_config = config.signal
-        self.signals = []
-    
+        self.cfg = config
+        self.signal_cfg = config.signals
+        self.indicator_cfg = config.indicators
+        self.verbose = config.verbose
+
     def generate_signals(
         self,
         df: pd.DataFrame,
-        predictions: np.ndarray,
-        current_price: float
-    ) -> List[TradeSignal]:
+        support: np.ndarray,
+        resistance: np.ndarray,
+        breakout_prob: np.ndarray
+    ) -> pd.DataFrame:
         """
-        Generate trading signals based on ML predictions and technical indicators
-        
+        Generate trading signals.
+
         Args:
-            df: DataFrame with OHLCV and technical indicators
-            predictions: Array of model predictions (support, resistance, breakout_prob)
-            current_price: Current market price
-            
+            df: OHLCV DataFrame with technical indicators
+            support: Predicted support levels
+            resistance: Predicted resistance levels
+            breakout_prob: Predicted breakout probability (0-1)
+
         Returns:
-            List of trading signals
+            DataFrame with signals
         """
-        signals = []
-        
-        # Get latest bar
-        latest = df.iloc[-1]
-        timestamp = df.index[-1]
-        
-        # Unpack predictions
-        support_pred = predictions[-1, 0]
-        resistance_pred = predictions[-1, 1]
-        breakout_prob = predictions[-1, 2]  # Should be 0-1
-        
-        # Get technical indicators
-        rsi = latest.get('rsi', 50)
-        atr = latest.get('atr', 0)
-        macd = latest.get('macd', 0)
-        macd_signal = latest.get('macd_signal', 0)
-        macd_crossover = latest.get('macd_crossover', 0)
-        
-        # Normalize breakout probability to 0-1 if needed
-        breakout_prob = np.clip(float(breakout_prob), 0.0, 1.0)
-        
-        # Calculate position targets
-        stop_loss = support_pred * (1 - self.signal_config.stop_loss_atr_multiplier * atr / current_price) if atr > 0 else support_pred
-        take_profit = resistance_pred * (1 + self.signal_config.take_profit_atr_multiplier * atr / current_price) if atr > 0 else resistance_pred
-        
-        # Generate buy signal
-        buy_signal, buy_confidence = self._generate_buy_signal(
-            current_price,
-            support_pred,
-            resistance_pred,
-            breakout_prob,
-            rsi,
-            macd,
-            macd_signal,
-            macd_crossover
+        signals_df = df.copy()
+        signals_df['support'] = support
+        signals_df['resistance'] = resistance
+        signals_df['breakout_prob'] = breakout_prob
+
+        # Calculate signal components
+        signals_df['price_to_support_dist'] = (signals_df['close'] - signals_df['support']) / signals_df['support']
+        signals_df['price_to_resistance_dist'] = (signals_df['resistance'] - signals_df['close']) / signals_df['resistance']
+
+        # Generate raw signals
+        signals_df['buy_signal_raw'] = self._generate_buy_signal(
+            signals_df
         )
-        
-        if buy_signal and buy_confidence >= self.signal_config.medium_confidence_threshold:
-            reasoning = self._build_reasoning('BUY', current_price, support_pred, breakout_prob, rsi)
-            
-            signal = TradeSignal(
-                timestamp=timestamp,
-                signal_type='BUY',
-                confidence=buy_confidence,
-                entry_price=current_price,
-                support_level=support_pred,
-                resistance_level=resistance_pred,
-                stop_loss=stop_loss,
-                take_profit=take_profit,
-                reasoning=reasoning,
-                atr_value=atr
-            )
-            signals.append(signal)
-            logger.info(f"Generated BUY signal: {signal}")
-        
-        # Generate sell signal
-        sell_signal, sell_confidence = self._generate_sell_signal(
-            current_price,
-            support_pred,
-            resistance_pred,
-            breakout_prob,
-            rsi,
-            macd,
-            macd_signal
+        signals_df['sell_signal_raw'] = self._generate_sell_signal(
+            signals_df
         )
-        
-        if sell_signal and sell_confidence >= self.signal_config.medium_confidence_threshold:
-            reasoning = self._build_reasoning('SELL', current_price, resistance_pred, breakout_prob, rsi)
-            
-            signal = TradeSignal(
-                timestamp=timestamp,
-                signal_type='SELL',
-                confidence=sell_confidence,
-                entry_price=current_price,
-                support_level=support_pred,
-                resistance_level=resistance_pred,
-                stop_loss=take_profit,  # Inverted for short
-                take_profit=stop_loss,
-                reasoning=reasoning,
-                atr_value=atr
-            )
-            signals.append(signal)
-            logger.info(f"Generated SELL signal: {signal}")
-        
-        self.signals.extend(signals)
-        return signals
-    
-    def _generate_buy_signal(
-        self,
-        current_price: float,
-        support: float,
-        resistance: float,
-        breakout_prob: float,
-        rsi: float,
-        macd: float,
-        macd_signal: float,
-        macd_crossover: int
-    ) -> Tuple[bool, float]:
+
+        # Calculate confidence scores
+        signals_df['buy_confidence'] = signals_df['buy_signal_raw']
+        signals_df['sell_confidence'] = signals_df['sell_signal_raw']
+
+        # Filter signals by minimum confidence
+        signals_df['buy_signal'] = (
+            (signals_df['buy_confidence'] >= self.signal_cfg.buy_signal_threshold) &
+            (signals_df['buy_confidence'] >= self.signal_cfg.min_confidence)
+        ).astype(int)
+        signals_df['sell_signal'] = (
+            (signals_df['sell_confidence'] >= self.signal_cfg.sell_signal_threshold) &
+            (signals_df['sell_confidence'] >= self.signal_cfg.min_confidence)
+        ).astype(int)
+
+        # Signal type
+        signals_df['signal_type'] = 'HOLD'
+        signals_df.loc[signals_df['buy_signal'] == 1, 'signal_type'] = 'BUY'
+        signals_df.loc[signals_df['sell_signal'] == 1, 'signal_type'] = 'SELL'
+
+        return signals_df
+
+    def _generate_buy_signal(self, df: pd.DataFrame) -> np.ndarray:
         """
-        Generate buy signal based on multiple conditions
-        
+        Calculate buy signal confidence.
+
         Args:
-            current_price: Current price
-            support: Predicted support level
-            resistance: Predicted resistance level
-            breakout_prob: Probability of breakout
-            rsi: RSI value
-            macd: MACD value
-            macd_signal: MACD signal line
-            macd_crossover: Whether MACD crossed above signal
-            
+            df: DataFrame with OHLCV and indicators
+
         Returns:
-            Tuple of (signal_triggered, confidence)
+            Confidence array (0-1)
         """
-        confidence = 0.0
-        conditions_met = 0
-        conditions_total = 0
-        
-        # Condition 1: Price near support (buy dip)
-        conditions_total += 1
-        if support > 0 and support * (1 + self.signal_config.support_resistance_tolerance) >= current_price >= support * (1 - self.signal_config.support_resistance_tolerance):
-            confidence += 0.3
-            conditions_met += 1
-        
-        # Condition 2: RSI oversold
-        conditions_total += 1
-        if rsi < self.signal_config.rsi_oversold:
-            confidence += 0.25
-            conditions_met += 1
-        
-        # Condition 3: MACD bullish crossover
-        conditions_total += 1
-        if macd_crossover == 1 or (macd > macd_signal and macd > 0):
-            confidence += 0.25
-            conditions_met += 1
-        
-        # Condition 4: Breakout probability high
-        conditions_total += 1
-        if breakout_prob > self.signal_config.breakout_probability_threshold:
-            confidence += 0.2
-            conditions_met += 1
-        
-        # Require at least 2 conditions met
-        trigger = conditions_met >= 2 and confidence >= self.signal_config.low_confidence_threshold
-        
-        return trigger, min(confidence, 1.0)
-    
-    def _generate_sell_signal(
-        self,
-        current_price: float,
-        support: float,
-        resistance: float,
-        breakout_prob: float,
-        rsi: float,
-        macd: float,
-        macd_signal: float
-    ) -> Tuple[bool, float]:
+        confidence = np.zeros(len(df))
+
+        # Component 1: Price near support (weight 0.25)
+        price_to_support_dist = (df['close'] - df['support']) / df['support']
+        support_proximity = 1.0 - np.clip(np.abs(price_to_support_dist) / 0.01, 0, 1)
+        confidence += support_proximity * self.signal_cfg.rsi_weight
+
+        # Component 2: RSI oversold (weight 0.25)
+        rsi_signal = np.where(
+            df['rsi'] < self.indicator_cfg.rsi_oversold,
+            (self.indicator_cfg.rsi_oversold - df['rsi']) / self.indicator_cfg.rsi_oversold,
+            0.0
+        )
+        confidence += rsi_signal * self.signal_cfg.macd_weight
+
+        # Component 3: MACD positive (weight 0.25)
+        macd_signal = np.where(
+            df['macd_histogram'] > 0,
+            np.clip(df['macd_histogram'] / (np.abs(df['macd_histogram']).max() + 1e-8), 0, 1),
+            0.0
+        )
+        confidence += macd_signal * self.signal_cfg.bb_weight
+
+        # Component 4: High breakout probability (weight 0.25)
+        confidence += df['breakout_prob'].values * self.signal_cfg.atr_weight
+
+        # Normalize to 0-1
+        confidence = np.clip(confidence / np.sum([
+            self.signal_cfg.rsi_weight,
+            self.signal_cfg.macd_weight,
+            self.signal_cfg.bb_weight,
+            self.signal_cfg.atr_weight
+        ]), 0, 1)
+
+        return confidence
+
+    def _generate_sell_signal(self, df: pd.DataFrame) -> np.ndarray:
         """
-        Generate sell signal based on multiple conditions
-        
+        Calculate sell signal confidence.
+
         Args:
-            current_price: Current price
-            support: Predicted support level
-            resistance: Predicted resistance level
-            breakout_prob: Probability of breakout
-            rsi: RSI value
-            macd: MACD value
-            macd_signal: MACD signal line
-            
+            df: DataFrame with OHLCV and indicators
+
         Returns:
-            Tuple of (signal_triggered, confidence)
+            Confidence array (0-1)
         """
-        confidence = 0.0
-        conditions_met = 0
-        conditions_total = 0
-        
-        # Condition 1: Price near resistance (take profit)
-        conditions_total += 1
-        if resistance > 0 and resistance * (1 + self.signal_config.support_resistance_tolerance) >= current_price >= resistance * (1 - self.signal_config.support_resistance_tolerance):
-            confidence += 0.3
-            conditions_met += 1
-        
-        # Condition 2: RSI overbought
-        conditions_total += 1
-        if rsi > self.signal_config.rsi_overbought:
-            confidence += 0.25
-            conditions_met += 1
-        
-        # Condition 3: MACD bearish signal (crossing below)
-        conditions_total += 1
-        if macd < macd_signal and macd < 0:
-            confidence += 0.25
-            conditions_met += 1
-        
-        # Condition 4: Low breakout probability
-        conditions_total += 1
-        if breakout_prob < (1 - self.signal_config.breakout_probability_threshold):
-            confidence += 0.2
-            conditions_met += 1
-        
-        # Require at least 2 conditions met
-        trigger = conditions_met >= 2 and confidence >= self.signal_config.low_confidence_threshold
-        
-        return trigger, min(confidence, 1.0)
-    
-    def _build_reasoning(self, signal_type: str, price: float, level: float, breakout_prob: float, rsi: float) -> str:
+        confidence = np.zeros(len(df))
+
+        # Component 1: Price near resistance (weight 0.25)
+        price_to_resistance_dist = (df['resistance'] - df['close']) / df['resistance']
+        resistance_proximity = 1.0 - np.clip(np.abs(price_to_resistance_dist) / 0.01, 0, 1)
+        confidence += resistance_proximity * self.signal_cfg.rsi_weight
+
+        # Component 2: RSI overbought (weight 0.25)
+        rsi_signal = np.where(
+            df['rsi'] > self.indicator_cfg.rsi_overbought,
+            (df['rsi'] - self.indicator_cfg.rsi_overbought) / (100 - self.indicator_cfg.rsi_overbought),
+            0.0
+        )
+        confidence += rsi_signal * self.signal_cfg.macd_weight
+
+        # Component 3: MACD negative (weight 0.25)
+        macd_signal = np.where(
+            df['macd_histogram'] < 0,
+            np.clip(np.abs(df['macd_histogram']) / (np.abs(df['macd_histogram']).max() + 1e-8), 0, 1),
+            0.0
+        )
+        confidence += macd_signal * self.signal_cfg.bb_weight
+
+        # Component 4: Low breakout probability (weight 0.25)
+        confidence += (1.0 - df['breakout_prob'].values) * self.signal_cfg.atr_weight
+
+        # Normalize to 0-1
+        confidence = np.clip(confidence / np.sum([
+            self.signal_cfg.rsi_weight,
+            self.signal_cfg.macd_weight,
+            self.signal_cfg.bb_weight,
+            self.signal_cfg.atr_weight
+        ]), 0, 1)
+
+        return confidence
+
+    def get_signal_summary(self, signals_df: pd.DataFrame) -> Dict[str, any]:
         """
-        Build reasoning text for signal
-        
+        Generate summary statistics from signals.
+
         Args:
-            signal_type: 'BUY' or 'SELL'
-            price: Current price
-            level: Support/Resistance level
-            breakout_prob: Breakout probability
-            rsi: RSI value
-            
+            signals_df: DataFrame with generated signals
+
         Returns:
-            Reasoning text
+            Dictionary with summary statistics
         """
-        parts = []
-        
-        if signal_type == 'BUY':
-            parts.append(f"Price {price:.2f} near support {level:.2f}")
-            if rsi < self.signal_config.rsi_oversold:
-                parts.append(f"RSI {rsi:.1f} shows oversold conditions")
-            parts.append(f"Breakout probability {breakout_prob:.1%}")
-        else:
-            parts.append(f"Price {price:.2f} near resistance {level:.2f}")
-            if rsi > self.signal_config.rsi_overbought:
-                parts.append(f"RSI {rsi:.1f} shows overbought conditions")
-            parts.append(f"Breakout probability {breakout_prob:.1%}")
-        
-        return "; ".join(parts)
-    
-    def get_signals_dataframe(self) -> pd.DataFrame:
-        """
-        Convert signals to DataFrame for analysis
-        
-        Returns:
-            DataFrame with all signals
-        """
-        if not self.signals:
-            return pd.DataFrame()
-        
-        data = {
-            'timestamp': [s.timestamp for s in self.signals],
-            'signal_type': [s.signal_type for s in self.signals],
-            'confidence': [s.confidence for s in self.signals],
-            'entry_price': [s.entry_price for s in self.signals],
-            'support_level': [s.support_level for s in self.signals],
-            'resistance_level': [s.resistance_level for s in self.signals],
-            'stop_loss': [s.stop_loss for s in self.signals],
-            'take_profit': [s.take_profit for s in self.signals],
-            'atr_value': [s.atr_value for s in self.signals],
+        total_signals = len(signals_df)
+        buy_signals = (signals_df['signal_type'] == 'BUY').sum()
+        sell_signals = (signals_df['signal_type'] == 'SELL').sum()
+        hold_periods = (signals_df['signal_type'] == 'HOLD').sum()
+
+        avg_buy_confidence = signals_df[signals_df['signal_type'] == 'BUY']['buy_confidence'].mean() if buy_signals > 0 else 0
+        avg_sell_confidence = signals_df[signals_df['signal_type'] == 'SELL']['sell_confidence'].mean() if sell_signals > 0 else 0
+
+        return {
+            'total_candles': total_signals,
+            'buy_signals': buy_signals,
+            'sell_signals': sell_signals,
+            'hold_periods': hold_periods,
+            'signal_density': (buy_signals + sell_signals) / total_signals if total_signals > 0 else 0,
+            'avg_buy_confidence': avg_buy_confidence,
+            'avg_sell_confidence': avg_sell_confidence,
         }
-        
-        return pd.DataFrame(data)
-    
-    def filter_signals_by_confidence(
-        self,
-        signals: List[TradeSignal],
-        min_confidence: float
-    ) -> List[TradeSignal]:
-        """
-        Filter signals by minimum confidence
-        
-        Args:
-            signals: List of signals
-            min_confidence: Minimum confidence threshold
-            
-        Returns:
-            Filtered signals
-        """
-        return [s for s in signals if s.confidence >= min_confidence]
-    
-    def get_signal_summary(self) -> str:
-        """
-        Get summary of generated signals
-        
-        Returns:
-            Formatted summary string
-        """
-        if not self.signals:
-            return "No signals generated"
-        
-        buy_signals = [s for s in self.signals if s.signal_type == 'BUY']
-        sell_signals = [s for s in self.signals if s.signal_type == 'SELL']
-        
-        avg_buy_conf = np.mean([s.confidence for s in buy_signals]) if buy_signals else 0
-        avg_sell_conf = np.mean([s.confidence for s in sell_signals]) if sell_signals else 0
-        
-        summary = "\n" + "="*60 + "\n"
-        summary += "SIGNAL SUMMARY\n"
-        summary += "="*60 + "\n"
-        summary += f"Total Signals: {len(self.signals)}\n"
-        summary += f"Buy Signals: {len(buy_signals)} (avg confidence: {avg_buy_conf:.2%})\n"
-        summary += f"Sell Signals: {len(sell_signals)} (avg confidence: {avg_sell_conf:.2%})\n"
-        summary += "="*60 + "\n"
-        
-        return summary
