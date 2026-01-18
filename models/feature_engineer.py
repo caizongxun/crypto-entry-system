@@ -2,14 +2,21 @@ import pandas as pd
 import numpy as np
 from typing import Dict, List, Tuple
 from models.config import TECHNICAL_INDICATORS_CONFIG
+from models.advanced_feature_engineer import AdvancedFeatureEngineer
 
 
 class FeatureEngineer:
-    """Calculate technical indicators and engineer features from OHLCV data."""
+    """Calculate technical indicators and engineer features from OHLCV data.
+    
+    Combines traditional technical indicators with advanced ML-optimized features:
+    - Technical indicators: SMA, EMA, RSI, MACD, Bollinger Bands, ATR, OBV
+    - Advanced features: Bounce failure memory, volume anomalies, reversal strength, time patterns
+    """
 
     def __init__(self, config: Dict = None):
         self.config = config or TECHNICAL_INDICATORS_CONFIG
         self.df = None
+        self.advanced_engineer = AdvancedFeatureEngineer()
 
     def calculate_sma(self, df: pd.DataFrame, period: int, column: str = 'close') -> pd.Series:
         """Calculate Simple Moving Average."""
@@ -188,7 +195,10 @@ class FeatureEngineer:
         return (fast_signal + medium_signal + slow_signal) / 3
 
     def engineer_features(self, df: pd.DataFrame) -> pd.DataFrame:
-        """Calculate all technical indicators and create feature matrix."""
+        """Calculate all technical indicators and create feature matrix.
+        
+        Includes both traditional technical indicators and advanced ML features.
+        """
         df_features = df.copy()
 
         sma_config = self.config.get('sma_fast', {})
@@ -240,6 +250,16 @@ class FeatureEngineer:
         df_features['momentum_divergence'] = self.calculate_momentum_divergence(df_features)
         df_features['volatility_acceleration'] = self.calculate_volatility_acceleration(df_features)
         df_features['multi_timeframe_strength'] = self.calculate_multi_timeframe_strength(df_features)
+        
+        # Add Bollinger Bands width and position (for BB bounce analysis)
+        df_features['bb_width'] = df_features['bb_upper'] - df_features['bb_lower']
+        df_features['bb_position'] = (df_features['close'] - df_features['bb_lower']) / (df_features['bb_width'] + 1e-6)
+        df_features['bb_position'] = df_features['bb_position'].clip(0, 1)
+        df_features['basis_slope'] = df_features['bb_middle'].diff()
+
+        # Apply advanced feature engineering
+        print("\nIntegrating advanced ML-optimized features...")
+        df_features = self.advanced_engineer.engineer_all_features(df_features)
 
         df_features = df_features.bfill().ffill()
         
@@ -254,12 +274,22 @@ class FeatureEngineer:
 
     def get_feature_names(self) -> List[str]:
         """Return list of engineered feature names."""
-        return [
+        technical_features = [
+            # Moving Averages
             'sma_fast', 'sma_medium', 'sma_slow', 'ema_fast', 'ema_slow',
-            'rsi', 'macd', 'macd_signal', 'macd_histogram',
-            'bb_upper', 'bb_middle', 'bb_lower', 'atr',
-            'momentum', 'volatility', 'obv', 'trend_strength',
-            'volume_momentum', 'price_position', 'volume_relative_strength',
-            'close_location', 'momentum_divergence', 'volatility_acceleration',
-            'multi_timeframe_strength'
+            # RSI and Momentum
+            'rsi', 'macd', 'macd_signal', 'macd_histogram', 'momentum',
+            # Bollinger Bands
+            'bb_upper', 'bb_middle', 'bb_lower', 'bb_width', 'bb_position', 'basis_slope',
+            # Volatility and Trend
+            'atr', 'volatility', 'trend_strength',
+            # Volume
+            'obv', 'volume_momentum', 'volume_relative_strength',
+            # Derivatives
+            'price_position', 'close_location', 'momentum_divergence', 'volatility_acceleration',
+            'multi_timeframe_strength',
         ]
+        
+        advanced_features = self.advanced_engineer.get_feature_list()
+        
+        return technical_features + advanced_features
