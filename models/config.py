@@ -100,22 +100,22 @@ TIMEFRAME_CONFIGS = {
     '15m': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'lookforward': 5,
-        'bounce_threshold': 0.005,
+        'lookforward': 24,
+        'bounce_threshold': 0.002,
         'model_type': 'xgboost',
     },
     '1h': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'lookforward': 4,
-        'bounce_threshold': 0.005,
+        'lookforward': 8,
+        'bounce_threshold': 0.003,
         'model_type': 'xgboost',
     },
     '1d': {
         'bb_period': 20,
         'bb_std': 2.0,
-        'lookforward': 3,
-        'bounce_threshold': 0.01,
+        'lookforward': 5,
+        'bounce_threshold': 0.005,
         'model_type': 'xgboost',
     },
 }
