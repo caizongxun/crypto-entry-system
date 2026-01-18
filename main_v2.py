@@ -1,6 +1,7 @@
 import argparse
 import sys
 from pathlib import Path
+import numpy as np
 
 from models.ml_model import CryptoEntryModel
 from models.hyperparameter_optimizer import HyperparameterOptimizer, OptimizationMetric
@@ -111,7 +112,8 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
         model_type=model_type,
         optimization_level=optimization_level,
         use_multi_timeframe=True,
-        use_feature_selection=True
+        use_feature_selection=True,
+        enable_debug=True
     )
 
     if results_path:
@@ -157,17 +159,38 @@ def train_with_optimized_params(symbol: str, timeframe: str, model_type: str,
             print(f"{key}: {value}")
     print("="*60)
     
-    overfitting_gap = training_results.get('train_precision', 0) - training_results.get('test_precision', 0)
-    print(f"\nOverfitting gap (Precision): {overfitting_gap:.4f}")
-    if overfitting_gap > 0.15:
-        print("WARNING: Overfitting detected. Consider:")
-        print("  - Reducing n_estimators")
-        print("  - Increasing regularization (reg_lambda, reg_alpha)")
-        print("  - Using fewer features")
-    elif overfitting_gap > 0.05:
-        print("NOTICE: Moderate overfitting present.")
+    train_precision = training_results.get('train_precision', 0)
+    test_precision = training_results.get('test_precision', 0)
+    train_recall = training_results.get('train_recall', 0)
+    test_recall = training_results.get('test_recall', 0)
+    
+    precision_gap = train_precision - test_precision
+    recall_gap = train_recall - test_recall
+    
+    print(f"\nOverfitting Analysis:")
+    print(f"  Precision gap (Train - Test): {precision_gap:.4f}")
+    print(f"  Recall gap (Train - Test): {recall_gap:.4f}")
+    print(f"  Train F1: {2 * (train_precision * train_recall) / (train_precision + train_recall):.4f}")
+    print(f"  Test F1: {2 * (test_precision * test_recall) / (test_precision + test_recall):.4f}")
+    
+    if precision_gap > 0.20:
+        print(f"\nWARNING: SEVERE overfitting - {precision_gap*100:.1f}% precision drop")
+        print(f"Possible causes:")
+        print(f"  - Borderline-SMOTE still generating too many synthetic samples")
+        print(f"  - Hyperparameters optimized on different data distribution")
+        print(f"  - Feature selection removing discriminative features")
+    elif precision_gap > 0.10:
+        print(f"\nWARNING: Moderate overfitting - {precision_gap*100:.1f}% precision drop")
+    elif precision_gap > 0.05:
+        print(f"\nNOTICE: Mild overfitting - {precision_gap*100:.1f}% precision drop")
     else:
-        print("GOOD: Model generalization is healthy.")
+        print(f"\nGOOD: Generalization healthy - {precision_gap*100:.1f}% precision drop")
+    
+    print(f"\nDiagnostics:")
+    print(f"  SMOTE Ratio: {model.smote_ratio}")
+    print(f"  Model Type: {model_type}")
+    print(f"  Use Feature Selection: {model.use_feature_selection}")
+    print()
 
     return training_results
 
