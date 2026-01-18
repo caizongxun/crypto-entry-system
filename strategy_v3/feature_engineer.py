@@ -37,18 +37,30 @@ class FeatureEngineer:
         """
         df = df.copy()
 
-        # Basic OHLCV features
-        df['hl_ratio'] = df['high'] / df['low']
-        df['oc_ratio'] = df['close'] / df['open']
-        df['log_return'] = np.log(df['close'] / df['close'].shift(1))
+        # Basic OHLCV features with safety checks
+        df['hl_ratio'] = np.where(df['low'] != 0, df['high'] / df['low'], 1.0)
+        df['oc_ratio'] = np.where(df['open'] != 0, df['close'] / df['open'], 1.0)
+        
+        # Log return with safety
+        close_shift = df['close'].shift(1)
+        df['log_return'] = np.where(
+            close_shift > 0,
+            np.log(df['close'] / close_shift),
+            0.0
+        )
+        
         df['price_range'] = df['high'] - df['low']
         df['body_size'] = np.abs(df['close'] - df['open'])
         df['upper_shadow'] = df['high'] - df[['open', 'close']].max(axis=1)
         df['lower_shadow'] = df[['open', 'close']].min(axis=1) - df['low']
 
-        # Volume features
+        # Volume features with safety
         df['volume_sma'] = df['volume'].rolling(window=20).mean()
-        df['volume_ratio'] = df['volume'] / df['volume_sma']
+        df['volume_ratio'] = np.where(
+            df['volume_sma'] > 0,
+            df['volume'] / df['volume_sma'],
+            1.0
+        )
         df['volume_change'] = df['volume'].pct_change()
 
         # Moving Averages
@@ -59,13 +71,22 @@ class FeatureEngineer:
         df['ema_short'] = df['close'].ewm(span=self.indicators_config.ema_short, adjust=False).mean()
         df['ema_long'] = df['close'].ewm(span=self.indicators_config.ema_long, adjust=False).mean()
 
-        # Moving average positions
-        df['price_vs_sma_short'] = (df['close'] - df['sma_short']) / df['sma_short']
-        df['price_vs_sma_long'] = (df['close'] - df['sma_long']) / df['sma_long']
+        # Moving average positions with safety
+        df['price_vs_sma_short'] = np.where(
+            df['sma_short'] > 0,
+            (df['close'] - df['sma_short']) / df['sma_short'],
+            0.0
+        )
+        df['price_vs_sma_long'] = np.where(
+            df['sma_long'] > 0,
+            (df['close'] - df['sma_long']) / df['sma_long'],
+            0.0
+        )
         df['sma_trend'] = np.where(df['sma_short'] > df['sma_long'], 1, -1)
 
         # RSI (Relative Strength Index)
         df['rsi'] = self._calculate_rsi(df['close'], self.indicators_config.rsi_period)
+        df['rsi'] = df['rsi'].fillna(50)  # Default to neutral if not available
         df['rsi_normalized'] = (df['rsi'] - 50) / 50
 
         # Bollinger Bands
@@ -73,8 +94,19 @@ class FeatureEngineer:
         df['bb_std'] = df['close'].rolling(window=self.indicators_config.bb_period).std()
         df['bb_upper'] = df['bb_middle'] + (self.indicators_config.bb_std_dev * df['bb_std'])
         df['bb_lower'] = df['bb_middle'] - (self.indicators_config.bb_std_dev * df['bb_std'])
-        df['bb_position'] = (df['close'] - df['bb_lower']) / (df['bb_upper'] - df['bb_lower'])
-        df['bb_width'] = (df['bb_upper'] - df['bb_lower']) / df['bb_middle']
+        
+        # Bollinger position with safety
+        bb_range = df['bb_upper'] - df['bb_lower']
+        df['bb_position'] = np.where(
+            bb_range > 0,
+            (df['close'] - df['bb_lower']) / bb_range,
+            0.5
+        )
+        df['bb_width'] = np.where(
+            df['bb_middle'] > 0,
+            (df['bb_upper'] - df['bb_lower']) / df['bb_middle'],
+            0.0
+        )
 
         # MACD
         ema_fast = df['close'].ewm(span=self.indicators_config.macd_fast, adjust=False).mean()
@@ -86,7 +118,11 @@ class FeatureEngineer:
 
         # ATR (Average True Range)
         df['atr'] = self._calculate_atr(df, self.indicators_config.atr_period)
-        df['atr_pct'] = df['atr'] / df['close']
+        df['atr_pct'] = np.where(
+            df['close'] > 0,
+            df['atr'] / df['close'],
+            0.0
+        )
 
         # Stochastic
         df['stoch_k'], df['stoch_d'] = self._calculate_stochastic(
@@ -108,6 +144,9 @@ class FeatureEngineer:
         df['roc_10'] = df['close'].pct_change(periods=10)
         df['momentum'] = df['close'] - df['close'].shift(10)
 
+        # Replace any infinity or extreme values
+        df = df.replace([np.inf, -np.inf], np.nan)
+        
         # Fill NaN values using new pandas API
         df = df.bfill()
         df = df.ffill()
@@ -130,8 +169,11 @@ class FeatureEngineer:
         delta = series.diff()
         gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
         loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
-        rs = gain / loss
+        
+        # Avoid division by zero
+        rs = np.where(loss > 0, gain / loss, 0)
         rsi = 100 - (100 / (1 + rs))
+        
         return rsi
 
     @staticmethod
@@ -153,6 +195,7 @@ class FeatureEngineer:
         ranges = pd.concat([high_low, high_close, low_close], axis=1)
         true_range = np.max(ranges, axis=1)
         atr = true_range.rolling(period).mean()
+        
         return atr
 
     @staticmethod
@@ -181,7 +224,15 @@ class FeatureEngineer:
         lowest_low = low.rolling(window=period).min()
         highest_high = high.rolling(window=period).max()
 
-        k_raw = 100 * (close - lowest_low) / (highest_high - lowest_low)
+        # Avoid division by zero
+        range_val = highest_high - lowest_low
+        k_raw = np.where(
+            range_val > 0,
+            100 * (close - lowest_low) / range_val,
+            50
+        )
+        
+        k_raw = pd.Series(k_raw, index=close.index)
         k = k_raw.rolling(window=smooth_k).mean()
         d = k.rolling(window=smooth_d).mean()
 
