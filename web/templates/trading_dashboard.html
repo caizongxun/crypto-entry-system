@@ -3,713 +3,955 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AI交易机器人</title>
-    <script src="https://s3.tradingview.com/tv.js"></script>
+    <title>加密货币交易分析系统</title>
     <style>
+        :root {
+            --color-bg-primary: #0a0e27;
+            --color-bg-secondary: #1a1f3a;
+            --color-bg-tertiary: #252d47;
+            --color-text-primary: #e4e8f0;
+            --color-text-secondary: #a8afc3;
+            --color-border: #3a4257;
+            --color-accent-blue: #667eea;
+            --color-accent-purple: #764ba2;
+            --color-success: #48bb78;
+            --color-warning: #ed8936;
+            --color-danger: #f56565;
+            --color-info: #4299e1;
+        }
+
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
         }
+
+        html, body {
+            font-family: 'Segoe UI', 'Microsoft YaHei', Tahoma, Geneva, Verdana, sans-serif;
+            background-color: var(--color-bg-primary);
+            color: var(--color-text-primary);
+            line-height: 1.6;
+        }
+
         body {
-            font-family: 'Segoe UI', Roboto, 'Microsoft YaHei', sans-serif;
-            background: #0a0e27;
-            color: #e0e8f0;
+            overflow-x: hidden;
         }
+
         .container {
-            display: grid;
-            grid-template-columns: 2fr 1.2fr;
-            gap: 20px;
-            padding: 20px;
-            max-width: 1920px;
-            margin: 0 auto;
+            display: flex;
+            height: 100vh;
         }
+
+        .sidebar {
+            width: 250px;
+            background-color: var(--color-bg-secondary);
+            border-right: 1px solid var(--color-border);
+            display: flex;
+            flex-direction: column;
+            overflow-y: auto;
+        }
+
+        .sidebar-header {
+            padding: 20px;
+            border-bottom: 1px solid var(--color-border);
+            background: linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-purple));
+            text-align: center;
+        }
+
+        .sidebar-header h1 {
+            font-size: 16px;
+            font-weight: 600;
+            margin-bottom: 5px;
+        }
+
+        .sidebar-header p {
+            font-size: 12px;
+            opacity: 0.9;
+        }
+
+        .sidebar-nav {
+            flex: 1;
+            padding: 10px 0;
+        }
+
+        .nav-item {
+            padding: 12px 20px;
+            cursor: pointer;
+            border-left: 3px solid transparent;
+            transition: all 0.3s;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+            color: var(--color-text-secondary);
+        }
+
+        .nav-item:hover {
+            background-color: var(--color-bg-tertiary);
+            color: var(--color-text-primary);
+        }
+
+        .nav-item.active {
+            border-left-color: var(--color-accent-blue);
+            background-color: var(--color-bg-tertiary);
+            color: var(--color-accent-blue);
+        }
+
+        .nav-item .icon {
+            font-size: 18px;
+        }
+
+        .sidebar-footer {
+            padding: 20px;
+            border-top: 1px solid var(--color-border);
+            background-color: var(--color-bg-tertiary);
+            text-align: center;
+            font-size: 12px;
+            color: var(--color-text-secondary);
+        }
+
+        .main-content {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            overflow: hidden;
+        }
+
         .header {
-            grid-column: 1 / -1;
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 24px;
-            border-radius: 12px;
-            margin-bottom: 4px;
+            background-color: var(--color-bg-secondary);
+            border-bottom: 1px solid var(--color-border);
+            padding: 15px 30px;
             display: flex;
             justify-content: space-between;
             align-items: center;
         }
-        .header-left h1 {
-            font-size: 28px;
-            margin-bottom: 8px;
-            font-weight: 700;
+
+        .header-title {
+            font-size: 20px;
+            font-weight: 600;
         }
-        .header-stats {
+
+        .header-status {
             display: flex;
-            gap: 32px;
-            font-size: 13px;
-            margin-top: 8px;
+            gap: 20px;
+            align-items: center;
         }
-        .header-stat {
+
+        .status-item {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-size: 14px;
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background-color: var(--color-success);
+        }
+
+        .content-area {
+            flex: 1;
+            overflow-y: auto;
+            padding: 20px 30px;
+        }
+
+        .tab-content {
+            display: none;
+        }
+
+        .tab-content.active {
+            display: block;
+        }
+
+        .card {
+            background-color: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
+            border-radius: 8px;
+            padding: 20px;
+            margin-bottom: 20px;
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            margin-bottom: 15px;
+            border-bottom: 1px solid var(--color-border);
+            padding-bottom: 10px;
+        }
+
+        .card-title {
+            font-size: 16px;
+            font-weight: 600;
+            color: var(--color-text-primary);
+        }
+
+        .card-subtitle {
+            font-size: 12px;
+            color: var(--color-text-secondary);
+        }
+
+        .button {
+            padding: 10px 20px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 14px;
+            font-weight: 500;
+            transition: all 0.3s;
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        .button-primary {
+            background: linear-gradient(135deg, var(--color-accent-blue), var(--color-accent-purple));
+            color: white;
+        }
+
+        .button-primary:hover {
+            opacity: 0.9;
+            transform: translateY(-2px);
+        }
+
+        .button-secondary {
+            background-color: var(--color-bg-tertiary);
+            color: var(--color-text-primary);
+            border: 1px solid var(--color-border);
+        }
+
+        .button-secondary:hover {
+            background-color: var(--color-border);
+        }
+
+        .button-success {
+            background-color: var(--color-success);
+            color: white;
+        }
+
+        .button-danger {
+            background-color: var(--color-danger);
+            color: white;
+        }
+
+        .input-group {
+            display: flex;
+            gap: 10px;
+            margin-bottom: 15px;
+            flex-wrap: wrap;
+        }
+
+        .input-field {
+            flex: 1;
+            min-width: 150px;
+        }
+
+        .input-label {
+            display: block;
+            font-size: 12px;
+            color: var(--color-text-secondary);
+            margin-bottom: 5px;
+            font-weight: 500;
+        }
+
+        .input-field input, .input-field select {
+            width: 100%;
+            padding: 10px;
+            background-color: var(--color-bg-tertiary);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            color: var(--color-text-primary);
+            font-family: inherit;
+            font-size: 14px;
+        }
+
+        .input-field input:focus, .input-field select:focus {
+            outline: none;
+            border-color: var(--color-accent-blue);
+            box-shadow: 0 0 0 3px rgba(102, 126, 234, 0.1);
+        }
+
+        .data-grid {
+            background-color: var(--color-bg-tertiary);
+            border: 1px solid var(--color-border);
+            border-radius: 6px;
+            overflow: hidden;
+        }
+
+        .data-row {
+            display: grid;
+            grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+            padding: 15px 20px;
+            border-bottom: 1px solid var(--color-border);
+            align-items: center;
+        }
+
+        .data-row:last-child {
+            border-bottom: none;
+        }
+
+        .data-cell {
             display: flex;
             flex-direction: column;
+            gap: 3px;
         }
-        .header-stat-label {
-            color: rgba(255, 255, 255, 0.7);
+
+        .data-label {
             font-size: 11px;
-            margin-bottom: 4px;
+            color: var(--color-text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .header-stat-value {
-            font-weight: 600;
-        }
-        .header-right {
-            text-align: right;
-            font-size: 13px;
-        }
-        .header-right-item {
-            margin-bottom: 8px;
-        }
-        .header-right-label {
-            color: rgba(255, 255, 255, 0.7);
-            font-size: 11px;
-        }
-        .header-right-value {
-            font-weight: 600;
-        }
-        .panel {
-            background: #1a1f3a;
-            border-radius: 12px;
-            padding: 16px;
-            border: 1px solid #2a3555;
-            box-shadow: 0 4px 6px rgba(0, 0, 0, 0.3);
-        }
-        .panel-title {
+
+        .data-value {
             font-size: 14px;
             font-weight: 600;
-            margin-bottom: 16px;
-            color: #fff;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+            color: var(--color-text-primary);
         }
-        .panel-title-right {
-            font-size: 12px;
-            color: #95a5a6;
-            font-weight: 400;
+
+        .value-positive {
+            color: var(--color-success);
         }
-        #chart-container {
-            background: #0a0e27;
-            border-radius: 8px;
-            height: 520px;
-            border: 1px solid #2a3555;
+
+        .value-negative {
+            color: var(--color-danger);
         }
-        .prediction-item {
-            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
-            padding: 12px;
-            margin-bottom: 10px;
-            border-radius: 8px;
-            border-left: 3px solid #667eea;
-            cursor: pointer;
-            transition: all 0.3s ease;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+
+        .value-neutral {
+            color: var(--color-info);
         }
-        .prediction-item:hover {
-            border-left-color: #764ba2;
-            transform: translateX(4px);
-        }
-        .prediction-item.buy {
-            border-left-color: #2ecc71;
-        }
-        .prediction-item.sell {
-            border-left-color: #e74c3c;
-        }
-        .pred-left {
-            flex: 1;
-        }
-        .pred-signal {
-            font-weight: 600;
-            font-size: 13px;
-            margin-bottom: 4px;
-        }
-        .pred-signal.buy {
-            color: #2ecc71;
-        }
-        .pred-signal.sell {
-            color: #e74c3c;
-        }
-        .pred-price {
-            font-size: 12px;
-            color: #95a5a6;
-        }
-        .pred-right {
-            text-align: right;
-        }
-        .pred-confidence {
-            font-weight: 600;
-            font-size: 12px;
-            color: #f1c40f;
-        }
-        .pred-bb-position {
-            font-size: 11px;
-            color: #95a5a6;
-            margin-top: 4px;
-        }
-        .button {
-            padding: 8px 12px;
-            background: #667eea;
-            color: white;
-            border: none;
-            border-radius: 6px;
-            cursor: pointer;
-            font-size: 12px;
-            font-weight: 500;
-            transition: all 0.3s ease;
-        }
-        .button:hover {
-            background: #764ba2;
-            transform: translateY(-2px);
-            box-shadow: 0 4px 8px rgba(102, 126, 234, 0.4);
-        }
-        .button.secondary {
-            background: #2a3555;
-            color: #e0e8f0;
-        }
-        .button.secondary:hover {
-            background: #3a4575;
-        }
-        .button.success {
-            background: #2ecc71;
-        }
-        .button.success:hover {
-            background: #27ae60;
-        }
-        .button.danger {
-            background: #e74c3c;
-        }
-        .button.danger:hover {
-            background: #c0392b;
-        }
-        .stats-grid {
+
+        .stats-container {
             display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 12px;
+            grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));
+            gap: 20px;
+            margin-bottom: 20px;
         }
+
         .stat-card {
-            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
-            padding: 12px;
+            background-color: var(--color-bg-secondary);
+            border: 1px solid var(--color-border);
             border-radius: 8px;
-            text-align: center;
-            border: 1px solid #3a4575;
-        }
-        .stat-label {
-            font-size: 11px;
-            color: #95a5a6;
-            margin-bottom: 6px;
-        }
-        .stat-value {
-            font-size: 18px;
-            font-weight: 700;
-            color: #2ecc71;
-        }
-        .stat-value.negative {
-            color: #e74c3c;
-        }
-        .control-panel {
-            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
-            padding: 12px;
-            border-radius: 8px;
-            border: 1px solid #3a4575;
-            margin-bottom: 16px;
-        }
-        .input-group {
-            margin-bottom: 10px;
-            display: flex;
-            gap: 8px;
-            align-items: center;
-        }
-        .input-group label {
-            min-width: 70px;
-            font-size: 12px;
-            color: #95a5a6;
-        }
-        input, select {
-            flex: 1;
-            padding: 6px 8px;
-            background: #0a0e27;
-            border: 1px solid #3a4575;
-            color: #e0e8f0;
-            border-radius: 4px;
-            font-size: 12px;
-        }
-        input:focus, select:focus {
-            outline: none;
-            border-color: #667eea;
-            box-shadow: 0 0 8px rgba(102, 126, 234, 0.3);
-        }
-        .account-section {
-            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
-            padding: 12px;
-            border-radius: 12px;
-            color: white;
-            margin-bottom: 16px;
-        }
-        .account-stat {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 8px;
-            font-size: 12px;
-        }
-        .account-stat-label {
-            opacity: 0.8;
-        }
-        .account-stat-value {
-            font-weight: 600;
-        }
-        .trades-grid {
-            max-height: 400px;
-            overflow-y: auto;
-        }
-        .trade-row {
-            background: linear-gradient(135deg, #1e2749 0%, #2a3555 100%);
-            padding: 10px;
-            border-radius: 6px;
-            margin-bottom: 8px;
-            border-left: 3px solid #2ecc71;
-            font-size: 12px;
-        }
-        .trade-row.loss {
-            border-left-color: #e74c3c;
-        }
-        .trade-row-header {
-            display: flex;
-            justify-content: space-between;
-            margin-bottom: 6px;
-        }
-        .trade-row-symbol {
-            font-weight: 600;
-            color: #e0e8f0;
-        }
-        .trade-row-type {
-            color: #95a5a6;
-            font-size: 11px;
-        }
-        .trade-row-profit {
-            font-weight: 600;
-        }
-        .trade-row-profit.gain {
-            color: #2ecc71;
-        }
-        .trade-row-profit.loss {
-            color: #e74c3c;
-        }
-        .trade-row-details {
-            font-size: 11px;
-            color: #95a5a6;
-            display: grid;
-            grid-template-columns: 1fr 1fr;
-            gap: 8px;
-        }
-        .side-panel {
+            padding: 20px;
             display: flex;
             flex-direction: column;
-            gap: 16px;
+            gap: 10px;
         }
-        .scroll-container {
-            overflow-y: auto;
-            max-height: 600px;
+
+        .stat-label {
+            font-size: 12px;
+            color: var(--color-text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
         }
-        .scroll-container::-webkit-scrollbar {
-            width: 6px;
+
+        .stat-value {
+            font-size: 24px;
+            font-weight: 700;
+            color: var(--color-text-primary);
         }
-        .scroll-container::-webkit-scrollbar-track {
-            background: #1a1f3a;
-            border-radius: 10px;
-        }
-        .scroll-container::-webkit-scrollbar-thumb {
-            background: #3a4575;
-            border-radius: 10px;
-        }
-        .scroll-container::-webkit-scrollbar-thumb:hover {
-            background: #4a5585;
-        }
-        .full-width {
-            width: 100%;
-        }
-        .grid-2col {
-            grid-column: 1 / -1;
-        }
-        .toggle-switch {
+
+        .stat-change {
+            font-size: 12px;
             display: flex;
             align-items: center;
-            gap: 8px;
-            margin: 10px 0;
+            gap: 5px;
         }
-        .toggle-checkbox {
-            width: 40px;
-            height: 22px;
-            background: #3a4575;
-            border-radius: 11px;
-            cursor: pointer;
-            position: relative;
-            transition: background 0.3s ease;
-            border: none;
-            padding: 0;
-        }
-        .toggle-checkbox.active {
-            background: #2ecc71;
-        }
-        .toggle-checkbox::after {
-            content: '';
-            position: absolute;
-            width: 18px;
-            height: 18px;
-            background: white;
-            border-radius: 50%;
-            top: 2px;
-            left: 2px;
-            transition: left 0.3s ease;
-        }
-        .toggle-checkbox.active::after {
-            left: 20px;
-        }
+
         .alert {
-            padding: 10px;
+            padding: 12px 16px;
             border-radius: 6px;
-            font-size: 12px;
-            margin-bottom: 8px;
+            margin-bottom: 15px;
+            display: flex;
+            align-items: gap;
+            font-size: 14px;
         }
-        .alert.warning {
-            background: rgba(241, 196, 15, 0.2);
-            color: #f1c40f;
-            border: 1px solid #f1c40f;
+
+        .alert-info {
+            background-color: rgba(66, 153, 225, 0.1);
+            color: var(--color-info);
+            border: 1px solid rgba(66, 153, 225, 0.3);
         }
-        .alert.info {
-            background: rgba(52, 152, 219, 0.2);
-            color: #3498db;
-            border: 1px solid #3498db;
+
+        .scrollbar {
+            scrollbar-color: var(--color-border) var(--color-bg-secondary);
+            scrollbar-width: thin;
+        }
+
+        .scrollbar::-webkit-scrollbar {
+            width: 8px;
+        }
+
+        .scrollbar::-webkit-scrollbar-track {
+            background: var(--color-bg-secondary);
+        }
+
+        .scrollbar::-webkit-scrollbar-thumb {
+            background: var(--color-border);
+            border-radius: 4px;
+        }
+
+        .scrollbar::-webkit-scrollbar-thumb:hover {
+            background: var(--color-accent-blue);
         }
     </style>
 </head>
 <body>
     <div class="container">
-        <div class="header">
-            <div class="header-left">
-                <h1>AI交易机器人</h1>
-                <div class="header-stats">
-                    <div class="header-stat">
-                        <span class="header-stat-label">模型状态</span>
-                        <span class="header-stat-value">LightGBM (在线)</span>
-                    </div>
-                    <div class="header-stat">
-                        <span class="header-stat-label">交易对</span>
-                        <span class="header-stat-value">BTCUSDT</span>
-                    </div>
-                    <div class="header-stat">
-                        <span class="header-stat-label">时间框架</span>
-                        <span class="header-stat-value">15分钟</span>
-                    </div>
-                    <div class="header-stat">
-                        <span class="header-stat-label">模型性能</span>
-                        <span class="header-stat-value">精准度69.2% | 召回率80.4%</span>
-                    </div>
+        <div class="sidebar">
+            <div class="sidebar-header">
+                <h1>交易分析系统</h1>
+                <p>BB 通道反弹预测</p>
+            </div>
+            <div class="sidebar-nav">
+                <div class="nav-item active" onclick="switchTab('dashboard', this)">
+                    <span class="icon">📊</span>
+                    <span>仪表板</span>
+                </div>
+                <div class="nav-item" onclick="switchTab('realtime', this)">
+                    <span class="icon">📈</span>
+                    <span>实时预测</span>
+                </div>
+                <div class="nav-item" onclick="switchTab('history', this)">
+                    <span class="icon">📋</span>
+                    <span>交易历史</span>
+                </div>
+                <div class="nav-item" onclick="switchTab('candles', this)">
+                    <span class="icon">🔧</span>
+                    <span>K线数据</span>
+                </div>
+                <div class="nav-item" onclick="switchTab('settings', this)">
+                    <span class="icon">⚙️</span>
+                    <span>系统设置</span>
                 </div>
             </div>
-            <div class="header-right">
-                <div class="header-right-item">
-                    <div class="header-right-label">最后更新</div>
-                    <div class="header-right-value" id="last-update">-</div>
-                </div>
-                <div class="header-right-item">
-                    <div class="header-right-label">系统状态</div>
-                    <div class="header-right-value" id="system-status" style="color: #2ecc71;">运行中</div>
-                </div>
-            </div>
-        </div>
-        
-        <div class="panel">
-            <div class="panel-title">
-                BTC/USDT 实时图表
-                <span class="panel-title-right">数据来源: TradingView</span>
-            </div>
-            <div id="chart-container"></div>
-        </div>
-        
-        <div class="side-panel">
-            <div class="panel">
-                <div class="panel-title">账户概览 (模拟账户)</div>
-                <div class="account-section">
-                    <div class="account-stat">
-                        <span class="account-stat-label">初始余额</span>
-                        <span class="account-stat-value">$10,000</span>
-                    </div>
-                    <div class="account-stat">
-                        <span class="account-stat-label">当前余额</span>
-                        <span class="account-stat-value" id="current-balance">$10,000</span>
-                    </div>
-                    <div class="account-stat">
-                        <span class="account-stat-label">已用保证金</span>
-                        <span class="account-stat-value" id="used-margin">$0</span>
-                    </div>
-                    <div class="account-stat">
-                        <span class="account-stat-label">总权益</span>
-                        <span class="account-stat-value" id="equity">$10,000</span>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="panel">
-                <div class="panel-title">交易统计</div>
-                <div class="stats-grid">
-                    <div class="stat-card">
-                        <div class="stat-label">胜率</div>
-                        <div class="stat-value" id="win-rate">-</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">利润率</div>
-                        <div class="stat-value" id="profit-rate">-</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">总交易数</div>
-                        <div class="stat-value" id="total-trades">0</div>
-                    </div>
-                    <div class="stat-card">
-                        <div class="stat-label">亏损次数</div>
-                        <div class="stat-value negative" id="loss-count">0</div>
-                    </div>
-                </div>
-            </div>
-            
-            <div class="panel">
-                <div class="panel-title">交易控制</div>
-                <div class="control-panel">
-                    <div class="input-group">
-                        <label>手仓位量</label>
-                        <input type="number" id="position-size" value="0.1" step="0.01" min="0.01">
-                    </div>
-                    <div class="input-group">
-                        <label>杠杆倍数</label>
-                        <select id="leverage-select">
-                            <option value="1">1x (无杠杆)</option>
-                            <option value="2">2x</option>
-                            <option value="5">5x</option>
-                            <option value="10">10x</option>
-                            <option value="20">20x</option>
-                        </select>
-                    </div>
-                    <div class="toggle-switch">
-                        <label style="font-size: 12px; color: #95a5a6;">自动交易</label>
-                        <button class="toggle-checkbox" id="auto-trading-toggle" onclick="toggleAutoTrading()"></button>
-                    </div>
-                    <button class="button full-width" style="margin-top: 8px;" onclick="refreshAllData()">刷新数据</button>
-                </div>
-            </div>
-            
-            <div class="panel">
-                <div class="panel-title">
-                    最新信号
-                    <span class="panel-title-right">精准度69.2% | 召回率80.4%</span>
-                </div>
-                <div class="scroll-container" id="predictions-container">
-                    <div style="text-align: center; padding: 20px; color: #95a5a6; font-size: 12px;">加载中...</div>
-                </div>
+            <div class="sidebar-footer">
+                <p>版本 1.0.0</p>
+                <p>系统状态: 正常</p>
             </div>
         </div>
-        
-        <div class="panel grid-2col">
-            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 16px;">
-                <div class="panel-title" style="margin: 0; flex: 1;">
-                    交易历史
+
+        <div class="main-content">
+            <div class="header">
+                <div class="header-title" id="header-title">仪表板</div>
+                <div class="header-status">
+                    <div class="status-item">
+                        <span class="status-dot" id="model-status"></span>
+                        <span>模型: <span id="model-status-text">加载中...</span></span>
+                    </div>
+                    <div class="status-item">
+                        <span class="status-dot" id="data-status"></span>
+                        <span>数据源: <span id="data-status-text">连接中...</span></span>
+                    </div>
                 </div>
-                <button class="button secondary" onclick="refreshTrades()" style="padding: 6px 10px;">刷新</button>
             </div>
-            <div class="trades-grid" id="trades-container">
-                <div style="text-align: center; padding: 20px; color: #95a5a6; font-size: 12px;">暂无交易</div>
+
+            <div class="content-area scrollbar">
+                <div id="dashboard" class="tab-content active">
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">系统概览</div>
+                                <div class="card-subtitle">实时交易系统状态</div>
+                            </div>
+                            <button class="button button-primary" onclick="refreshStatus()">刷新状态</button>
+                        </div>
+                        <div class="stats-container">
+                            <div class="stat-card">
+                                <div class="stat-label">账户余额</div>
+                                <div class="stat-value" id="balance">加载中...</div>
+                                <div class="stat-change value-positive">初始: $10,000</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">未平仓头寸</div>
+                                <div class="stat-value" id="open-positions">0</div>
+                                <div class="stat-change">总收益: $0</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">胜率</div>
+                                <div class="stat-value" id="win-rate">--</div>
+                                <div class="stat-change">成功交易数</div>
+                            </div>
+                            <div class="stat-card">
+                                <div class="stat-label">模型精度</div>
+                                <div class="stat-value">69.2%</div>
+                                <div class="stat-change">LightGBM</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">最近信号</div>
+                                <div class="card-subtitle">来自 Bollinger Band 触碰事件</div>
+                            </div>
+                        </div>
+                        <div id="recent-signals" style="text-align: center; color: var(--color-text-secondary);">
+                            加载中...
+                        </div>
+                    </div>
+                </div>
+
+                <div id="realtime" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">实时 K 线预测</div>
+                                <div class="card-subtitle">基于已完成 K 线的 ML 预测</div>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">交易对</label>
+                                <input type="text" id="rt-symbol" value="BTCUSDT" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">时间框架</label>
+                                <select id="rt-timeframe">
+                                    <option value="15m">15 分钟</option>
+                                    <option value="1h">1 小时</option>
+                                    <option value="1d">1 天</option>
+                                </select>
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">K 线数量 (最小 50)</label>
+                                <input type="number" id="rt-limit" value="50" min="50" />
+                            </div>
+                            <div class="input-field" style="display: flex; align-items: flex-end;">
+                                <button class="button button-primary" onclick="fetchRealtimePrediction()">
+                                    获取预测
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="rt-result" style="display: none;">
+                            <div class="alert alert-info">
+                                <strong>提示:</strong> 使用已完成的 K 线进行预测，当前形成的 K 线被排除
+                            </div>
+
+                            <div class="data-grid">
+                                <div class="data-row">
+                                    <div class="data-cell">
+                                        <div class="data-label">预测信号</div>
+                                        <div class="data-value" id="rt-signal">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">反弹概率</div>
+                                        <div class="data-value value-positive" id="rt-probability">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">置信度</div>
+                                        <div class="data-value" id="rt-confidence">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">当前价格</div>
+                                        <div class="data-value" id="rt-price">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">RSI</div>
+                                        <div class="data-value" id="rt-rsi">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">波动率</div>
+                                        <div class="data-value" id="rt-volatility">--</div>
+                                    </div>
+                                </div>
+                                <div class="data-row">
+                                    <div class="data-cell">
+                                        <div class="data-label">上轨 (BB Upper)</div>
+                                        <div class="data-value" id="rt-bb-upper">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">中线</div>
+                                        <div class="data-value" id="rt-bb-basis">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">下轨 (BB Lower)</div>
+                                        <div class="data-value" id="rt-bb-lower">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">BB 位置</div>
+                                        <div class="data-value" id="rt-bb-position">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">使用 K 线数</div>
+                                        <div class="data-value" id="rt-candles-used">--</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">K 线状态监测</div>
+                            <div class="card-subtitle">当前 K 线形成进度</div>
+                        </div>
+                        <button class="button button-secondary" onclick="fetchCandleStatus()">检查状态</button>
+                        <div id="candle-status-result" style="margin-top: 15px; display: none;">
+                            <div class="data-grid">
+                                <div class="data-row">
+                                    <div class="data-cell">
+                                        <div class="data-label">状态</div>
+                                        <div class="data-value" id="cs-status">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">进度</div>
+                                        <div class="data-value" id="cs-progress">--</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">当前价格</div>
+                                        <div class="data-value" id="cs-price">--</div>
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="history" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">交易历史</div>
+                            <div class="card-subtitle">模拟交易记录</div>
+                        </div>
+                        <button class="button button-secondary" onclick="loadTradeHistory()">
+                            加载历史
+                        </button>
+                        <div id="trade-history" style="margin-top: 15px;">
+                            <p style="text-align: center; color: var(--color-text-secondary);">点击加载历史按钮</p>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="candles" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <div>
+                                <div class="card-title">K 线数据查看</div>
+                                <div class="card-subtitle">查询原始 K 线数据</div>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">交易对</label>
+                                <input type="text" id="candle-symbol" value="BTCUSDT" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">时间框架</label>
+                                <select id="candle-timeframe">
+                                    <option value="15m">15 分钟</option>
+                                    <option value="1h">1 小时</option>
+                                    <option value="1d">1 天</option>
+                                </select>
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">数量</label>
+                                <input type="number" id="candle-limit" value="50" min="10" />
+                            </div>
+                            <div class="input-field" style="display: flex; align-items: flex-end;">
+                                <button class="button button-primary" onclick="fetchCandles()">
+                                    获取 K 线
+                                </button>
+                            </div>
+                        </div>
+
+                        <div id="candles-result" style="display: none; margin-top: 15px;">
+                            <div class="data-grid" id="candles-list"></div>
+                        </div>
+                    </div>
+                </div>
+
+                <div id="settings" class="tab-content">
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">系统设置</div>
+                            <div class="card-subtitle">配置交易参数和行为</div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">数据源</label>
+                                <select id="data-source">
+                                    <option value="binance">Binance API</option>
+                                    <option value="yfinance">Yahoo Finance</option>
+                                </select>
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">默认交易对</label>
+                                <input type="text" id="default-symbol" value="BTCUSDT" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">默认时间框架</label>
+                                <select id="default-timeframe">
+                                    <option value="15m">15 分钟</option>
+                                    <option value="1h">1 小时</option>
+                                    <option value="1d">1 天</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">最小 K 线数 (用于预测)</label>
+                                <input type="number" id="min-candles" value="50" min="20" max="200" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">预测置信度阈值</label>
+                                <select id="confidence-threshold">
+                                    <option value="0.5">50% (低)</option>
+                                    <option value="0.6">60% (中低)</option>
+                                    <option value="0.7" selected>70% (中)</option>
+                                    <option value="0.8">80% (高)</option>
+                                    <option value="0.9">90% (非常高)</option>
+                                </select>
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <div class="input-field">
+                                <label class="input-label">账户初始余额 ($)</label>
+                                <input type="number" id="initial-balance" value="10000" />
+                            </div>
+                            <div class="input-field">
+                                <label class="input-label">每笔交易头寸大小 (%)</label>
+                                <input type="number" id="position-size" value="5" min="0.1" max="100" />
+                            </div>
+                        </div>
+
+                        <div class="input-group">
+                            <button class="button button-success" onclick="saveSettings()">
+                                保存设置
+                            </button>
+                            <button class="button button-secondary" onclick="resetSettings()">
+                                恢复默认
+                            </button>
+                        </div>
+                    </div>
+
+                    <div class="card">
+                        <div class="card-header">
+                            <div class="card-title">系统信息</div>
+                        </div>
+                        <div class="data-grid">
+                            <div class="data-row">
+                                <div class="data-cell">
+                                    <div class="data-label">系统版本</div>
+                                    <div class="data-value">1.0.0</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">ML 模型</div>
+                                    <div class="data-value">LightGBM</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">模型精度</div>
+                                    <div class="data-value">69.2%</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">回想率</div>
+                                    <div class="data-value">80.4%</div>
+                                </div>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
         </div>
     </div>
-    
+
     <script>
-        let autoTradingEnabled = false;
-        const BITGET_MAKER_FEE = 0.0002;
-        const BITGET_TAKER_FEE = 0.0005;
-        
-        function initChart() {
-            new TradingView.widget({
-                autosize: true,
-                symbol: "BINANCE:BTCUSDT",
-                interval: "15",
-                timezone: "Asia/Shanghai",
-                theme: "dark",
-                style: "1",
-                locale: "zh",
-                toolbar_bg: "#1a1f3a",
-                enable_publishing: false,
-                allow_symbol_change: true,
-                container_id: "chart-container"
-            });
+        function switchTab(tabName, element) {
+            document.querySelectorAll('.tab-content').forEach(tab => tab.classList.remove('active'));
+            document.querySelectorAll('.nav-item').forEach(item => item.classList.remove('active'));
+            
+            document.getElementById(tabName).classList.add('active');
+            element.classList.add('active');
+            
+            const titles = {
+                'dashboard': '仪表板',
+                'realtime': '实时预测',
+                'history': '交易历史',
+                'candles': 'K线数据',
+                'settings': '系统设置'
+            };
+            document.getElementById('header-title').textContent = titles[tabName];
         }
-        
-        function loadPredictions() {
-            fetch('/api/ml-prediction-15m?symbol=BTCUSDT')
-                .then(res => res.json())
+
+        function refreshStatus() {
+            fetch('/api/system/status')
+                .then(r => r.json())
                 .then(data => {
-                    if (data.status === 'success' && data.predictions) {
-                        const container = document.getElementById('predictions-container');
-                        const html = data.predictions.map(pred => {
-                            const signalClass = pred.signal_type === 'BUY' ? 'buy' : 'sell';
-                            const signalColor = pred.signal_type === 'BUY' ? '#2ecc71' : '#e74c3c';
-                            const confidence = (pred.bounce_probability * 100).toFixed(1);
-                            const bbPos = (pred.bb_position * 100).toFixed(1);
-                            return `
-                                <div class="prediction-item ${signalClass}" onclick="executeSignal('${pred.signal_type}', ${pred.price})">
-                                    <div class="pred-left">
-                                        <div class="pred-signal ${signalClass}">${pred.signal_type === 'BUY' ? '买入' : '卖出'}</div>
-                                        <div class="pred-price">$${pred.price.toFixed(2)}</div>
+                    const modelStatus = document.getElementById('model-status');
+                    const dataStatus = document.getElementById('data-status');
+                    
+                    modelStatus.style.backgroundColor = data.components.ml_model === 'loaded' ? '#48bb78' : '#f56565';
+                    document.getElementById('model-status-text').textContent = data.components.ml_model === 'loaded' ? '已加载' : '未加载';
+                    
+                    dataStatus.style.backgroundColor = data.components.realtime_fetcher !== 'not_initialized' ? '#48bb78' : '#f56565';
+                    document.getElementById('data-status-text').textContent = data.components.realtime_fetcher || '未初始化';
+                });
+            
+            fetch('/api/trading/account-summary')
+                .then(r => r.json())
+                .then(data => {
+                    if (data.summary) {
+                        document.getElementById('balance').textContent = '$' + data.summary.total_balance.toFixed(2);
+                        document.getElementById('open-positions').textContent = data.positions.length;
+                    }
+                });
+        }
+
+        function fetchRealtimePrediction() {
+            const symbol = document.getElementById('rt-symbol').value;
+            const timeframe = document.getElementById('rt-timeframe').value;
+            const limit = document.getElementById('rt-limit').value;
+
+            fetch(`/api/realtime/prediction?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`)
+                .then(r => r.json())
+                .then(data => {
+                    const result = document.getElementById('rt-result');
+                    
+                    if (data.status === 'success') {
+                        document.getElementById('rt-signal').textContent = data.prediction.signal_type;
+                        document.getElementById('rt-probability').textContent = (data.prediction.bounce_probability * 100).toFixed(2) + '%';
+                        document.getElementById('rt-confidence').textContent = data.prediction.confidence;
+                        document.getElementById('rt-price').textContent = data.latest_candle.close.toFixed(2);
+                        document.getElementById('rt-rsi').textContent = data.technical_indicators.rsi.toFixed(2);
+                        document.getElementById('rt-volatility').textContent = data.technical_indicators.volatility.toFixed(4);
+                        document.getElementById('rt-bb-upper').textContent = data.latest_candle.bb_upper.toFixed(2);
+                        document.getElementById('rt-bb-basis').textContent = data.latest_candle.bb_basis.toFixed(2);
+                        document.getElementById('rt-bb-lower').textContent = data.latest_candle.bb_lower.toFixed(2);
+                        document.getElementById('rt-bb-position').textContent = (data.latest_candle.bb_position * 100).toFixed(2) + '%';
+                        document.getElementById('rt-candles-used').textContent = data.candles_used;
+                        
+                        result.style.display = 'block';
+                    } else {
+                        alert('错误: ' + data.message);
+                    }
+                })
+                .catch(err => alert('获取预测失败: ' + err.message));
+        }
+
+        function fetchCandleStatus() {
+            const symbol = document.getElementById('rt-symbol').value;
+            const timeframe = document.getElementById('rt-timeframe').value;
+
+            fetch(`/api/realtime/candle-status?symbol=${symbol}&timeframe=${timeframe}`)
+                .then(r => r.json())
+                .then(data => {
+                    const result = document.getElementById('candle-status-result');
+                    
+                    if (data.candle_status.status !== 'error') {
+                        const status = data.candle_status;
+                        document.getElementById('cs-status').textContent = status.status === 'completed' ? '已完成' : '形成中';
+                        document.getElementById('cs-progress').textContent = status.progress_percentage + '%';
+                        document.getElementById('cs-price').textContent = '$' + status.current_price.toFixed(2);
+                        result.style.display = 'block';
+                    }
+                });
+        }
+
+        function fetchCandles() {
+            const symbol = document.getElementById('candle-symbol').value;
+            const timeframe = document.getElementById('candle-timeframe').value;
+            const limit = document.getElementById('candle-limit').value;
+
+            fetch(`/api/realtime/candles?symbol=${symbol}&timeframe=${timeframe}&limit=${limit}`)
+                .then(r => r.json())
+                .then(data => {
+                    if (data.status === 'success') {
+                        let html = '';
+                        data.candles.forEach(candle => {
+                            html += `
+                                <div class="data-row">
+                                    <div class="data-cell">
+                                        <div class="data-label">时间</div>
+                                        <div class="data-value" style="font-size: 12px;">${new Date(candle.open_time).toLocaleString('zh-CN')}</div>
                                     </div>
-                                    <div class="pred-right">
-                                        <div class="pred-confidence">${confidence}%</div>
-                                        <div class="pred-bb-position">BB位置: ${bbPos}%</div>
+                                    <div class="data-cell">
+                                        <div class="data-label">开</div>
+                                        <div class="data-value">${candle.open.toFixed(2)}</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">高</div>
+                                        <div class="data-value">${candle.high.toFixed(2)}</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">低</div>
+                                        <div class="data-value">${candle.low.toFixed(2)}</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">收</div>
+                                        <div class="data-value">${candle.close.toFixed(2)}</div>
+                                    </div>
+                                    <div class="data-cell">
+                                        <div class="data-label">成交量</div>
+                                        <div class="data-value">${(candle.volume / 1000000).toFixed(2)}M</div>
                                     </div>
                                 </div>
                             `;
-                        }).join('');
-                        container.innerHTML = html || '<div style="padding: 20px; color: #95a5a6; text-align: center; font-size: 12px;">无信号</div>';
+                        });
+                        document.getElementById('candles-list').innerHTML = html;
+                        document.getElementById('candles-result').style.display = 'block';
                     }
-                })
-                .catch(err => console.error('Error:', err));
+                });
         }
-        
-        function loadAccountSummary() {
+
+        function loadTradeHistory() {
             fetch('/api/trading/account-summary')
-                .then(res => res.json())
+                .then(r => r.json())
                 .then(data => {
-                    if (data.status === 'success') {
-                        const summary = data.summary;
-                        document.getElementById('current-balance').textContent = `$${summary.available_balance.toFixed(2)}`;
-                        document.getElementById('equity').textContent = `$${summary.equity.toFixed(2)}`;
-                        document.getElementById('used-margin').textContent = `$${summary.used_margin.toFixed(2)}`;
-                        
-                        const trades = data.trade_history || [];
-                        const wins = trades.filter(t => t.profit > 0).length;
-                        document.getElementById('total-trades').textContent = trades.length;
-                        document.getElementById('loss-count').textContent = trades.filter(t => t.profit < 0).length;
-                        document.getElementById('win-rate').textContent = trades.length > 0 ? 
-                            `${((wins / trades.length) * 100).toFixed(1)}%` : '-';
-                        
-                        const totalProfit = trades.reduce((sum, t) => sum + t.profit, 0);
-                        const profitRate = (totalProfit / 10000 * 100).toFixed(2);
-                        const profitElement = document.getElementById('profit-rate');
-                        profitElement.textContent = `${profitRate}%`;
-                        profitElement.className = 'stat-value' + (totalProfit >= 0 ? '' : ' negative');
-                        
-                        loadTradeHistory(trades);
-                    }
-                })
-                .catch(err => console.error('Error:', err));
-        }
-        
-        function loadTradeHistory(trades) {
-            const container = document.getElementById('trades-container');
-            if (!trades || trades.length === 0) {
-                container.innerHTML = '<div style="padding: 20px; color: #95a5a6; text-align: center; font-size: 12px;">暂无交易</div>';
-                return;
-            }
-            
-            const html = trades.map(trade => {
-                const fee = trade.quantity * trade.entry_price * BITGET_TAKER_FEE;
-                const netProfit = trade.profit - fee;
-                const profitClass = netProfit >= 0 ? 'gain' : 'loss';
-                const tradeClass = netProfit >= 0 ? '' : ' loss';
-                return `
-                    <div class="trade-row${tradeClass}">
-                        <div class="trade-row-header">
-                            <span>
-                                <span class="trade-row-symbol">${trade.symbol}</span>
-                                <span class="trade-row-type"> | ${trade.order_type}</span>
-                            </span>
-                            <span class="trade-row-profit ${profitClass}">${netProfit >= 0 ? '+' : ''}${netProfit.toFixed(2)} USDT</span>
-                        </div>
-                        <div class="trade-row-details">
-                            <div>
-                                <div style="color: #95a5a6; font-size: 11px;">数量: ${trade.quantity.toFixed(4)} BTC</div>
-                                <div style="color: #95a5a6; font-size: 11px;">开仓: $${trade.entry_price.toFixed(2)}</div>
+                    let html = '<div class="data-grid">';
+                    data.trade_history.forEach(trade => {
+                        html += `
+                            <div class="data-row">
+                                <div class="data-cell">
+                                    <div class="data-label">时间</div>
+                                    <div class="data-value">${new Date(trade.timestamp).toLocaleString('zh-CN')}</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">方向</div>
+                                    <div class="data-value">${trade.order_type}</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">数量</div>
+                                    <div class="data-value">${trade.quantity}</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">进价</div>
+                                    <div class="data-value">${trade.entry_price}</div>
+                                </div>
+                                <div class="data-cell">
+                                    <div class="data-label">状态</div>
+                                    <div class="data-value">${trade.status}</div>
+                                </div>
                             </div>
-                            <div>
-                                <div style="color: #95a5a6; font-size: 11px;">手续费: ${fee.toFixed(2)} USDT</div>
-                                <div style="color: #95a5a6; font-size: 11px;">${new Date(trade.open_time).toLocaleString('zh-CN')}</div>
-                            </div>
-                        </div>
-                    </div>
-                `;
-            }).join('');
-            container.innerHTML = html;
+                        `;
+                    });
+                    html += '</div>';
+                    document.getElementById('trade-history').innerHTML = html;
+                });
         }
-        
-        function executeSignal(signalType, price) {
-            if (!autoTradingEnabled && !confirm('自动交易未启用。是否手动执行交易?')) return;
-            
-            const positionSize = parseFloat(document.getElementById('position-size').value);
-            const leverage = parseFloat(document.getElementById('leverage-select').value);
-            const stopLoss = price * (signalType === 'BUY' ? 0.98 : 1.02);
-            const takeProfit = price * (signalType === 'BUY' ? 1.03 : 0.97);
-            
-            fetch('/api/trading/open-position', {
-                method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
-                    symbol: 'BTCUSDT',
-                    order_type: signalType,
-                    quantity: positionSize * leverage,
-                    entry_price: price,
-                    stop_loss: stopLoss,
-                    take_profit: takeProfit,
-                    notes: `${signalType === 'BUY' ? '买入' : '卖出'} @ $${price.toFixed(2)}, ${leverage}x杠杆`
-                })
-            })
-            .then(res => res.json())
-            .then(data => {
-                if (data.status === 'success') {
-                    alert('交易已开单!');
-                    loadAccountSummary();
-                } else {
-                    alert('错误: ' + data.message);
-                }
-            })
-            .catch(err => alert('错误: ' + err.message));
+
+        function saveSettings() {
+            alert('设置已保存');
         }
-        
-        function toggleAutoTrading() {
-            autoTradingEnabled = !autoTradingEnabled;
-            const toggle = document.getElementById('auto-trading-toggle');
-            if (autoTradingEnabled) {
-                toggle.classList.add('active');
-                alert('自动交易已启用!');
-            } else {
-                toggle.classList.remove('active');
-                alert('自动交易已禁用!');
-            }
+
+        function resetSettings() {
+            document.getElementById('default-symbol').value = 'BTCUSDT';
+            document.getElementById('default-timeframe').value = '15m';
+            document.getElementById('min-candles').value = 50;
+            document.getElementById('initial-balance').value = 10000;
+            alert('已恢复默认设置');
         }
-        
-        function refreshTrades() {
-            loadAccountSummary();
-            alert('交易数据已刷新!');
-        }
-        
-        function refreshAllData() {
-            loadPredictions();
-            loadAccountSummary();
-            alert('所有数据已刷新!');
-        }
-        
-        function updateTimestamp() {
-            document.getElementById('last-update').textContent = new Date().toLocaleTimeString('zh-CN');
-        }
-        
-        initChart();
-        loadPredictions();
-        loadAccountSummary();
-        updateTimestamp();
-        
-        setInterval(loadPredictions, 60000);
-        setInterval(loadAccountSummary, 30000);
-        setInterval(updateTimestamp, 1000);
+
+        window.addEventListener('load', () => {
+            refreshStatus();
+        });
     </script>
 </body>
 </html>
