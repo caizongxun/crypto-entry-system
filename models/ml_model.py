@@ -625,7 +625,10 @@ class CryptoEntryModel:
         return true_positives / (true_positives + false_negatives)
 
     def evaluate_entries(self, lookback: int = 50) -> pd.DataFrame:
-        """Evaluate current BB touch/break for bounce probability."""
+        """Evaluate current BB touch/break for bounce probability.
+        
+        Note: bounce_probability is in range [0, 1], not percentage.
+        """
         if self.feature_data is None:
             self.engineer_features()
 
@@ -667,8 +670,8 @@ class CryptoEntryModel:
         X_recent = recent_df_valid[feature_cols].values
         X_scaled = self.scaler.transform(X_recent)
 
-        probabilities = self.model.predict_proba(X_scaled)[:, 1] * 100
-        predictions = (probabilities / 100 >= self.optimal_threshold).astype(int)
+        probabilities = self.model.predict_proba(X_scaled)[:, 1]
+        predictions = (probabilities >= self.optimal_threshold).astype(int)
 
         recent_df_valid['bounce_prediction'] = predictions
         recent_df_valid['bounce_probability'] = probabilities

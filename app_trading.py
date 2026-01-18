@@ -1,3 +1,4 @@
+# -*- coding: utf-8 -*-
 from flask import Flask, jsonify, request, render_template
 from flask_cors import CORS
 import pandas as pd
@@ -51,12 +52,14 @@ def get_ml_prediction_15m():
         
         predictions = []
         for idx, row in bb_events.tail(20).iterrows():
-            signal_type = 'BUY' if row['signal_type'] == 'buy_bounce' else 'SELL'
+            signal_type = 'BUY' if row['signal_type'] == 'lower_touch' or row['signal_type'] == 'lower_break' else 'SELL'
+            bounce_prob = float(row['bounce_probability'])
+            
             predictions.append({
                 'timestamp': str(row['open_time']),
                 'signal_type': signal_type,
                 'price': float(row['close']),
-                'bounce_probability': float(row['bounce_probability']),
+                'bounce_probability': bounce_prob,
                 'bb_position': float(row['bb_position']),
                 'bb_width': float(row['bb_width']),
                 'bb_upper': float(row.get('bb_upper', 0)),
