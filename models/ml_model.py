@@ -34,7 +34,7 @@ class CryptoEntryModel:
     def __init__(self, symbol: str = DEFAULT_SYMBOL, timeframe: str = DEFAULT_TIMEFRAME,
                  model_type: str = 'xgboost', optimization_level: str = 'balanced',
                  use_multi_timeframe: bool = True, use_feature_selection: bool = False,
-                 enable_debug: bool = False):
+                 enable_debug: bool = False, decision_threshold: float = 0.5):
         self.symbol = symbol
         self.timeframe = timeframe
         self.model_type = model_type
@@ -42,6 +42,7 @@ class CryptoEntryModel:
         self.use_multi_timeframe = use_multi_timeframe
         self.use_feature_selection = use_feature_selection
         self.enable_debug = enable_debug
+        self.decision_threshold = decision_threshold
         
         self.data_processor = DataProcessor(symbol, timeframe)
         self.feature_engineer = FeatureEngineer()
@@ -67,7 +68,7 @@ class CryptoEntryModel:
         self.scaler = StandardScaler()
         self.model = None
         self.ensemble_models = None
-        self.optimal_threshold = 0.5
+        self.optimal_threshold = decision_threshold
         self.model_path = Path(__file__).parent / f"cache/{symbol}_{timeframe}_{model_type}.joblib"
         
         self.debug_info = {}
@@ -481,14 +482,9 @@ class CryptoEntryModel:
         y_proba_train = self.model.predict_proba(self.X_train)[:, 1]
         y_proba_test = self.model.predict_proba(self.X_test)[:, 1]
         
-        print("\nCalibrating decision threshold...")
-        self.optimal_threshold, test_metrics = self._find_optimal_threshold(y_proba_test, self.y_test)
-        print(f"Optimal threshold found: {self.optimal_threshold:.3f}")
-        
-        if test_metrics:
-            print(f"  Precision: {test_metrics['precision']:.4f}")
-            print(f"  Recall: {test_metrics['recall']:.4f}")
-            print(f"  F1: {test_metrics['f1']:.4f}")
+        print("\nApplying decision threshold strategy...")
+        print(f"Decision threshold (Strategy A): {self.decision_threshold:.3f}")
+        self.optimal_threshold = self.decision_threshold
         
         predictions_train = (y_proba_train >= self.optimal_threshold).astype(int)
         predictions_test = (y_proba_test >= self.optimal_threshold).astype(int)
@@ -524,6 +520,9 @@ class CryptoEntryModel:
         else:
             print(f"  Status: POOR generalization - consider retraining")
         
+        if test_precision >= 0.70 and test_recall >= 0.80:
+            print(f"\nRESULT: Precision {test_precision:.4f} + Recall {test_recall:.4f} (Strategy A successful)")
+        
         self.debug_info['train_predictions_positive'] = (predictions_train == 1).sum()
         self.debug_info['train_predictions_negative'] = (predictions_train == 0).sum()
         self.debug_info['test_predictions_positive'] = (predictions_test == 1).sum()
@@ -531,6 +530,7 @@ class CryptoEntryModel:
         self.debug_info['train_f1'] = train_f1
         self.debug_info['test_f1'] = test_f1
         self.debug_info['optimal_threshold'] = self.optimal_threshold
+        self.debug_info['decision_strategy'] = 'threshold_0.5'
 
         self.save_model()
 
