@@ -117,7 +117,7 @@ class DataConfig:
 @dataclass
 class ReversalConfig:
     """
-    Configuration for binary reversal prediction.
+    Configuration for binary reversal prediction using Zigzag.
     """
     lookback_window: int = 20
     atr_multiplier: float = 1.5
@@ -125,6 +125,7 @@ class ReversalConfig:
     forward_window: int = 100
     min_trend_candles: int = 3
     volume_sma_period: int = 20
+    zigzag_threshold_pct: float = 2.0
 
 
 @dataclass
@@ -161,6 +162,10 @@ class StrategyConfig:
     @property
     def profit_target_ratio(self) -> float:
         return self.reversal.profit_target_ratio
+
+    @property
+    def zigzag_threshold_pct(self) -> float:
+        return self.reversal.zigzag_threshold_pct
 
     def to_dict(self) -> Dict[str, Any]:
         """
