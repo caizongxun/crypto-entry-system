@@ -3,14 +3,18 @@
 Production Reversal Detection System
 
 Core Architecture:
-1. Profitability-based labels: Only reversals followed by profit are positive
-2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost) with weighted voting
-3. Precision-Recall optimization
-4. Real-time prediction capability
+1. REAL TRADING SIMULATION LABELS
+   - No look-ahead bias
+   - Trades simulated with stop-loss and profit target
+   - Labels reflect actual trade outcomes
 
-Key Insight:
-Labels are defined by actual trading profits, not theoretical swing detection.
-This ensures models learn to identify truly profitable reversals.
+2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost)
+
+3. Precision-Recall optimization
+
+Key Philosophy:
+Models learn to identify swing points that lead to profitable trades.
+This is based on REAL trading rules, not theoretical analysis.
 
 Usage:
     python main_production.py --mode train --symbol BTCUSDT --timeframe 15m
@@ -61,11 +65,15 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 
 
 def train_production_model(args):
-    logger.info('Starting Production Reversal Detection Training')
+    logger.info('='*70)
+    logger.info('Production Reversal Detection Training')
+    logger.info('='*70)
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info('Label Definition: Profitability-based (only profitable reversals labeled as 1)')
+    logger.info(f'Label Method: REAL TRADING SIMULATION')
     logger.info(f'Profit Target: {args.profit_pct*100:.2f}%')
-    logger.info(f'Future Bars: {args.future_bars}')
+    logger.info(f'Stop Loss: {args.stop_loss_pct*100:.2f}%')
+    logger.info(f'Max Hold Bars: {args.max_hold_bars}')
+    logger.info('='*70)
     
     config = StrategyConfig.get_default()
     config.verbose = args.verbose
@@ -101,37 +109,39 @@ def train_production_model(args):
     df_features = engineer.engineer_features(df)
     logger.info(f'Generated {len(df_features.columns) - 5} features')
     
-    logger.info('Creating profitability-based reversal targets...')
+    logger.info('Simulating trades and creating labels...')
     target, profits = create_reversal_target_v3(
         df_features,
         lookback=config.lookback_window,
         left_bars=config.swing_left_bars,
         right_bars=config.swing_right_bars,
         profit_target_pct=args.profit_pct,
-        future_bars=args.future_bars
+        stop_loss_pct=args.stop_loss_pct,
+        max_hold_bars=args.max_hold_bars
     )
     
     df_features['reversal_target'] = target
-    df_features['profit_pct'] = profits * 100
+    df_features['trade_pnl'] = profits * 100
     
     positive_count = (target == 1).sum()
     negative_count = (target == 0).sum()
-    
-    logger.info(f'Clean data: {len(df_features)} candles')
-    logger.info(f'Profitable reversals (target=1): {positive_count}')
-    logger.info(f'Unprofitable reversals (target=0): {negative_count}')
-    
     total_swings = positive_count + negative_count
+    
+    logger.info(f'Swing Point Analysis:')
+    logger.info(f'Profitable trades (target=1): {positive_count}')
+    logger.info(f'Stopped out trades (target=0): {negative_count}')
+    logger.info(f'Total swing points analyzed: {total_swings}')
+    
     if total_swings == 0:
         logger.error('No swing points found')
         return False
     
     if positive_count == 0:
-        logger.error('No profitable reversals found. Try lower profit_pct or more future_bars.')
+        logger.error('No profitable trades found. Try different parameters.')
         return False
     
-    profitability_rate = positive_count / total_swings * 100
-    logger.info(f'Profitability Rate: {profitability_rate:.2f}% (target=1) / {100-profitability_rate:.2f}% (target=0)')
+    win_rate = positive_count / total_swings * 100
+    logger.info(f'Win Rate: {win_rate:.2f}%')
     
     train_size = int(len(df_features) * 0.7)
     df_train = df_features.iloc[:train_size]
@@ -140,12 +150,12 @@ def train_production_model(args):
     y_train = df_train['reversal_target'].values
     y_test = df_test['reversal_target'].values
     
-    logger.info(f'Train: {len(df_train)}, Test: {len(df_test)}')
-    logger.info(f'Train positive ratio: {(y_train == 1).sum() / len(y_train) * 100:.2f}%')
-    logger.info(f'Test positive ratio: {(y_test == 1).sum() / len(y_test) * 100:.2f}%')
+    logger.info(f'Train/Test Split: {len(df_train)}/{len(df_test)}')
+    logger.info(f'Train win rate: {(y_train == 1).sum() / len(y_train) * 100:.2f}%')
+    logger.info(f'Test win rate: {(y_test == 1).sum() / len(y_test) * 100:.2f}%')
     
     feature_cols = [col for col in df_features.columns 
-                    if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'profit_pct']]
+                    if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'trade_pnl']]
     
     logger.info('Cleaning features...')
     df_train = _clean_features(df_train, feature_cols)
@@ -156,7 +166,7 @@ def train_production_model(args):
     logger.info(f'Using {len(feature_cols)} features')
     
     scale_pos_weight = (y_train == 0).sum() / ((y_train == 1).sum() + 1)
-    logger.info(f'Class weight (negative:positive): {scale_pos_weight:.2f}')
+    logger.info(f'Class weight: {scale_pos_weight:.2f}:1 (negative:positive)')
     
     logger.info('Training ensemble models...')
     models = {}
@@ -214,9 +224,9 @@ def train_production_model(args):
     weights = np.array([0.4, 0.4, 0.2])
     ensemble_pred_proba = np.average(predictions_ensemble, axis=0, weights=weights)
     ensemble_auc = roc_auc_score(y_test, ensemble_pred_proba)
-    logger.info(f'Ensemble AUC (weighted average): {ensemble_auc:.4f}')
+    logger.info(f'Ensemble AUC (weighted): {ensemble_auc:.4f}')
     
-    logger.info('Optimizing threshold for best F1-Score...')
+    logger.info('Optimizing prediction threshold...')
     precisions, recalls, thresholds = precision_recall_curve(y_test, ensemble_pred_proba)
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10)
     optimal_idx = np.argmax(f1_scores)
@@ -235,17 +245,23 @@ def train_production_model(args):
     f1 = f1_score(y_test, y_pred_optimal, zero_division=0)
     
     cm = confusion_matrix(y_test, y_pred_optimal, labels=[0, 1])
+    tn, fp, fn, tp = cm[0, 0], cm[0, 1], cm[1, 0], cm[1, 1]
+    
     logger.info('Confusion Matrix:')
-    logger.info(f'True Negatives: {cm[0,0]}, False Positives: {cm[0,1]}')
-    logger.info(f'False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}')
+    logger.info(f'TN: {tn}, FP: {fp}')
+    logger.info(f'FN: {fn}, TP: {tp}')
     
-    false_positive_rate = cm[0,1] / (cm[0,0] + cm[0,1]) if (cm[0,0] + cm[0,1]) > 0 else 0
-    true_positive_rate = cm[1,1] / (cm[1,0] + cm[1,1]) if (cm[1,0] + cm[1,1]) > 0 else 0
+    fpr = fp / (tn + fp) if (tn + fp) > 0 else 0
+    tpr = tp / (fn + tp) if (fn + tp) > 0 else 0
     
-    logger.info(f'False Positive Rate (FPR): {false_positive_rate:.4f}')
-    logger.info(f'True Positive Rate (TPR/Recall): {true_positive_rate:.4f}')
+    logger.info('Performance Metrics:')
+    logger.info(f'Accuracy: {accuracy:.4f}')
+    logger.info(f'Precision: {precision:.4f}')
+    logger.info(f'Recall (True Positive Rate): {recall:.4f}')
+    logger.info(f'False Positive Rate: {fpr:.4f}')
+    logger.info(f'F1-Score: {f1:.4f}')
     
-    logger.info('Saving models...')
+    logger.info('Saving models and metadata...')
     with open(os.path.join(config.model_save_dir, 'ensemble_models.pkl'), 'wb') as f:
         pickle.dump(models, f)
     
@@ -257,6 +273,14 @@ def train_production_model(args):
     
     with open(os.path.join(config.model_save_dir, 'ensemble_weights.pkl'), 'wb') as f:
         pickle.dump(weights, f)
+    
+    config_dict = {
+        'profit_target': args.profit_pct,
+        'stop_loss': args.stop_loss_pct,
+        'max_hold_bars': args.max_hold_bars
+    }
+    with open(os.path.join(config.model_save_dir, 'trading_config.pkl'), 'wb') as f:
+        pickle.dump(config_dict, f)
     
     results_data = [{
         'metric': 'accuracy',
@@ -278,16 +302,13 @@ def train_production_model(args):
         'value': optimal_threshold,
     }, {
         'metric': 'false_positive_rate',
-        'value': false_positive_rate,
+        'value': fpr,
     }, {
-        'metric': 'true_positive_rate',
-        'value': true_positive_rate,
+        'metric': 'win_rate',
+        'value': win_rate,
     }, {
         'metric': 'profitable_signals',
         'value': positive_count,
-    }, {
-        'metric': 'profitability_rate',
-        'value': profitability_rate,
     }]
     
     results_df = pd.DataFrame(results_data)
@@ -299,19 +320,15 @@ def train_production_model(args):
     logger.info(f'Results saved to {results_file}')
     
     logger.info('='*70)
-    logger.info('PRODUCTION REVERSAL DETECTION - TRAINING COMPLETE')
+    logger.info('TRAINING COMPLETE')
     logger.info('='*70)
-    logger.info(f'Label Definition: Profitable reversals only')
-    logger.info(f'Total Profitable Reversals: {positive_count}')
-    logger.info(f'Profitability Rate: {profitability_rate:.2f}%')
-    logger.info(f'Individual Model AUC: XGB={xgb_auc:.4f}, LGB={lgb_auc:.4f}, CAT={cat_auc:.4f}')
+    logger.info(f'Trading Parameters: PT={args.profit_pct*100:.2f}%, SL={args.stop_loss_pct*100:.2f}%, MaxBars={args.max_hold_bars}')
+    logger.info(f'Overall Win Rate: {win_rate:.2f}%')
+    logger.info(f'Profitable Signals: {positive_count}')
     logger.info(f'Ensemble AUC: {ensemble_auc:.4f}')
-    logger.info(f'Optimal Threshold: {optimal_threshold:.3f}')
-    logger.info(f'Test Accuracy: {accuracy:.4f}')
     logger.info(f'Test Precision: {precision:.4f}')
     logger.info(f'Test Recall: {recall:.4f}')
     logger.info(f'Test F1-Score: {f1:.4f}')
-    logger.info(f'False Positive Rate: {false_positive_rate:.4f}')
     logger.info('='*70)
     
     return True
@@ -319,7 +336,7 @@ def train_production_model(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Production Reversal Detection System with Profitability-Based Labels'
+        description='Production Reversal Detection with Real Trading Simulation'
     )
     parser.add_argument(
         '--mode',
@@ -345,13 +362,19 @@ def main():
         '--profit-pct',
         type=float,
         default=0.005,
-        help='Minimum profit target (default 0.5%)'
+        help='Profit target (default 0.5%)'
     )
     parser.add_argument(
-        '--future-bars',
+        '--stop-loss-pct',
+        type=float,
+        default=0.01,
+        help='Stop loss level (default 1%)'
+    )
+    parser.add_argument(
+        '--max-hold-bars',
         type=int,
-        default=10,
-        help='How many bars ahead to check for profit'
+        default=20,
+        help='Maximum bars to hold trade (default 20)'
     )
     parser.add_argument(
         '--verbose',
@@ -363,13 +386,7 @@ def main():
     setup_logging(args.verbose)
     
     success = train_production_model(args)
-    
-    if success:
-        logger.info('Training completed successfully')
-        sys.exit(0)
-    else:
-        logger.error('Training failed')
-        sys.exit(1)
+    sys.exit(0 if success else 1)
 
 
 if __name__ == '__main__':
