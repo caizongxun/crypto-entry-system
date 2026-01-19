@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 """
-Strategy V3: Binary Reversal Prediction with ATR-based Zigzag Target Marking
+Strategy V3: Binary Reversal Prediction with Swing High/Low Detection
 
-Predicts whether opening a position at candle t will result in a zigzag reversal,
+Predicts whether opening a position at candle t will result in a swing reversal,
 using features from candles t-20 to t-1.
 
 Target definition:
-  1: ATR-based zigzag reversal point detected within next 5-20 candles
+  1: Swing high/low reversal point detected within next 5-20 candles
   0: No reversal opportunity or already in position (HOLD)
 
 Usage:
@@ -29,8 +29,8 @@ from strategy_v3 import (
     StrategyConfig,
     DataLoader,
     FeatureEngineer,
-    create_reversal_target,
 )
+from strategy_v3.targets import create_reversal_target
 
 
 def setup_logging(verbose: bool = False):
@@ -64,9 +64,9 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 
 
 def train_model(args):
-    logger.info('Starting V3 training: Binary Reversal Prediction with ATR-based Zigzag')
+    logger.info('Starting V3 training: Binary Reversal Prediction with Swing High/Low Detection')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info('Target: ATR-based zigzag reversal points within next 5-20 candles')
+    logger.info('Target: Swing high/low reversal points within next 5-20 candles')
     
     config = StrategyConfig.get_default()
     config.verbose = args.verbose
@@ -96,21 +96,22 @@ def train_model(args):
     
     logger.info(f'Loaded {len(df)} candles')
     logger.info(f'Date range: {df.index[0]} to {df.index[-1]}')
+    logger.info(f'Columns: {list(df.columns)}')
     
     logger.info('Engineering features...')
     engineer = FeatureEngineer(config)
     df_features = engineer.engineer_features(df)
+    logger.info(f'Generated {len(df_features.columns) - 5} features')
+    logger.info(f'Feature columns: {list(df_features.columns[:10])}... (showing first 10)')
     logger.info(f'Total features: {len(df_features.columns) - 5}')
     
-    logger.info('Creating reversal target using ATR-based Zigzag pattern...')
-    logger.info(f'Zigzag ATR multiplier: {config.zigzag_atr_multiplier}x, max_lookback: {config.zigzag_max_lookback}')
+    logger.info('Creating reversal target using Swing High/Low pattern...')
+    logger.info(f'Swing detection parameters: left_bars={config.swing_left_bars}, right_bars={config.swing_right_bars}')
     target = create_reversal_target(
         df_features,
         lookback=config.lookback_window,
-        atr_mult=config.atr_multiplier,
-        profit_target_ratio=config.profit_target_ratio,
-        atr_multiplier=config.zigzag_atr_multiplier,
-        max_lookback=config.zigzag_max_lookback
+        left_bars=config.swing_left_bars,
+        right_bars=config.swing_right_bars
     )
     
     df_features['reversal_target'] = target
@@ -229,12 +230,11 @@ def train_model(args):
     logger.info(f'Results saved to {results_file}')
     
     logger.info('='*70)
-    logger.info('TRAINING SUMMARY - V3 BINARY REVERSAL PREDICTION (ATR-BASED ZIGZAG)')
+    logger.info('TRAINING SUMMARY - V3 BINARY REVERSAL PREDICTION (SWING HIGH/LOW)')
     logger.info('='*70)
     logger.info(f'Model: XGBoost Binary Classifier')
-    logger.info(f'Target Definition: ATR-based Zigzag reversals')
-    logger.info(f'Zigzag ATR multiplier: {config.zigzag_atr_multiplier}x')
-    logger.info(f'Zigzag max_lookback: {config.zigzag_max_lookback} candles')
+    logger.info(f'Target Definition: Swing high/low reversals')
+    logger.info(f'Swing detection: left_bars={config.swing_left_bars}, right_bars={config.swing_right_bars}')
     logger.info(f'Reversal signals: {positive_count} ({positive_count/len(target)*100:.2f}%)')
     logger.info(f'Accuracy: {accuracy:.4f}')
     logger.info(f'Precision: {precision:.4f}')
@@ -246,7 +246,7 @@ def train_model(args):
 
 
 def predict_signals(args):
-    logger.info('Generating V3 reversal signals (ATR-based Zigzag)...')
+    logger.info('Generating V3 reversal signals (Swing High/Low)...')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
     
     config = StrategyConfig.get_default()
@@ -328,7 +328,7 @@ def predict_signals(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Strategy V3: Binary Reversal Prediction with ATR-based Zigzag Target Marking'
+        description='Strategy V3: Binary Reversal Prediction with Swing High/Low Detection'
     )
     parser.add_argument(
         '--mode',
