@@ -115,6 +115,19 @@ class DataConfig:
 
 
 @dataclass
+class ReversalConfig:
+    """
+    Configuration for binary reversal prediction.
+    """
+    lookback_window: int = 20
+    atr_multiplier: float = 1.5
+    profit_target_ratio: float = 1.5
+    forward_window: int = 100
+    min_trend_candles: int = 3
+    volume_sma_period: int = 20
+
+
+@dataclass
 class StrategyConfig:
     """
     Main configuration class combining all sub-configs.
@@ -124,6 +137,7 @@ class StrategyConfig:
     model: ModelConfig = field(default_factory=ModelConfig)
     signals: SignalGenerationConfig = field(default_factory=SignalGenerationConfig)
     data: DataConfig = field(default_factory=DataConfig)
+    reversal: ReversalConfig = field(default_factory=ReversalConfig)
 
     # General settings
     verbose: bool = False
@@ -135,6 +149,19 @@ class StrategyConfig:
     model_save_dir: str = './models/v3'
     results_save_dir: str = './results/v3'
 
+    # Convenience accessors for reversal config
+    @property
+    def lookback_window(self) -> int:
+        return self.reversal.lookback_window
+
+    @property
+    def atr_multiplier(self) -> float:
+        return self.reversal.atr_multiplier
+
+    @property
+    def profit_target_ratio(self) -> float:
+        return self.reversal.profit_target_ratio
+
     def to_dict(self) -> Dict[str, Any]:
         """
         Convert configuration to dictionary.
@@ -144,6 +171,7 @@ class StrategyConfig:
             'model': self.model.__dict__,
             'signals': self.signals.__dict__,
             'data': self.data.__dict__,
+            'reversal': self.reversal.__dict__,
             'general': {
                 'verbose': self.verbose,
                 'debug': self.debug,
