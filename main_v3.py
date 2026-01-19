@@ -100,7 +100,6 @@ def train_model(args):
     logger.info('Engineering features...')
     engineer = FeatureEngineer(config)
     df_features = engineer.engineer_features(df)
-    df_features = engineer.add_atr_for_targets(df_features)
     logger.info(f'Total features: {len(df_features.columns) - 5}')
     
     logger.info('Creating reversal target with historical lookback...')
@@ -145,6 +144,10 @@ def train_model(args):
     logger.info(f'Using {len(feature_cols)} features')
     
     logger.info('Training binary reversal classifier...')
+    
+    scale_pos_weight = (y_train == 0).sum() / ((y_train == 1).sum() + 1)
+    logger.info(f'Class weight (negative:positive): {scale_pos_weight:.2f}')
+    
     model = XGBClassifier(
         n_estimators=200,
         max_depth=6,
@@ -152,7 +155,7 @@ def train_model(args):
         subsample=0.8,
         colsample_bytree=0.8,
         random_state=42,
-        scale_pos_weight=(y_train == 0).sum() / ((y_train == 1).sum() + 1),
+        scale_pos_weight=scale_pos_weight,
         verbosity=0
     )
     
@@ -262,7 +265,6 @@ def predict_signals(args):
     logger.info('Engineering features...')
     engineer = FeatureEngineer(config)
     df_features = engineer.engineer_features(df)
-    df_features = engineer.add_atr_for_targets(df_features)
     
     logger.info('Loading trained model...')
     try:
