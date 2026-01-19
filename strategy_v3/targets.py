@@ -1,154 +1,124 @@
 import numpy as np
 import pandas as pd
 from loguru import logger
-from typing import List, Tuple
+from typing import Tuple
 
 
-def identify_zigzag_reversals(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                             atr: np.ndarray, atr_multiplier: float = 1.5,
-                             max_lookback: int = 50) -> np.ndarray:
+def detect_swing_points(high: np.ndarray, low: np.ndarray, left_bars: int = 5, right_bars: int = 5) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Identify reversal points using zigzag pattern with ATR-based volatility.
+    Detect swing high and swing low points using local extrema detection.
     
-    Key improvement: Use ATR multiplier instead of fixed percentage.
-    This automatically adjusts for market volatility:
-    - High volatility markets: Larger ATR -> larger required swings
-    - Low volatility markets: Smaller ATR -> smaller required swings
-    - Works equally for BTC ($100+ moves = 1% ATR move) and small caps
+    A swing high occurs when a bar's high is >= all bars within left_bars to the left
+    AND >= all bars within right_bars to the right.
     
-    A zigzag reversal is confirmed when:
-    1. Price makes a significant swing (atr_multiplier * current_atr)
-    2. Direction changes (from up to down or down to up)
-    3. Swing does not exceed max_lookback candles
+    A swing low occurs when a bar's low is <= all bars within left_bars to the left
+    AND <= all bars within right_bars to the right.
+    
+    Args:
+        high: Array of high prices
+        low: Array of low prices
+        left_bars: Number of bars to check on the left side
+        right_bars: Number of bars to check on the right side
+        
+    Returns:
+        - swing_highs: Binary array (1 where swing high detected, 0 otherwise)
+        - swing_lows: Binary array (1 where swing low detected, 0 otherwise)
+    """
+    n = len(high)
+    swing_highs = np.zeros(n, dtype=int)
+    swing_lows = np.zeros(n, dtype=int)
+    
+    # Need at least left_bars + 1 + right_bars data points
+    if n < left_bars + right_bars + 1:
+        return swing_highs, swing_lows
+    
+    for i in range(left_bars, n - right_bars):
+        # Check swing high
+        # High at i must be >= max of surrounding bars
+        is_swing_high = (
+            high[i] >= high[max(0, i - left_bars):i].max() and
+            high[i] >= high[i + 1:min(n, i + right_bars + 1)].max()
+        )
+        if is_swing_high:
+            swing_highs[i] = 1
+        
+        # Check swing low
+        # Low at i must be <= min of surrounding bars
+        is_swing_low = (
+            low[i] <= low[max(0, i - left_bars):i].min() and
+            low[i] <= low[i + 1:min(n, i + right_bars + 1)].min()
+        )
+        if is_swing_low:
+            swing_lows[i] = 1
+    
+    return swing_highs, swing_lows
+
+
+def identify_reversals(high: np.ndarray, low: np.ndarray, close: np.ndarray,
+                      left_bars: int = 5, right_bars: int = 5) -> np.ndarray:
+    """
+    Identify reversal points based on swing high/low pattern breaks.
+    
+    A reversal is confirmed when:
+    1. We have a swing high followed by a swing low (potential downtrend reversal)
+    2. We have a swing low followed by a swing high (potential uptrend reversal)
     
     Args:
         high: Array of high prices
         low: Array of low prices
         close: Array of close prices
-        atr: Array of ATR values
-        atr_multiplier: Number of ATRs for swing threshold (e.g., 1.5 ATR)
-        max_lookback: Maximum candles allowed for one swing
+        left_bars: Lookback period for swing detection
+        right_bars: Lookahead period for swing detection
         
     Returns:
-        Array where 1 = reversal point, 0 = not reversal
+        Array where 1 = reversal point detected, 0 = no reversal
     """
-    reversal_points = np.zeros(len(high), dtype=int)
+    n = len(high)
+    reversals = np.zeros(n, dtype=int)
     
-    if len(high) < 5 or len(atr) != len(high):
-        return reversal_points
+    # Detect all swing points
+    swing_highs, swing_lows = detect_swing_points(high, low, left_bars, right_bars)
     
-    last_reversal_idx = 0
-    last_reversal_type = None
+    # Find indices of swings
+    high_indices = np.where(swing_highs == 1)[0]
+    low_indices = np.where(swing_lows == 1)[0]
     
-    i = 0
-    while i < len(high) - 1:
-        current_atr = atr[i] if atr[i] > 0 else np.nanmean(atr[:max(i, 1)])
-        current_atr = max(current_atr, 0.0001)  # Prevent division by zero
-        threshold = atr_multiplier * current_atr
-        
-        # If last reversal was 'high', look for 'low'
-        if last_reversal_type == 'high':
-            local_low = high[i]
-            local_low_idx = i
-            swing_start = i
-            
-            # Scan ahead for significant down move within max_lookback
-            for j in range(i, min(i + max_lookback, len(high))):
-                if low[j] < local_low:
-                    local_low = low[j]
-                    local_low_idx = j
-            
-            # Check if significant down move found (using ATR)
-            swing_amount = high[last_reversal_idx] - local_low
-            if swing_amount >= threshold:
-                reversal_points[local_low_idx] = 1
-                last_reversal_idx = local_low_idx
-                last_reversal_type = 'low'
-                i = local_low_idx + 1
-            else:
-                i += 1
-        
-        # If last reversal was 'low', look for 'high'
-        elif last_reversal_type == 'low':
-            local_high = low[i]
-            local_high_idx = i
-            swing_start = i
-            
-            # Scan ahead for significant up move within max_lookback
-            for j in range(i, min(i + max_lookback, len(high))):
-                if high[j] > local_high:
-                    local_high = high[j]
-                    local_high_idx = j
-            
-            # Check if significant up move found (using ATR)
-            swing_amount = local_high - low[last_reversal_idx]
-            if swing_amount >= threshold:
-                reversal_points[local_high_idx] = 1
-                last_reversal_idx = local_high_idx
-                last_reversal_type = 'high'
-                i = local_high_idx + 1
-            else:
-                i += 1
-        
-        # Initialize: find first significant move (either up or down)
-        else:
-            # Try to find initial high
-            local_high = high[i]
-            local_high_idx = i
-            for j in range(i, min(i + max_lookback, len(high))):
-                if high[j] > local_high:
-                    local_high = high[j]
-                    local_high_idx = j
-            
-            # Try to find initial low from starting point
-            local_low = low[i]
-            local_low_idx = i
-            for j in range(i, min(i + max_lookback, len(high))):
-                if low[j] < local_low:
-                    local_low = low[j]
-                    local_low_idx = j
-            
-            # Determine which extreme is closer and more significant
-            up_swing = local_high - low[i]
-            down_swing = high[i] - local_low
-            
-            if up_swing >= threshold and local_high_idx <= local_low_idx:
-                # Up move is primary
-                reversal_points[local_high_idx] = 1
-                last_reversal_idx = local_high_idx
-                last_reversal_type = 'high'
-                i = local_high_idx + 1
-            elif down_swing >= threshold and local_low_idx <= local_high_idx:
-                # Down move is primary
-                reversal_points[local_low_idx] = 1
-                last_reversal_idx = local_low_idx
-                last_reversal_type = 'low'
-                i = local_low_idx + 1
-            else:
-                i += 1
+    # Mark reversals: transitions from high to low or low to high
+    for i in range(1, len(high_indices)):
+        # Check if there's a low between two highs (high->low->high = downtrend reversal)
+        lows_between = low_indices[(low_indices > high_indices[i-1]) & (low_indices < high_indices[i])]
+        if len(lows_between) > 0:
+            # Mark the lower swing low as reversal point
+            reversal_idx = lows_between[np.argmin(low[lows_between])]
+            reversals[reversal_idx] = 1
     
-    return reversal_points
+    for i in range(1, len(low_indices)):
+        # Check if there's a high between two lows (low->high->low = uptrend reversal)
+        highs_between = high_indices[(high_indices > low_indices[i-1]) & (high_indices < low_indices[i])]
+        if len(highs_between) > 0:
+            # Mark the higher swing high as reversal point
+            reversal_idx = highs_between[np.argmax(high[highs_between])]
+            reversals[reversal_idx] = 1
+    
+    return reversals
 
 
-def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float = 1.5,
-                          profit_target_ratio: float = 1.5, atr_multiplier: float = 1.5,
-                          max_lookback: int = 50) -> np.ndarray:
+def create_reversal_target(df: pd.DataFrame, lookback: int = 20, 
+                          left_bars: int = 5, right_bars: int = 5) -> np.ndarray:
     """
-    Create binary reversal target using ATR-based Zigzag reversal identification.
+    Create binary reversal target using swing high/low based detection.
     
     Logic:
-    - For each candle, check if a zigzag reversal point is found ahead (within lookahead distance)
-    - If reversal found within next N candles, mark as 1 (reversal opportunity)
+    - For each candle i, check if there's a swing reversal within next 5-20 candles
+    - If reversal found, mark as 1 (reversal opportunity)
     - Otherwise mark as 0
-    - Also mark subsequent candles in the reversal move as 0 (HOLD phase)
+    - Skip lookback period (need past data for features)
     
     Args:
-        df: DataFrame with OHLCV and atr_14
+        df: DataFrame with OHLCV data
         lookback: Number of past candles used as features
-        atr_mult: ATR multiplier for context (deprecated, use atr_multiplier)
-        profit_target_ratio: Profit target ratio for context
-        atr_multiplier: Number of ATRs for swing threshold (e.g., 1.5 ATR)
-        max_lookback: Maximum candles allowed for one swing
+        left_bars: Lookback period for swing detection
+        right_bars: Lookahead period for swing detection
         
     Returns:
         Array of targets (0 or 1) for each candle
@@ -156,24 +126,18 @@ def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float
     high = df['high'].values
     low = df['low'].values
     close = df['close'].values
-    atr = df['atr_14'].values
     
     targets = np.zeros(len(df), dtype=int)
     
-    # Identify all zigzag reversal points with ATR-based threshold
-    zigzag_reversals = identify_zigzag_reversals(
-        high, low, close, atr,
-        atr_multiplier=atr_multiplier,
-        max_lookback=max_lookback
-    )
+    # Identify all reversal points
+    reversals = identify_reversals(high, low, close, left_bars, right_bars)
+    reversal_indices = np.where(reversals == 1)[0]
     
-    reversal_indices = np.where(zigzag_reversals == 1)[0]
-    
-    logger.info(f'Found {len(reversal_indices)} ATR-based zigzag reversal points')
-    logger.info(f'Zigzag parameters: atr_multiplier={atr_multiplier}x, max_lookback={max_lookback} candles')
+    logger.info(f'Found {len(reversal_indices)} swing-based reversal points')
+    logger.info(f'Reversal detection parameters: left_bars={left_bars}, right_bars={right_bars}')
     
     if len(reversal_indices) == 0:
-        logger.warning(f'No zigzag reversals found with atr_multiplier={atr_multiplier}x, max_lookback={max_lookback}')
+        logger.warning(f'No reversals found with left_bars={left_bars}, right_bars={right_bars}')
         return targets
     
     in_hold_phase = False
@@ -188,7 +152,7 @@ def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float
                 in_hold_phase = False
             continue
         
-        # Check if there's a zigzag reversal within next 5-20 candles
+        # Check if there's a reversal within next 5-20 candles
         lookahead_start = i + 1
         lookahead_end = min(i + 20, len(df))
         
@@ -201,8 +165,7 @@ def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float
             reversal_idx = reversals_ahead[0]
             targets[i] = 1
             
-            # Mark subsequent candles as HOLD until reversal completes
-            # Estimate hold duration as distance to reversal point
+            # Mark subsequent candles as HOLD
             in_hold_phase = True
             hold_end_idx = min(reversal_idx + 5, len(df) - 1)
     
