@@ -1,23 +1,20 @@
 """
-Strategy V3: Advanced Cryptocurrency Entry Signal System
+Strategy V3: 7-Classifier Entry Signal System for 15m Crypto Trading
 
-A machine learning-based cryptocurrency entry signal system combining XGBoost
-multi-output regression with comprehensive technical indicators.
+Core modules:
+- StrategyConfig: Configuration management
+- DataLoader: Load OHLCV data from HuggingFace
+- FeatureEngineer: Generate technical features
 """
 
-__version__ = '3.0.0'
-__author__ = 'Trading Strategy Team'
-
-from strategy_v3.config import StrategyConfig
-from strategy_v3.data_loader import DataLoader
-from strategy_v3.feature_engineer import FeatureEngineer
-from strategy_v3.models import ModelEnsemble
-from strategy_v3.signal_generator import SignalGenerator
+from .config import StrategyConfig
+from .data_loader import DataLoader
+from .feature_engineer import FeatureEngineer
 
 __all__ = [
     'StrategyConfig',
     'DataLoader',
     'FeatureEngineer',
-    'ModelEnsemble',
-    'SignalGenerator',
 ]
+
+__version__ = '3.0.0'
