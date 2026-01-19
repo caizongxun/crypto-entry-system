@@ -1,13 +1,13 @@
 #!/usr/bin/env python3
 """
-Strategy V3: Binary Reversal Prediction with Historical Lookback
+Strategy V3: Binary Reversal Prediction with Zigzag-based Target Marking
 
-Predicts whether opening a position at candle t will result in hitting TP before SL,
+Predicts whether opening a position at candle t will result in a zigzag reversal,
 using features from candles t-20 to t-1.
 
 Target definition:
-  1: Opening position at this candle will hit TP (1.5:1 ratio) before SL (1.5 ATR)
-  0: Either no reversal opportunity or already in position (HOLD)
+  1: Zigzag reversal point detected within next 5-20 candles
+  0: No reversal opportunity or already in position (HOLD)
 
 Usage:
     python main_v3.py --mode train --symbol BTCUSDT --timeframe 15m --verbose
@@ -64,9 +64,9 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 
 
 def train_model(args):
-    logger.info('Starting V3 training: Binary Reversal Prediction')
+    logger.info('Starting V3 training: Binary Reversal Prediction with Zigzag')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info('Target: Whether opening position will hit TP before SL')
+    logger.info('Target: Zigzag reversal points within next 5-20 candles')
     
     config = StrategyConfig.get_default()
     config.verbose = args.verbose
@@ -102,13 +102,14 @@ def train_model(args):
     df_features = engineer.engineer_features(df)
     logger.info(f'Total features: {len(df_features.columns) - 5}')
     
-    logger.info('Creating reversal target with historical lookback...')
+    logger.info('Creating reversal target using Zigzag pattern...')
+    logger.info(f'Zigzag threshold: {config.zigzag_threshold_pct}%')
     target = create_reversal_target(
         df_features,
         lookback=config.lookback_window,
         atr_mult=config.atr_multiplier,
         profit_target_ratio=config.profit_target_ratio,
-        forward_window=100
+        zigzag_threshold_pct=config.zigzag_threshold_pct
     )
     
     df_features['reversal_target'] = target
@@ -226,9 +227,10 @@ def train_model(args):
     logger.info(f'Results saved to {results_file}')
     
     logger.info('='*70)
-    logger.info('TRAINING SUMMARY - V3 BINARY REVERSAL PREDICTION')
+    logger.info('TRAINING SUMMARY - V3 BINARY REVERSAL PREDICTION (ZIGZAG)')
     logger.info('='*70)
     logger.info(f'Model: XGBoost Binary Classifier')
+    logger.info(f'Target Definition: Zigzag reversals (threshold={config.zigzag_threshold_pct}%)')
     logger.info(f'Accuracy: {accuracy:.4f}')
     logger.info(f'Precision: {precision:.4f}')
     logger.info(f'Recall: {recall:.4f}')
@@ -239,7 +241,7 @@ def train_model(args):
 
 
 def predict_signals(args):
-    logger.info('Generating V3 reversal signals...')
+    logger.info('Generating V3 reversal signals (Zigzag-based)...')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
     
     config = StrategyConfig.get_default()
@@ -321,7 +323,7 @@ def predict_signals(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Strategy V3: Binary Reversal Prediction with Historical Lookback'
+        description='Strategy V3: Binary Reversal Prediction with Zigzag-based Target Marking'
     )
     parser.add_argument(
         '--mode',
