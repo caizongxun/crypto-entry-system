@@ -103,13 +103,14 @@ def train_model(args):
     logger.info(f'Total features: {len(df_features.columns) - 5}')
     
     logger.info('Creating reversal target using Zigzag pattern...')
-    logger.info(f'Zigzag threshold: {config.zigzag_threshold_pct}%')
+    logger.info(f'Zigzag threshold: {config.zigzag_threshold_pct}%, max_lookback: {config.zigzag_max_lookback}')
     target = create_reversal_target(
         df_features,
         lookback=config.lookback_window,
         atr_mult=config.atr_multiplier,
         profit_target_ratio=config.profit_target_ratio,
-        zigzag_threshold_pct=config.zigzag_threshold_pct
+        zigzag_threshold_pct=config.zigzag_threshold_pct,
+        zigzag_max_lookback=config.zigzag_max_lookback
     )
     
     df_features['reversal_target'] = target
@@ -179,8 +180,9 @@ def train_model(args):
     logger.info(f'Recall: {recall:.4f}')
     logger.info(f'AUC: {auc:.4f}')
     
+    # Fixed confusion matrix handling
     logger.info('Confusion Matrix:')
-    cm = confusion_matrix(y_test, y_pred)
+    cm = confusion_matrix(y_test, y_pred, labels=[0, 1])
     logger.info(f'True Negatives: {cm[0,0]}, False Positives: {cm[0,1]}')
     logger.info(f'False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}')
     
@@ -230,7 +232,9 @@ def train_model(args):
     logger.info('TRAINING SUMMARY - V3 BINARY REVERSAL PREDICTION (ZIGZAG)')
     logger.info('='*70)
     logger.info(f'Model: XGBoost Binary Classifier')
-    logger.info(f'Target Definition: Zigzag reversals (threshold={config.zigzag_threshold_pct}%)')
+    logger.info(f'Target Definition: Zigzag reversals')
+    logger.info(f'Zigzag threshold: {config.zigzag_threshold_pct}%')
+    logger.info(f'Zigzag max_lookback: {config.zigzag_max_lookback} candles')
     logger.info(f'Accuracy: {accuracy:.4f}')
     logger.info(f'Precision: {precision:.4f}')
     logger.info(f'Recall: {recall:.4f}')
