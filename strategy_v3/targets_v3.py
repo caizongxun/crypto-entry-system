@@ -39,17 +39,6 @@ def simulate_trade(high: np.ndarray, low: np.ndarray, close: np.ndarray,
                    max_bars: int = 20) -> Tuple[int, float]:
     """
     Simulate a real trade from entry point.
-    
-    Args:
-    - entry_idx: Entry candle index
-    - is_short: True for short (sell), False for long (buy)
-    - profit_target: Profit target (e.g., 0.5%)
-    - stop_loss: Stop loss level (e.g., 1%)
-    - max_bars: Maximum bars to hold trade
-    
-    Returns:
-    - result: 1 if profitable, 0 if stopped out
-    - exit_profit: Actual profit/loss percentage
     """
     n = len(close)
     if entry_idx + 1 >= n:
@@ -94,28 +83,26 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
                               left_bars: int = 5, right_bars: int = 5,
                               profit_target_pct: float = 0.005,
                               stop_loss_pct: float = 0.01,
-                              max_hold_bars: int = 20) -> Tuple[np.ndarray, np.ndarray]:
+                              max_hold_bars: int = 20,
+                              lead_bars: int = 3) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Create labels based on REAL TRADING SIMULATION.
+    Create LEAD-LAG labels for reversal prediction.
     
-    CRITICAL: This simulates actual trade execution from swing points.
+    CRITICAL CHANGE: Features at time t predict reversal profit at time t+lead_bars
     
-    - At swing high: SHORT (sell)
-    - At swing low: LONG (buy)
-    - Trade succeeds if profit_target reached before stop_loss
-    - Trade fails if stop_loss hit before profit_target
-    - Trade timeout if max_hold_bars exceeded
-    
-    This avoids look-ahead bias: we only use data AT and AFTER entry,
-    simulating real trading decisions.
+    This avoids look-ahead bias and allows models to learn:
+    "When these market microstructure features appear NOW,
+     a profitable reversal will occur SOON"
     
     Args:
+    - lead_bars: How many bars ahead to place the label (default 3)
+                 This is the time window for features to "predict" the reversal
     - profit_target_pct: Profit target (e.g., 0.5%)
     - stop_loss_pct: Stop loss level (e.g., 1%)
     - max_hold_bars: Maximum bars to hold (e.g., 20)
     
     Returns:
-    - targets: Binary array (1 if trade profitable, 0 if stopped out)
+    - targets: Binary array (1 if profitable reversal within lead_bars, 0 otherwise)
     - profits: Actual profit/loss percentages for analysis
     """
     high = df['high'].values
@@ -131,11 +118,11 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
     low_indices = np.where(swing_lows == 1)[0]
     
     logger.info(f'Found {len(high_indices)} swing highs and {len(low_indices)} swing lows')
+    logger.info(f'Lead bars: {lead_bars} (features at t predict reversal at t+{lead_bars})')
     
-    profitable_trades = 0
-    stopped_out_trades = 0
-    timeout_trades = 0
-    total_profit = 0.0
+    profitable_count = 0
+    unprofitable_count = 0
+    forward_looking_count = 0
     
     for idx in high_indices:
         if idx + max_hold_bars >= n:
@@ -149,14 +136,16 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
             max_bars=max_hold_bars
         )
         
-        targets[idx] = result
-        profits[idx] = profit
-        total_profit += profit
-        
         if result == 1:
-            profitable_trades += 1
+            profitable_count += 1
         else:
-            stopped_out_trades += 1
+            unprofitable_count += 1
+        
+        label_idx = idx - lead_bars
+        if label_idx >= 0:
+            targets[label_idx] = result
+            profits[label_idx] = profit
+            forward_looking_count += 1
     
     for idx in low_indices:
         if idx + max_hold_bars >= n:
@@ -170,30 +159,33 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
             max_bars=max_hold_bars
         )
         
-        targets[idx] = result
-        profits[idx] = profit
-        total_profit += profit
-        
         if result == 1:
-            profitable_trades += 1
+            profitable_count += 1
         else:
-            stopped_out_trades += 1
+            unprofitable_count += 1
+        
+        label_idx = idx - lead_bars
+        if label_idx >= 0:
+            targets[label_idx] = result
+            profits[label_idx] = profit
+            forward_looking_count += 1
     
-    total_trades = profitable_trades + stopped_out_trades
+    total_swings = profitable_count + unprofitable_count
+    win_rate = profitable_count / total_swings * 100 if total_swings > 0 else 0
     
-    logger.info(f'Trade Simulation Results:')
-    logger.info(f'Profitable trades (target=1): {profitable_trades}')
-    logger.info(f'Stopped out trades (target=0): {stopped_out_trades}')
-    logger.info(f'Total trades: {total_trades}')
-    logger.info(f'Win rate: {profitable_trades/total_trades*100 if total_trades > 0 else 0:.2f}%')
-    logger.info(f'Total P&L: {total_profit*100:.2f}%')
-    logger.info(f'Average P&L per trade: {total_profit/total_trades*100 if total_trades > 0 else 0:.2f}%')
+    logger.info(f'Swing Point Simulation:')
+    logger.info(f'Profitable swings: {profitable_count}')
+    logger.info(f'Unprofitable swings: {unprofitable_count}')
+    logger.info(f'Total swings: {total_swings}')
+    logger.info(f'Win rate (at swing points): {win_rate:.2f}%')
     
-    if profitable_trades > 0:
-        avg_profit = profits[profits > 0].mean()
-        logger.info(f'Average profit (winning trades): {avg_profit*100:.2f}%')
-    if stopped_out_trades > 0:
-        avg_loss = profits[profits < 0].mean()
-        logger.info(f'Average loss (stopped out): {avg_loss*100:.2f}%')
+    logger.info(f'Forward-looking labels created: {forward_looking_count}')
+    logger.info(f'Labels that predict profitable reversal: {(targets == 1).sum()}')
+    logger.info(f'Labels that predict unprofitable reversal: {(targets == 0).sum()}')
+    
+    if forward_looking_count > 0:
+        profitable_labels = (targets == 1).sum()
+        label_win_rate = profitable_labels / forward_looking_count * 100
+        logger.info(f'Label win rate: {label_win_rate:.2f}% (at feature time t)')
     
     return targets, profits
