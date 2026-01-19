@@ -2,16 +2,18 @@
 """
 Production Reversal Detection System
 
-Components:
-1. Strength-scored reversal targets (0-100 scale) with profitability confirmation
+Core Architecture:
+1. Profitability-based labels: Only reversals followed by profit are positive
 2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost) with weighted voting
-3. Dynamic threshold based on signal strength
-4. Precision-Recall optimization
-5. Real-time prediction capability
+3. Precision-Recall optimization
+4. Real-time prediction capability
+
+Key Insight:
+Labels are defined by actual trading profits, not theoretical swing detection.
+This ensures models learn to identify truly profitable reversals.
 
 Usage:
     python main_production.py --mode train --symbol BTCUSDT --timeframe 15m
-    python main_production.py --mode analyze --symbol BTCUSDT --timeframe 15m
 """
 
 import argparse
@@ -22,7 +24,6 @@ from datetime import datetime
 import pandas as pd
 import numpy as np
 from loguru import logger
-import matplotlib.pyplot as plt
 from sklearn.metrics import precision_recall_curve, f1_score, roc_auc_score, confusion_matrix
 from sklearn.metrics import accuracy_score, precision_score, recall_score
 
@@ -62,7 +63,9 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 def train_production_model(args):
     logger.info('Starting Production Reversal Detection Training')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info('System: Ensemble (XGBoost + LightGBM + CatBoost) with weighted voting')
+    logger.info('Label Definition: Profitability-based (only profitable reversals labeled as 1)')
+    logger.info(f'Profit Target: {args.profit_pct*100:.2f}%')
+    logger.info(f'Future Bars: {args.future_bars}')
     
     config = StrategyConfig.get_default()
     config.verbose = args.verbose
@@ -98,31 +101,37 @@ def train_production_model(args):
     df_features = engineer.engineer_features(df)
     logger.info(f'Generated {len(df_features.columns) - 5} features')
     
-    logger.info('Creating reversal targets with improved strength scoring...')
-    logger.info('Threshold increased to 50.0 for higher signal quality')
-    target, strengths = create_reversal_target_v3(
+    logger.info('Creating profitability-based reversal targets...')
+    target, profits = create_reversal_target_v3(
         df_features,
         lookback=config.lookback_window,
         left_bars=config.swing_left_bars,
         right_bars=config.swing_right_bars,
-        strength_threshold=50.0
+        profit_target_pct=args.profit_pct,
+        future_bars=args.future_bars
     )
     
     df_features['reversal_target'] = target
-    df_features['signal_strength'] = strengths
+    df_features['profit_pct'] = profits * 100
     
     positive_count = (target == 1).sum()
     negative_count = (target == 0).sum()
     
     logger.info(f'Clean data: {len(df_features)} candles')
-    logger.info(f'Reversal opportunities (target=1): {positive_count} ({positive_count/len(target)*100:.2f}%)')
-    logger.info(f'No reversal (target=0): {negative_count} ({negative_count/len(target)*100:.2f}%)')
+    logger.info(f'Profitable reversals (target=1): {positive_count}')
+    logger.info(f'Unprofitable reversals (target=0): {negative_count}')
     
-    if positive_count == 0:
-        logger.error('No positive samples found. Adjust strength threshold.')
+    total_swings = positive_count + negative_count
+    if total_swings == 0:
+        logger.error('No swing points found')
         return False
     
-    logger.info(f'Average signal strength: {strengths[strengths > 0].mean():.1f}')
+    if positive_count == 0:
+        logger.error('No profitable reversals found. Try lower profit_pct or more future_bars.')
+        return False
+    
+    profitability_rate = positive_count / total_swings * 100
+    logger.info(f'Profitability Rate: {profitability_rate:.2f}% (target=1) / {100-profitability_rate:.2f}% (target=0)')
     
     train_size = int(len(df_features) * 0.7)
     df_train = df_features.iloc[:train_size]
@@ -136,7 +145,7 @@ def train_production_model(args):
     logger.info(f'Test positive ratio: {(y_test == 1).sum() / len(y_test) * 100:.2f}%')
     
     feature_cols = [col for col in df_features.columns 
-                    if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'signal_strength']]
+                    if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'profit_pct']]
     
     logger.info('Cleaning features...')
     df_train = _clean_features(df_train, feature_cols)
@@ -152,7 +161,6 @@ def train_production_model(args):
     logger.info('Training ensemble models...')
     models = {}
     predictions_ensemble = []
-    model_names = ['xgboost', 'lightgbm', 'catboost']
     
     models['xgboost'] = XGBClassifier(
         n_estimators=200,
@@ -206,9 +214,9 @@ def train_production_model(args):
     weights = np.array([0.4, 0.4, 0.2])
     ensemble_pred_proba = np.average(predictions_ensemble, axis=0, weights=weights)
     ensemble_auc = roc_auc_score(y_test, ensemble_pred_proba)
-    logger.info(f'Ensemble AUC (weighted): {ensemble_auc:.4f}')
+    logger.info(f'Ensemble AUC (weighted average): {ensemble_auc:.4f}')
     
-    logger.info('Analyzing ensemble predictions for optimal threshold...')
+    logger.info('Optimizing threshold for best F1-Score...')
     precisions, recalls, thresholds = precision_recall_curve(y_test, ensemble_pred_proba)
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10)
     optimal_idx = np.argmax(f1_scores)
@@ -232,8 +240,10 @@ def train_production_model(args):
     logger.info(f'False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}')
     
     false_positive_rate = cm[0,1] / (cm[0,0] + cm[0,1]) if (cm[0,0] + cm[0,1]) > 0 else 0
-    logger.info(f'False Positive Rate: {false_positive_rate:.4f}')
-    logger.info(f'True Positive Rate (Recall): {recall:.4f}')
+    true_positive_rate = cm[1,1] / (cm[1,0] + cm[1,1]) if (cm[1,0] + cm[1,1]) > 0 else 0
+    
+    logger.info(f'False Positive Rate (FPR): {false_positive_rate:.4f}')
+    logger.info(f'True Positive Rate (TPR/Recall): {true_positive_rate:.4f}')
     
     logger.info('Saving models...')
     with open(os.path.join(config.model_save_dir, 'ensemble_models.pkl'), 'wb') as f:
@@ -251,35 +261,33 @@ def train_production_model(args):
     results_data = [{
         'metric': 'accuracy',
         'value': accuracy,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'precision',
         'value': precision,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'recall',
         'value': recall,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'f1_score',
         'value': f1,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'ensemble_auc',
         'value': ensemble_auc,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'optimal_threshold',
         'value': optimal_threshold,
-        'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'false_positive_rate',
         'value': false_positive_rate,
-        'timestamp': datetime.now().isoformat()
     }, {
-        'metric': 'signal_count',
+        'metric': 'true_positive_rate',
+        'value': true_positive_rate,
+    }, {
+        'metric': 'profitable_signals',
         'value': positive_count,
-        'timestamp': datetime.now().isoformat()
+    }, {
+        'metric': 'profitability_rate',
+        'value': profitability_rate,
     }]
     
     results_df = pd.DataFrame(results_data)
@@ -293,9 +301,9 @@ def train_production_model(args):
     logger.info('='*70)
     logger.info('PRODUCTION REVERSAL DETECTION - TRAINING COMPLETE')
     logger.info('='*70)
-    logger.info(f'Model Type: Ensemble (XGBoost + LightGBM + CatBoost) with weighted voting')
-    logger.info(f'Target System: Improved strength-based reversal scoring')
-    logger.info(f'Total Reversal Signals: {positive_count} ({positive_count/len(target)*100:.2f}%)')
+    logger.info(f'Label Definition: Profitable reversals only')
+    logger.info(f'Total Profitable Reversals: {positive_count}')
+    logger.info(f'Profitability Rate: {profitability_rate:.2f}%')
     logger.info(f'Individual Model AUC: XGB={xgb_auc:.4f}, LGB={lgb_auc:.4f}, CAT={cat_auc:.4f}')
     logger.info(f'Ensemble AUC: {ensemble_auc:.4f}')
     logger.info(f'Optimal Threshold: {optimal_threshold:.3f}')
@@ -311,7 +319,7 @@ def train_production_model(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Production Reversal Detection System'
+        description='Production Reversal Detection System with Profitability-Based Labels'
     )
     parser.add_argument(
         '--mode',
@@ -332,6 +340,18 @@ def main():
         default='15m',
         choices=['15m', '1h', '1d'],
         help='Timeframe'
+    )
+    parser.add_argument(
+        '--profit-pct',
+        type=float,
+        default=0.005,
+        help='Minimum profit target (default 0.5%)'
+    )
+    parser.add_argument(
+        '--future-bars',
+        type=int,
+        default=10,
+        help='How many bars ahead to check for profit'
     )
     parser.add_argument(
         '--verbose',
