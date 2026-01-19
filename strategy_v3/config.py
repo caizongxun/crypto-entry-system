@@ -126,6 +126,7 @@ class ReversalConfig:
     min_trend_candles: int = 3
     volume_sma_period: int = 20
     zigzag_threshold_pct: float = 2.0
+    zigzag_max_lookback: int = 50
 
 
 @dataclass
@@ -166,6 +167,10 @@ class StrategyConfig:
     @property
     def zigzag_threshold_pct(self) -> float:
         return self.reversal.zigzag_threshold_pct
+
+    @property
+    def zigzag_max_lookback(self) -> int:
+        return self.reversal.zigzag_max_lookback
 
     def to_dict(self) -> Dict[str, Any]:
         """
