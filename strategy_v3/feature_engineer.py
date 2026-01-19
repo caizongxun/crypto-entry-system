@@ -145,7 +145,7 @@ class FeatureEngineer:
         df['close_sma20_ratio'] = df['close'] / (df['sma_20'] + 1e-8)
         
         # EMA crossovers
-        df['ema9_ema21'] = df['ema_9'] - df['ema_21']
+        df['ema9_ema20'] = df['ema_9'] - df['ema_20']
         df['sma5_sma20'] = df['sma_5'] - df['sma_20']
         
         # Trend strength (ADX-like)
