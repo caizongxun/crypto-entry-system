@@ -3,10 +3,11 @@
 Production Reversal Detection System
 
 Components:
-1. Strength-scored reversal targets (0-100 scale)
-2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost)
-3. Precision-Recall optimization
-4. Real-time prediction capability
+1. Strength-scored reversal targets (0-100 scale) with profitability confirmation
+2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost) with weighted voting
+3. Dynamic threshold based on signal strength
+4. Precision-Recall optimization
+5. Real-time prediction capability
 
 Usage:
     python main_production.py --mode train --symbol BTCUSDT --timeframe 15m
@@ -61,7 +62,7 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 def train_production_model(args):
     logger.info('Starting Production Reversal Detection Training')
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info('System: Ensemble (XGBoost + LightGBM + CatBoost) with strength-based targets')
+    logger.info('System: Ensemble (XGBoost + LightGBM + CatBoost) with weighted voting')
     
     config = StrategyConfig.get_default()
     config.verbose = args.verbose
@@ -97,13 +98,14 @@ def train_production_model(args):
     df_features = engineer.engineer_features(df)
     logger.info(f'Generated {len(df_features.columns) - 5} features')
     
-    logger.info('Creating reversal targets with strength scoring...')
+    logger.info('Creating reversal targets with improved strength scoring...')
+    logger.info('Threshold increased to 50.0 for higher signal quality')
     target, strengths = create_reversal_target_v3(
         df_features,
         lookback=config.lookback_window,
         left_bars=config.swing_left_bars,
         right_bars=config.swing_right_bars,
-        strength_threshold=40.0
+        strength_threshold=50.0
     )
     
     df_features['reversal_target'] = target
@@ -115,6 +117,11 @@ def train_production_model(args):
     logger.info(f'Clean data: {len(df_features)} candles')
     logger.info(f'Reversal opportunities (target=1): {positive_count} ({positive_count/len(target)*100:.2f}%)')
     logger.info(f'No reversal (target=0): {negative_count} ({negative_count/len(target)*100:.2f}%)')
+    
+    if positive_count == 0:
+        logger.error('No positive samples found. Adjust strength threshold.')
+        return False
+    
     logger.info(f'Average signal strength: {strengths[strengths > 0].mean():.1f}')
     
     train_size = int(len(df_features) * 0.7)
@@ -145,6 +152,7 @@ def train_production_model(args):
     logger.info('Training ensemble models...')
     models = {}
     predictions_ensemble = []
+    model_names = ['xgboost', 'lightgbm', 'catboost']
     
     models['xgboost'] = XGBClassifier(
         n_estimators=200,
@@ -160,6 +168,8 @@ def train_production_model(args):
     models['xgboost'].fit(X_train, y_train)
     xgb_pred_proba = models['xgboost'].predict_proba(X_test)[:, 1]
     predictions_ensemble.append(xgb_pred_proba)
+    xgb_auc = roc_auc_score(y_test, xgb_pred_proba)
+    logger.info(f'XGBoost AUC: {xgb_auc:.4f}')
     
     models['lightgbm'] = LGBMClassifier(
         n_estimators=200,
@@ -175,6 +185,8 @@ def train_production_model(args):
     models['lightgbm'].fit(X_train, y_train)
     lgb_pred_proba = models['lightgbm'].predict_proba(X_test)[:, 1]
     predictions_ensemble.append(lgb_pred_proba)
+    lgb_auc = roc_auc_score(y_test, lgb_pred_proba)
+    logger.info(f'LightGBM AUC: {lgb_auc:.4f}')
     
     models['catboost'] = CatBoostClassifier(
         iterations=200,
@@ -188,10 +200,15 @@ def train_production_model(args):
     models['catboost'].fit(X_train, y_train)
     cat_pred_proba = models['catboost'].predict_proba(X_test)[:, 1]
     predictions_ensemble.append(cat_pred_proba)
+    cat_auc = roc_auc_score(y_test, cat_pred_proba)
+    logger.info(f'CatBoost AUC: {cat_auc:.4f}')
     
-    ensemble_pred_proba = np.mean(predictions_ensemble, axis=0)
+    weights = np.array([0.4, 0.4, 0.2])
+    ensemble_pred_proba = np.average(predictions_ensemble, axis=0, weights=weights)
+    ensemble_auc = roc_auc_score(y_test, ensemble_pred_proba)
+    logger.info(f'Ensemble AUC (weighted): {ensemble_auc:.4f}')
     
-    logger.info('Analyzing ensemble predictions...')
+    logger.info('Analyzing ensemble predictions for optimal threshold...')
     precisions, recalls, thresholds = precision_recall_curve(y_test, ensemble_pred_proba)
     f1_scores = 2 * (precisions * recalls) / (precisions + recalls + 1e-10)
     optimal_idx = np.argmax(f1_scores)
@@ -209,22 +226,14 @@ def train_production_model(args):
     recall = recall_score(y_test, y_pred_optimal, zero_division=0)
     f1 = f1_score(y_test, y_pred_optimal, zero_division=0)
     
-    try:
-        auc = roc_auc_score(y_test, ensemble_pred_proba)
-    except:
-        auc = 0
-    
-    logger.info(f'Final Results at Optimal Threshold:')
-    logger.info(f'Accuracy: {accuracy:.4f}')
-    logger.info(f'Precision: {precision:.4f}')
-    logger.info(f'Recall: {recall:.4f}')
-    logger.info(f'F1-Score: {f1:.4f}')
-    logger.info(f'AUC: {auc:.4f}')
-    
     cm = confusion_matrix(y_test, y_pred_optimal, labels=[0, 1])
     logger.info('Confusion Matrix:')
     logger.info(f'True Negatives: {cm[0,0]}, False Positives: {cm[0,1]}')
     logger.info(f'False Negatives: {cm[1,0]}, True Positives: {cm[1,1]}')
+    
+    false_positive_rate = cm[0,1] / (cm[0,0] + cm[0,1]) if (cm[0,0] + cm[0,1]) > 0 else 0
+    logger.info(f'False Positive Rate: {false_positive_rate:.4f}')
+    logger.info(f'True Positive Rate (Recall): {recall:.4f}')
     
     logger.info('Saving models...')
     with open(os.path.join(config.model_save_dir, 'ensemble_models.pkl'), 'wb') as f:
@@ -235,6 +244,9 @@ def train_production_model(args):
     
     with open(os.path.join(config.model_save_dir, 'optimal_threshold.pkl'), 'wb') as f:
         pickle.dump(optimal_threshold, f)
+    
+    with open(os.path.join(config.model_save_dir, 'ensemble_weights.pkl'), 'wb') as f:
+        pickle.dump(weights, f)
     
     results_data = [{
         'metric': 'accuracy',
@@ -253,12 +265,20 @@ def train_production_model(args):
         'value': f1,
         'timestamp': datetime.now().isoformat()
     }, {
-        'metric': 'auc',
-        'value': auc,
+        'metric': 'ensemble_auc',
+        'value': ensemble_auc,
         'timestamp': datetime.now().isoformat()
     }, {
         'metric': 'optimal_threshold',
         'value': optimal_threshold,
+        'timestamp': datetime.now().isoformat()
+    }, {
+        'metric': 'false_positive_rate',
+        'value': false_positive_rate,
+        'timestamp': datetime.now().isoformat()
+    }, {
+        'metric': 'signal_count',
+        'value': positive_count,
         'timestamp': datetime.now().isoformat()
     }]
     
@@ -273,15 +293,17 @@ def train_production_model(args):
     logger.info('='*70)
     logger.info('PRODUCTION REVERSAL DETECTION - TRAINING COMPLETE')
     logger.info('='*70)
-    logger.info(f'Model Type: Ensemble (XGBoost + LightGBM + CatBoost)')
-    logger.info(f'Target System: Strength-based reversal scoring')
+    logger.info(f'Model Type: Ensemble (XGBoost + LightGBM + CatBoost) with weighted voting')
+    logger.info(f'Target System: Improved strength-based reversal scoring')
     logger.info(f'Total Reversal Signals: {positive_count} ({positive_count/len(target)*100:.2f}%)')
+    logger.info(f'Individual Model AUC: XGB={xgb_auc:.4f}, LGB={lgb_auc:.4f}, CAT={cat_auc:.4f}')
+    logger.info(f'Ensemble AUC: {ensemble_auc:.4f}')
     logger.info(f'Optimal Threshold: {optimal_threshold:.3f}')
     logger.info(f'Test Accuracy: {accuracy:.4f}')
     logger.info(f'Test Precision: {precision:.4f}')
     logger.info(f'Test Recall: {recall:.4f}')
     logger.info(f'Test F1-Score: {f1:.4f}')
-    logger.info(f'Test AUC: {auc:.4f}')
+    logger.info(f'False Positive Rate: {false_positive_rate:.4f}')
     logger.info('='*70)
     
     return True
