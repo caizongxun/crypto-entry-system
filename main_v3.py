@@ -25,7 +25,7 @@ import pandas as pd
 import numpy as np
 from loguru import logger
 from xgboost import XGBClassifier
-from sklearn.metrics import accuracy_score, roc_auc_score
+from sklearn.metrics import accuracy_score, roc_auc_score, confusion_matrix, classification_report
 
 from strategy_v3 import (
     StrategyConfig,
@@ -235,9 +235,11 @@ def train_model(args):
     targets_clean = {k: v[:valid_idx] for k, v in targets_dict.items()}
     
     logger.info(f'Clean data: {len(df_clean)} samples')
+    logger.info('\nClass Distribution (Training):') 
     for key, target in targets_clean.items():
-        unique_vals = np.unique(target)
-        logger.info(f'  {key}: classes {list(unique_vals)}')
+        unique, counts = np.unique(target, return_counts=True)
+        dist_str = ' | '.join([f'Class {c}: {cnt} ({cnt/len(target)*100:.1f}%)' for c, cnt in zip(unique, counts)])
+        logger.info(f'  {key}: {dist_str}')
     
     # Split data
     split_idx = int(len(df_clean) * 0.7)
@@ -277,7 +279,7 @@ def train_model(args):
     }
     
     for key, name in classifier_config.items():
-        logger.info(f'Training {name}...')
+        logger.info(f'\nTraining {name}...')
         model = XGBClassifier(
             n_estimators=150,
             max_depth=5,
@@ -291,6 +293,14 @@ def train_model(args):
         
         y_pred = model.predict(X_test)
         accuracy = accuracy_score(y_test[key], y_pred)
+        
+        # Get per-class accuracy
+        unique_classes = np.unique(y_test[key])
+        per_class_acc = {}
+        for cls in unique_classes:
+            mask = y_test[key] == cls
+            if mask.sum() > 0:
+                per_class_acc[cls] = (y_pred[mask] == cls).sum() / mask.sum()
         
         try:
             if len(np.unique(y_test[key])) > 1:
@@ -308,10 +318,11 @@ def train_model(args):
             'timestamp': datetime.now().isoformat()
         })
         
-        logger.info(f'  Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
+        logger.info(f'  Overall Accuracy: {accuracy:.4f}, AUC: {auc:.4f}')
+        logger.info(f'  Per-class accuracy: {per_class_acc}')
     
     # Save models
-    logger.info('Saving models...')
+    logger.info('\nSaving models...')
     for key, model in models.items():
         with open(os.path.join(config.model_save_dir, f'{key}_model.pkl'), 'wb') as f:
             pickle.dump(model, f)
