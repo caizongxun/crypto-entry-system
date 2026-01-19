@@ -4,83 +4,25 @@ from loguru import logger
 from typing import List, Tuple
 
 
-def calculate_zigzag(high: np.ndarray, low: np.ndarray, threshold_pct: float = 2.0) -> Tuple[np.ndarray, List[int]]:
-    """
-    Calculate Zigzag pattern based on price swings.
-    
-    Args:
-        high: Array of high prices
-        low: Array of low prices
-        threshold_pct: Minimum percentage move to confirm swing
-        
-    Returns:
-        - Array of zigzag values (0 for no zigzag point, 1 for high, -1 for low)
-        - List of swing indices
-    """
-    zigzag = np.zeros(len(high), dtype=int)
-    swings = []
-    
-    if len(high) < 3:
-        return zigzag, swings
-    
-    current_high_idx = 0
-    current_low_idx = 0
-    current_high = high[0]
-    current_low = low[0]
-    last_swing_idx = 0
-    last_swing_type = None
-    
-    for i in range(1, len(high)):
-        if high[i] > current_high:
-            current_high = high[i]
-            current_high_idx = i
-        
-        if low[i] < current_low:
-            current_low = low[i]
-            current_low_idx = i
-        
-        # Check if high-to-low swing (reversal from up to down)
-        if last_swing_type != 'low':
-            swing_pct = (current_high - current_low) / current_low * 100
-            if swing_pct >= threshold_pct and current_low_idx > current_high_idx:
-                if last_swing_idx > 0:
-                    zigzag[current_high_idx] = 1
-                    swings.append(('high', current_high_idx, current_high))
-                    last_swing_type = 'high'
-                    last_swing_idx = current_high_idx
-                    current_low = low[current_low_idx]
-                    current_low_idx = current_low_idx
-        
-        # Check if low-to-high swing (reversal from down to up)
-        if last_swing_type != 'high':
-            swing_pct = (current_high - current_low) / current_low * 100
-            if swing_pct >= threshold_pct and current_high_idx > current_low_idx:
-                if last_swing_idx > 0:
-                    zigzag[current_low_idx] = -1
-                    swings.append(('low', current_low_idx, current_low))
-                    last_swing_type = 'low'
-                    last_swing_idx = current_low_idx
-                    current_high = high[current_high_idx]
-                    current_high_idx = current_high_idx
-    
-    return zigzag, swings
-
-
 def identify_zigzag_reversals(high: np.ndarray, low: np.ndarray, close: np.ndarray,
-                             threshold_pct: float = 2.0) -> np.ndarray:
+                             threshold_pct: float = 2.0, max_lookback: int = 50) -> np.ndarray:
     """
-    Identify reversal points using zigzag pattern.
+    Identify reversal points using zigzag pattern with time constraint.
+    
+    Key improvement: Limit each swing to max_lookback candles to prevent
+    oversized swings that span hundreds of candles.
     
     A zigzag reversal is confirmed when:
     1. Price makes a significant swing (threshold_pct% move)
     2. Direction changes (from up to down or down to up)
-    3. New high or low is formed and then broken
+    3. Swing does not exceed max_lookback candles
     
     Args:
         high: Array of high prices
         low: Array of low prices
         close: Array of close prices
         threshold_pct: Minimum percentage move for zigzag swing
+        max_lookback: Maximum candles allowed for one swing (prevents oversized swings)
         
     Returns:
         Array where 1 = reversal point, 0 = not reversal
@@ -90,58 +32,100 @@ def identify_zigzag_reversals(high: np.ndarray, low: np.ndarray, close: np.ndarr
     if len(high) < 5:
         return reversal_points
     
-    # Track local highs and lows
-    local_high_idx = 0
-    local_low_idx = 0
-    local_high = high[0]
-    local_low = low[0]
-    direction = None  # 'up' or 'down'
+    last_reversal_idx = 0
+    last_reversal_type = None
     
-    for i in range(1, len(high) - 1):
-        curr_high = high[i]
-        curr_low = low[i]
-        
-        # Update running high and low
-        if curr_high > local_high:
-            local_high = curr_high
-            local_high_idx = i
-        
-        if curr_low < local_low:
-            local_low = curr_low
+    i = 0
+    while i < len(high) - 1:
+        # If last reversal was 'high', look for 'low'
+        if last_reversal_type == 'high':
+            local_low = high[i]
             local_low_idx = i
-        
-        # Detect reversal: price was going up, now goes down significantly
-        if direction == 'up':
-            swing_pct = (local_high - low[i]) / low[i] * 100
-            if swing_pct >= threshold_pct and local_low_idx > local_high_idx:
-                reversal_points[local_high_idx] = 1
-                local_high = high[i]
-                local_high_idx = i
-                direction = 'down'
-        
-        # Detect reversal: price was going down, now goes up significantly
-        elif direction == 'down':
-            swing_pct = (high[i] - local_low) / local_low * 100
-            if swing_pct >= threshold_pct and local_high_idx > local_low_idx:
+            swing_start = i
+            
+            # Scan ahead for significant down move within max_lookback
+            for j in range(i, min(i + max_lookback, len(high))):
+                if low[j] < local_low:
+                    local_low = low[j]
+                    local_low_idx = j
+            
+            # Check if significant down move found
+            swing_pct = (high[last_reversal_idx] - local_low) / local_low * 100
+            if swing_pct >= threshold_pct:
                 reversal_points[local_low_idx] = 1
-                local_low = low[i]
-                local_low_idx = i
-                direction = 'up'
+                last_reversal_idx = local_low_idx
+                last_reversal_type = 'low'
+                i = local_low_idx + 1
+            else:
+                i += 1
         
-        # Initialize direction if not set
+        # If last reversal was 'low', look for 'high'
+        elif last_reversal_type == 'low':
+            local_high = low[i]
+            local_high_idx = i
+            swing_start = i
+            
+            # Scan ahead for significant up move within max_lookback
+            for j in range(i, min(i + max_lookback, len(high))):
+                if high[j] > local_high:
+                    local_high = high[j]
+                    local_high_idx = j
+            
+            # Check if significant up move found
+            swing_pct = (local_high - low[last_reversal_idx]) / low[last_reversal_idx] * 100
+            if swing_pct >= threshold_pct:
+                reversal_points[local_high_idx] = 1
+                last_reversal_idx = local_high_idx
+                last_reversal_type = 'high'
+                i = local_high_idx + 1
+            else:
+                i += 1
+        
+        # Initialize: find first significant move (either up or down)
         else:
-            if high[i] > high[i-1]:
-                direction = 'up'
-            elif high[i] < high[i-1]:
-                direction = 'down'
+            # Try to find initial high
+            local_high = high[i]
+            local_high_idx = i
+            for j in range(i, min(i + max_lookback, len(high))):
+                if high[j] > local_high:
+                    local_high = high[j]
+                    local_high_idx = j
+            
+            # Try to find initial low from starting point
+            local_low = low[i]
+            local_low_idx = i
+            for j in range(i, min(i + max_lookback, len(high))):
+                if low[j] < local_low:
+                    local_low = low[j]
+                    local_low_idx = j
+            
+            # Determine which extreme is closer and more significant
+            up_swing_pct = (local_high - low[i]) / low[i] * 100
+            down_swing_pct = (high[i] - local_low) / local_low * 100
+            
+            if up_swing_pct >= threshold_pct and local_high_idx <= local_low_idx:
+                # Up move is primary
+                reversal_points[local_high_idx] = 1
+                last_reversal_idx = local_high_idx
+                last_reversal_type = 'high'
+                i = local_high_idx + 1
+            elif down_swing_pct >= threshold_pct and local_low_idx <= local_high_idx:
+                # Down move is primary
+                reversal_points[local_low_idx] = 1
+                last_reversal_idx = local_low_idx
+                last_reversal_type = 'low'
+                i = local_low_idx + 1
+            else:
+                i += 1
     
     return reversal_points
 
 
 def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float = 1.5,
-                          profit_target_ratio: float = 1.5, zigzag_threshold_pct: float = 2.0) -> np.ndarray:
+                          profit_target_ratio: float = 1.5, zigzag_threshold_pct: float = 2.0,
+                          zigzag_max_lookback: int = 50) -> np.ndarray:
     """
-    Create binary reversal target using Zigzag-based reversal identification.
+    Create binary reversal target using improved Zigzag-based reversal identification.
     
     Logic:
     - For each candle, check if a zigzag reversal point is found ahead (within lookback distance)
@@ -155,6 +139,7 @@ def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float
         atr_mult: ATR multiplier for context (not used directly in zigzag)
         profit_target_ratio: Profit target ratio for context
         zigzag_threshold_pct: Minimum percentage move for zigzag swing detection
+        zigzag_max_lookback: Maximum candles allowed for one swing
         
     Returns:
         Array of targets (0 or 1) for each candle
@@ -166,15 +151,20 @@ def create_reversal_target(df: pd.DataFrame, lookback: int = 20, atr_mult: float
     
     targets = np.zeros(len(df), dtype=int)
     
-    # Identify all zigzag reversal points
-    zigzag_reversals = identify_zigzag_reversals(high, low, close, zigzag_threshold_pct)
+    # Identify all zigzag reversal points with time constraint
+    zigzag_reversals = identify_zigzag_reversals(
+        high, low, close, 
+        threshold_pct=zigzag_threshold_pct,
+        max_lookback=zigzag_max_lookback
+    )
     
     reversal_indices = np.where(zigzag_reversals == 1)[0]
     
     logger.info(f'Found {len(reversal_indices)} zigzag reversal points')
+    logger.info(f'Zigzag parameters: threshold={zigzag_threshold_pct}%, max_lookback={zigzag_max_lookback}')
     
     if len(reversal_indices) == 0:
-        logger.warning('No zigzag reversals found with threshold={zigzag_threshold_pct}%')
+        logger.warning(f'No zigzag reversals found with threshold={zigzag_threshold_pct}%, max_lookback={zigzag_max_lookback}')
         return targets
     
     in_hold_phase = False
