@@ -3,13 +3,13 @@
 Strategy V3: 7-Classifier Entry Signal System for 15m Crypto Trading
 
 Predicts 7 classification targets optimized for 15m timeframe:
-  1. MOMENTUM_STATUS: Dead/Weak/Normal/Strong
-  2. VOLUME_SIGNAL: Normal/Spike/Abnormal
-  3. PULLBACK_COMING: Yes/No
-  4. REVERSAL_RISK: Low/Medium/High
-  5. MA_ALIGNMENT: Bullish/Neutral/Bearish
-  6. MTF_STRENGTH: 1-5 (Multi-timeframe strength)
-  7. ENTRY_TIMING: Now/Wait/Too-Late
+  1. MOMENTUM_STATUS: Dead/Weak/Normal/Strong (0-3)
+  2. VOLUME_SIGNAL: Normal/Spike/Abnormal (0-2)
+  3. PULLBACK_COMING: Yes/No (0-1)
+  4. REVERSAL_RISK: Low/Medium/High (0-2)
+  5. MA_ALIGNMENT: Bullish/Neutral/Bearish (0-2)
+  6. MTF_STRENGTH: Weak/Fair/Good/Strong/VeryStrong (0-4)
+  7. ENTRY_TIMING: TooLate/Wait/Now (0-2)
 
 Usage:
     python main_v3.py --mode train --symbol BTCUSDT --timeframe 15m --verbose
@@ -78,6 +78,7 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pct: float = 0.5) -> dict:
     """
     Create 7 classification targets optimized for 15m trading.
+    All target classes start from 0.
     
     Args:
         df: DataFrame with OHLCV data
@@ -117,7 +118,7 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
         downside_pct = ((current_price - future_low) / current_price) * 100
         momentum_pct = ((future_high - future_low) / current_price) * 100
         
-        # 1. MOMENTUM_STATUS
+        # 1. MOMENTUM_STATUS (0-3)
         if momentum_pct < 0.3:
             targets['momentum_status'][i] = 0
         elif momentum_pct < 0.6:
@@ -127,7 +128,7 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
         else:
             targets['momentum_status'][i] = 3
         
-        # 2. VOLUME_SIGNAL
+        # 2. VOLUME_SIGNAL (0-2)
         if avg_volume[i] > 0:
             volume_ratio = future_volume_avg / avg_volume[i]
             if volume_ratio > 2.0:
@@ -137,11 +138,11 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
             else:
                 targets['volume_signal'][i] = 0
         
-        # 3. PULLBACK_COMING
+        # 3. PULLBACK_COMING (0-1)
         if avg_price_range[i] > 0 and future_range > avg_price_range[i] * 1.5:
             targets['pullback_coming'][i] = 1
         
-        # 4. REVERSAL_RISK
+        # 4. REVERSAL_RISK (0-2)
         if upside_pct > 1.5 or downside_pct > 1.5:
             targets['reversal_risk'][i] = 2
         elif upside_pct > 0.8 or downside_pct > 0.8:
@@ -149,7 +150,7 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
         else:
             targets['reversal_risk'][i] = 0
         
-        # 5. MA_ALIGNMENT
+        # 5. MA_ALIGNMENT (0-2)
         ema9 = pd.Series(close[:i+1]).ewm(span=9, adjust=False).mean().iloc[-1] if i > 0 else current_price
         ema21 = pd.Series(close[:i+1]).ewm(span=21, adjust=False).mean().iloc[-1] if i > 0 else current_price
         
@@ -160,8 +161,8 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
         else:
             targets['ma_alignment'][i] = 1
         
-        # 6. MTF_STRENGTH
-        strength = 1
+        # 6. MTF_STRENGTH (0-4, must start from 0)
+        strength = 0
         if upside_pct > 0.5:
             strength += 1
         if downside_pct > 0.5:
@@ -170,9 +171,9 @@ def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pc
             strength += 1
         if momentum_pct > 1.0:
             strength += 1
-        targets['mtf_strength'][i] = min(strength, 5)
+        targets['mtf_strength'][i] = min(strength, 4)
         
-        # 7. ENTRY_TIMING
+        # 7. ENTRY_TIMING (0-2)
         if momentum_pct > 1.5 and upside_pct > 1.0:
             targets['entry_timing'][i] = 2
         elif momentum_pct > 0.5:
@@ -235,8 +236,8 @@ def train_model(args):
     
     logger.info(f'Clean data: {len(df_clean)} samples')
     for key, target in targets_clean.items():
-        pos_count = len(np.where(target != 0)[0])
-        logger.info(f'  {key}: {pos_count} positive samples')
+        unique_vals = np.unique(target)
+        logger.info(f'  {key}: classes {list(unique_vals)}')
     
     # Split data
     split_idx = int(len(df_clean) * 0.7)
