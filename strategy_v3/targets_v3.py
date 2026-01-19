@@ -40,20 +40,21 @@ def calculate_reversal_strength(high: np.ndarray, low: np.ndarray, close: np.nda
     """
     Calculate reversal signal strength (0-100).
     
-    Components:
-    - Base: 30 (confirmed swing point)
-    - Volume: +20 (volume spike relative to history)
-    - ATR: +20 (ATR expansion relative to history)
-    - Trend: +20 (trend confirmation in next bars)
-    - Support/Resistance: +10 (price at key levels)
+    Improved scoring with confirmation logic:
+    - Base: 20 (confirmed swing point)
+    - Volume confirmation: +15
+    - ATR expansion: +15
+    - Trend confirmation: +15
+    - Reversal profitability: +25 (most important)
+    - Support/Resistance: +10
     
     Total max: 100
     """
     n = len(close)
-    if swing_idx < lookback or swing_idx + 3 >= n:
+    if swing_idx < lookback or swing_idx + 10 >= n:
         return 0.0
     
-    score = 30.0  # Base score for confirmed swing
+    score = 20.0
     
     vol_mean = volume[max(0, swing_idx - lookback):swing_idx].mean()
     atr_mean = atr[max(0, swing_idx - lookback):swing_idx].mean()
@@ -61,19 +62,19 @@ def calculate_reversal_strength(high: np.ndarray, low: np.ndarray, close: np.nda
     vol_ratio = volume[swing_idx] / (vol_mean + 1e-10)
     atr_ratio = atr[swing_idx] / (atr_mean + 1e-10)
     
-    if vol_ratio >= 1.2:
-        score += 20.0
+    if vol_ratio >= 1.3:
+        score += 15.0
     elif vol_ratio >= 1.1:
-        score += 10.0
+        score += 8.0
     elif vol_ratio >= 1.0:
-        score += 5.0
+        score += 3.0
     
     if atr_ratio >= 1.5:
-        score += 20.0
+        score += 15.0
     elif atr_ratio >= 1.2:
-        score += 10.0
+        score += 8.0
     elif atr_ratio >= 1.0:
-        score += 5.0
+        score += 3.0
     
     if is_high:
         trend_confirm = sum(1 for i in range(swing_idx + 1, min(swing_idx + 4, n)) if close[i] < close[swing_idx])
@@ -81,11 +82,33 @@ def calculate_reversal_strength(high: np.ndarray, low: np.ndarray, close: np.nda
         trend_confirm = sum(1 for i in range(swing_idx + 1, min(swing_idx + 4, n)) if close[i] > close[swing_idx])
     
     if trend_confirm >= 3:
-        score += 20.0
+        score += 15.0
     elif trend_confirm >= 2:
-        score += 10.0
+        score += 8.0
     elif trend_confirm >= 1:
-        score += 5.0
+        score += 3.0
+    
+    if is_high:
+        if swing_idx + 10 < n:
+            future_low = low[swing_idx + 1:min(swing_idx + 11, n)].min()
+            reversal_range = (close[swing_idx] - future_low) / close[swing_idx]
+        else:
+            reversal_range = 0
+    else:
+        if swing_idx + 10 < n:
+            future_high = high[swing_idx + 1:min(swing_idx + 11, n)].max()
+            reversal_range = (future_high - close[swing_idx]) / close[swing_idx]
+        else:
+            reversal_range = 0
+    
+    if reversal_range >= 0.015:
+        score += 25.0
+    elif reversal_range >= 0.010:
+        score += 15.0
+    elif reversal_range >= 0.005:
+        score += 8.0
+    elif reversal_range >= 0.002:
+        score += 3.0
     
     high_20 = high[max(0, swing_idx - lookback):swing_idx].max()
     low_20 = low[max(0, swing_idx - lookback):swing_idx].min()
@@ -106,9 +129,9 @@ def calculate_reversal_strength(high: np.ndarray, low: np.ndarray, close: np.nda
 
 def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
                               left_bars: int = 5, right_bars: int = 5,
-                              strength_threshold: float = 40.0) -> Tuple[np.ndarray, np.ndarray]:
+                              strength_threshold: float = 50.0) -> Tuple[np.ndarray, np.ndarray]:
     """
-    Create reversal targets using relative strength scoring.
+    Create reversal targets using improved strength scoring.
     
     Returns:
     - targets: Binary array (1 if strong reversal ahead, 0 otherwise)
