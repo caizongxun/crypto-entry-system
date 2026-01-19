@@ -1,23 +1,20 @@
 #!/usr/bin/env python3
 """
-Production Reversal Detection System
+Production Reversal Detection - LEAD-LAG ARCHITECTURE
 
-Core Architecture:
-1. REAL TRADING SIMULATION LABELS
-   - No look-ahead bias
-   - Trades simulated with stop-loss and profit target
-   - Labels reflect actual trade outcomes
+Core Concept:
+Features at time t predict reversal profit at time t+lead_bars
 
-2. Ensemble of 3 models (XGBoost, LightGBM, CatBoost)
+Example:
+- At bar 100: Market shows reversal patterns (volume, momentum, etc)
+- At bar 103-120: Profitable reversal occurs
+- Model learns: These bar-100 features predict profitable reversal
 
-3. Precision-Recall optimization
-
-Key Philosophy:
-Models learn to identify swing points that lead to profitable trades.
-This is based on REAL trading rules, not theoretical analysis.
+This allows the model to learn market microstructure that PRECEDES reversals,
+not just detect reversals after they happen.
 
 Usage:
-    python main_production.py --mode train --symbol BTCUSDT --timeframe 15m
+    python main_production.py --mode train --symbol BTCUSDT --timeframe 15m --lead-bars 3
 """
 
 import argparse
@@ -66,13 +63,11 @@ def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
 
 def train_production_model(args):
     logger.info('='*70)
-    logger.info('Production Reversal Detection Training')
+    logger.info('Production Reversal Detection - LEAD-LAG ARCHITECTURE')
     logger.info('='*70)
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
-    logger.info(f'Label Method: REAL TRADING SIMULATION')
-    logger.info(f'Profit Target: {args.profit_pct*100:.2f}%')
-    logger.info(f'Stop Loss: {args.stop_loss_pct*100:.2f}%')
-    logger.info(f'Max Hold Bars: {args.max_hold_bars}')
+    logger.info(f'Label Method: LEAD-LAG (features at t predict reversal at t+{args.lead_bars})')
+    logger.info(f'Trading Parameters: PT={args.profit_pct*100:.2f}%, SL={args.stop_loss_pct*100:.2f}%, MaxBars={args.max_hold_bars}')
     logger.info('='*70)
     
     config = StrategyConfig.get_default()
@@ -109,7 +104,8 @@ def train_production_model(args):
     df_features = engineer.engineer_features(df)
     logger.info(f'Generated {len(df_features.columns) - 5} features')
     
-    logger.info('Simulating trades and creating labels...')
+    logger.info('Creating LEAD-LAG labels...')
+    logger.info(f'Features at time t will predict reversal at time t+{args.lead_bars}')
     target, profits = create_reversal_target_v3(
         df_features,
         lookback=config.lookback_window,
@@ -117,7 +113,8 @@ def train_production_model(args):
         right_bars=config.swing_right_bars,
         profit_target_pct=args.profit_pct,
         stop_loss_pct=args.stop_loss_pct,
-        max_hold_bars=args.max_hold_bars
+        max_hold_bars=args.max_hold_bars,
+        lead_bars=args.lead_bars
     )
     
     df_features['reversal_target'] = target
@@ -125,23 +122,24 @@ def train_production_model(args):
     
     positive_count = (target == 1).sum()
     negative_count = (target == 0).sum()
-    total_swings = positive_count + negative_count
+    total_labeled = positive_count + negative_count
     
-    logger.info(f'Swing Point Analysis:')
-    logger.info(f'Profitable trades (target=1): {positive_count}')
-    logger.info(f'Stopped out trades (target=0): {negative_count}')
-    logger.info(f'Total swing points analyzed: {total_swings}')
+    logger.info(f'Label Analysis:')
+    logger.info(f'Profitable reversals (target=1): {positive_count}')
+    logger.info(f'Unprofitable reversals (target=0): {negative_count}')
+    logger.info(f'Total labeled points: {total_labeled}')
+    logger.info(f'Unlabeled points: {len(df_features) - total_labeled}')
     
-    if total_swings == 0:
-        logger.error('No swing points found')
+    if total_labeled == 0:
+        logger.error('No labeled data found')
         return False
     
     if positive_count == 0:
-        logger.error('No profitable trades found. Try different parameters.')
+        logger.error('No profitable reversals found')
         return False
     
-    win_rate = positive_count / total_swings * 100
-    logger.info(f'Win Rate: {win_rate:.2f}%')
+    label_win_rate = positive_count / total_labeled * 100
+    logger.info(f'Win rate (among labeled points): {label_win_rate:.2f}%')
     
     train_size = int(len(df_features) * 0.7)
     df_train = df_features.iloc[:train_size]
@@ -151,8 +149,10 @@ def train_production_model(args):
     y_test = df_test['reversal_target'].values
     
     logger.info(f'Train/Test Split: {len(df_train)}/{len(df_test)}')
-    logger.info(f'Train win rate: {(y_train == 1).sum() / len(y_train) * 100:.2f}%')
-    logger.info(f'Test win rate: {(y_test == 1).sum() / len(y_test) * 100:.2f}%')
+    logger.info(f'Train labeled ratio: {(y_train != 0).sum() / len(y_train) * 100:.2f}%')
+    logger.info(f'Test labeled ratio: {(y_test != 0).sum() / len(y_test) * 100:.2f}%')
+    logger.info(f'Train win rate (labeled): {(y_train == 1).sum() / ((y_train == 1).sum() + (y_train == 0).sum()) * 100 if ((y_train == 1).sum() + (y_train == 0).sum()) > 0 else 0:.2f}%')
+    logger.info(f'Test win rate (labeled): {(y_test == 1).sum() / ((y_test == 1).sum() + (y_test == 0).sum()) * 100 if ((y_test == 1).sum() + (y_test == 0).sum()) > 0 else 0:.2f}%')
     
     feature_cols = [col for col in df_features.columns 
                     if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'trade_pnl']]
@@ -166,7 +166,7 @@ def train_production_model(args):
     logger.info(f'Using {len(feature_cols)} features')
     
     scale_pos_weight = (y_train == 0).sum() / ((y_train == 1).sum() + 1)
-    logger.info(f'Class weight: {scale_pos_weight:.2f}:1 (negative:positive)')
+    logger.info(f'Class weight: {scale_pos_weight:.2f}:1')
     
     logger.info('Training ensemble models...')
     models = {}
@@ -277,7 +277,8 @@ def train_production_model(args):
     config_dict = {
         'profit_target': args.profit_pct,
         'stop_loss': args.stop_loss_pct,
-        'max_hold_bars': args.max_hold_bars
+        'max_hold_bars': args.max_hold_bars,
+        'lead_bars': args.lead_bars
     }
     with open(os.path.join(config.model_save_dir, 'trading_config.pkl'), 'wb') as f:
         pickle.dump(config_dict, f)
@@ -305,10 +306,13 @@ def train_production_model(args):
         'value': fpr,
     }, {
         'metric': 'win_rate',
-        'value': win_rate,
+        'value': label_win_rate,
     }, {
         'metric': 'profitable_signals',
         'value': positive_count,
+    }, {
+        'metric': 'lead_bars',
+        'value': args.lead_bars,
     }]
     
     results_df = pd.DataFrame(results_data)
@@ -322,8 +326,9 @@ def train_production_model(args):
     logger.info('='*70)
     logger.info('TRAINING COMPLETE')
     logger.info('='*70)
+    logger.info(f'Architecture: LEAD-LAG (lead={args.lead_bars} bars)')
     logger.info(f'Trading Parameters: PT={args.profit_pct*100:.2f}%, SL={args.stop_loss_pct*100:.2f}%, MaxBars={args.max_hold_bars}')
-    logger.info(f'Overall Win Rate: {win_rate:.2f}%')
+    logger.info(f'Label Win Rate: {label_win_rate:.2f}%')
     logger.info(f'Profitable Signals: {positive_count}')
     logger.info(f'Ensemble AUC: {ensemble_auc:.4f}')
     logger.info(f'Test Precision: {precision:.4f}')
@@ -336,7 +341,7 @@ def train_production_model(args):
 
 def main():
     parser = argparse.ArgumentParser(
-        description='Production Reversal Detection with Real Trading Simulation'
+        description='Production Reversal Detection - LEAD-LAG Architecture'
     )
     parser.add_argument(
         '--mode',
@@ -375,6 +380,12 @@ def main():
         type=int,
         default=20,
         help='Maximum bars to hold trade (default 20)'
+    )
+    parser.add_argument(
+        '--lead-bars',
+        type=int,
+        default=3,
+        help='How many bars ahead to place label (default 3)'
     )
     parser.add_argument(
         '--verbose',
