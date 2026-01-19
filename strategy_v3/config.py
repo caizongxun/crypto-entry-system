@@ -117,7 +117,7 @@ class DataConfig:
 @dataclass
 class ReversalConfig:
     """
-    Configuration for binary reversal prediction using Zigzag.
+    Configuration for binary reversal prediction using ATR-based Zigzag.
     """
     lookback_window: int = 20
     atr_multiplier: float = 1.5
@@ -125,8 +125,8 @@ class ReversalConfig:
     forward_window: int = 100
     min_trend_candles: int = 3
     volume_sma_period: int = 20
-    zigzag_threshold_pct: float = 2.0
-    zigzag_max_lookback: int = 50
+    zigzag_atr_multiplier: float = 1.5  # ATR-based threshold (e.g., 1.5 ATR per swing)
+    zigzag_max_lookback: int = 50       # Max candles for one swing
 
 
 @dataclass
@@ -165,8 +165,8 @@ class StrategyConfig:
         return self.reversal.profit_target_ratio
 
     @property
-    def zigzag_threshold_pct(self) -> float:
-        return self.reversal.zigzag_threshold_pct
+    def zigzag_atr_multiplier(self) -> float:
+        return self.reversal.zigzag_atr_multiplier
 
     @property
     def zigzag_max_lookback(self) -> int:
@@ -202,9 +202,10 @@ class StrategyConfig:
     @staticmethod
     def get_conservative() -> 'StrategyConfig':
         """
-        Get conservative configuration (higher confidence, fewer signals).
+        Get conservative configuration (higher ATR threshold, fewer signals).
         """
         config = StrategyConfig()
+        config.reversal.zigzag_atr_multiplier = 2.0  # Require 2.0 ATR swings
         config.signals.min_confidence = 0.55
         config.signals.buy_signal_threshold = 0.60
         config.signals.sell_signal_threshold = 0.60
@@ -213,9 +214,10 @@ class StrategyConfig:
     @staticmethod
     def get_aggressive() -> 'StrategyConfig':
         """
-        Get aggressive configuration (lower confidence, more signals).
+        Get aggressive configuration (lower ATR threshold, more signals).
         """
         config = StrategyConfig()
+        config.reversal.zigzag_atr_multiplier = 1.0  # Require 1.0 ATR swings
         config.signals.min_confidence = 0.30
         config.signals.buy_signal_threshold = 0.35
         config.signals.sell_signal_threshold = 0.35
