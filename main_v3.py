@@ -44,6 +44,37 @@ def setup_logging(verbose: bool = False):
     )
 
 
+def _clean_features(df: pd.DataFrame, feature_cols: list) -> pd.DataFrame:
+    """
+    Clean features by removing inf and NaN values.
+    
+    Args:
+        df: DataFrame with features
+        feature_cols: List of feature column names
+        
+    Returns:
+        Cleaned DataFrame
+    """
+    df = df.copy()
+    
+    # Replace inf with NaN
+    df[feature_cols] = df[feature_cols].replace([np.inf, -np.inf], np.nan)
+    
+    # Count NaN before cleaning
+    nan_before = df[feature_cols].isna().sum().sum()
+    
+    # Fill NaN with 0
+    df[feature_cols] = df[feature_cols].fillna(0)
+    
+    # Clip extreme values
+    df[feature_cols] = df[feature_cols].clip(-1e6, 1e6)
+    
+    if nan_before > 0:
+        logger.info(f'Cleaned {nan_before} inf/NaN values')
+    
+    return df
+
+
 def _create_15m_targets(df: pd.DataFrame, forward_window: int = 5, min_profit_pct: float = 0.5) -> dict:
     """
     Create 7 classification targets optimized for 15m trading.
@@ -219,6 +250,12 @@ def train_model(args):
     
     # Prepare features
     feature_cols = [col for col in df_clean.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
+    
+    # Clean features before training
+    logger.info('Cleaning features...')
+    df_train = _clean_features(df_train, feature_cols)
+    df_test = _clean_features(df_test, feature_cols)
+    
     X_train = df_train[feature_cols]
     X_test = df_test[feature_cols]
     logger.info(f'Using {len(feature_cols)} features')
@@ -344,6 +381,10 @@ def predict_signals(args):
     except FileNotFoundError as e:
         logger.error(f'Models not found: {str(e)}')
         return False
+    
+    # Clean features
+    logger.info('Cleaning features...')
+    df_features = _clean_features(df_features, feature_cols)
     
     # Generate predictions
     logger.info('Generating predictions...')
