@@ -117,7 +117,7 @@ class DataConfig:
 @dataclass
 class ReversalConfig:
     """
-    Configuration for binary reversal prediction using ATR-based Zigzag.
+    Configuration for binary reversal prediction using Swing High/Low detection.
     """
     lookback_window: int = 20
     atr_multiplier: float = 1.5
@@ -125,8 +125,8 @@ class ReversalConfig:
     forward_window: int = 100
     min_trend_candles: int = 3
     volume_sma_period: int = 20
-    zigzag_atr_multiplier: float = 1.5  # ATR-based threshold (e.g., 1.5 ATR per swing)
-    zigzag_max_lookback: int = 50       # Max candles for one swing
+    swing_left_bars: int = 5   # Lookback bars for swing high/low detection
+    swing_right_bars: int = 5  # Lookahead bars for swing high/low detection
 
 
 @dataclass
@@ -165,12 +165,12 @@ class StrategyConfig:
         return self.reversal.profit_target_ratio
 
     @property
-    def zigzag_atr_multiplier(self) -> float:
-        return self.reversal.zigzag_atr_multiplier
+    def swing_left_bars(self) -> int:
+        return self.reversal.swing_left_bars
 
     @property
-    def zigzag_max_lookback(self) -> int:
-        return self.reversal.zigzag_max_lookback
+    def swing_right_bars(self) -> int:
+        return self.reversal.swing_right_bars
 
     def to_dict(self) -> Dict[str, Any]:
         """
@@ -202,10 +202,11 @@ class StrategyConfig:
     @staticmethod
     def get_conservative() -> 'StrategyConfig':
         """
-        Get conservative configuration (higher ATR threshold, fewer signals).
+        Get conservative configuration (stricter swing detection, fewer signals).
         """
         config = StrategyConfig()
-        config.reversal.zigzag_atr_multiplier = 2.0  # Require 2.0 ATR swings
+        config.reversal.swing_left_bars = 7   # More bars to left
+        config.reversal.swing_right_bars = 7  # More bars to right
         config.signals.min_confidence = 0.55
         config.signals.buy_signal_threshold = 0.60
         config.signals.sell_signal_threshold = 0.60
@@ -214,10 +215,11 @@ class StrategyConfig:
     @staticmethod
     def get_aggressive() -> 'StrategyConfig':
         """
-        Get aggressive configuration (lower ATR threshold, more signals).
+        Get aggressive configuration (looser swing detection, more signals).
         """
         config = StrategyConfig()
-        config.reversal.zigzag_atr_multiplier = 1.0  # Require 1.0 ATR swings
+        config.reversal.swing_left_bars = 3   # Fewer bars to left
+        config.reversal.swing_right_bars = 3  # Fewer bars to right
         config.signals.min_confidence = 0.30
         config.signals.buy_signal_threshold = 0.35
         config.signals.sell_signal_threshold = 0.35
