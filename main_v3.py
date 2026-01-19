@@ -41,10 +41,12 @@ def setup_logging(verbose: bool = False):
 
 def _create_regression_targets(df: pd.DataFrame, lookback: int = 20, forward_lookback: int = 20) -> tuple:
     """
-    Create regression targets by predicting future support/resistance.
+    Create regression targets by predicting future support/resistance as RELATIVE DISTANCES.
     
-    Key insight: Shift targets forward so we predict FUTURE price extremes,
-    not past ones. This avoids data leakage.
+    Instead of predicting absolute price levels (which change over time),
+    predict how far support/resistance will be from current price.
+    
+    This is more predictable because it's normalized by current price.
     
     Args:
         df: DataFrame with OHLCV data
@@ -52,22 +54,25 @@ def _create_regression_targets(df: pd.DataFrame, lookback: int = 20, forward_loo
         forward_lookback: Number of periods ahead to predict support/resistance
         
     Returns:
-        Tuple of (current_support, current_resistance, future_support, future_resistance, direction)
+        Tuple of (support_distance_pct, resistance_distance_pct, direction)
     """
-    # Current support/resistance (calculated from past lookback periods)
-    current_support = df['low'].rolling(window=lookback).min()
-    current_resistance = df['high'].rolling(window=lookback).max()
+    # Current price
+    current_price = df['close']
     
     # Future support/resistance (what will be the extremes in next forward_lookback periods)
-    # This is the target we want to predict
     future_support = df['low'].rolling(window=forward_lookback).min().shift(-forward_lookback)
     future_resistance = df['high'].rolling(window=forward_lookback).max().shift(-forward_lookback)
     
+    # Calculate as PERCENTAGE DISTANCE from current price
+    # This is scale-invariant and more predictable
+    support_distance_pct = ((current_price - future_support) / current_price) * 100  # How much below
+    resistance_distance_pct = ((future_resistance - current_price) / current_price) * 100  # How much above
+    
     # Price direction in forward window
     future_close = df['close'].shift(-forward_lookback)
-    direction = np.where(future_close > df['close'], 1, -1)
+    direction = np.where(future_close > current_price, 1, -1)
     
-    return current_support, current_resistance, future_support, future_resistance, direction
+    return support_distance_pct, resistance_distance_pct, direction
 
 
 def train_model(args):
@@ -117,20 +122,22 @@ def train_model(args):
 
     logger.info(f'Total features: {len(df_features.columns) - 5}')
 
-    # Create targets: predict FUTURE support/resistance, not current ones
-    logger.info('Creating targets (predicting future support/resistance)...')
-    current_support, current_resistance, future_support, future_resistance, direction = _create_regression_targets(
+    # Create targets: predict RELATIVE support/resistance distances
+    logger.info('Creating targets (predicting relative support/resistance distances)...')
+    support_dist_pct, resistance_dist_pct, direction = _create_regression_targets(
         df, lookback=20, forward_lookback=20
     )
     
     # Remove rows with NaN - this creates clean aligned data
-    mask = future_support.notna() & future_resistance.notna()
+    mask = support_dist_pct.notna() & resistance_dist_pct.notna()
     df_clean = df_features[mask].copy()
-    future_support_clean = future_support[mask]
-    future_resistance_clean = future_resistance[mask]
+    support_dist_pct_clean = support_dist_pct[mask]
+    resistance_dist_pct_clean = resistance_dist_pct[mask]
     direction_clean = direction[mask]
 
     logger.info(f'Clean data: {len(df_clean)} samples')
+    logger.info(f'Support distance range: {support_dist_pct_clean.min():.2f}% to {support_dist_pct_clean.max():.2f}%')
+    logger.info(f'Resistance distance range: {resistance_dist_pct_clean.min():.2f}% to {resistance_dist_pct_clean.max():.2f}%')
 
     # Now split the CLEAN data into train/test
     logger.info('Splitting clean data into train/test sets...')
@@ -139,19 +146,20 @@ def train_model(args):
     df_train = df_clean.iloc[:split_idx].copy()
     df_test = df_clean.iloc[split_idx:].copy()
     
-    y_train_support = future_support_clean.iloc[:split_idx]
-    y_train_resistance = future_resistance_clean.iloc[:split_idx]
-    y_train_breakout = (future_resistance_clean.iloc[:split_idx] > df_train['close']).astype(float)
+    y_train_support = support_dist_pct_clean.iloc[:split_idx]
+    y_train_resistance = resistance_dist_pct_clean.iloc[:split_idx]
+    # Breakout: whether resistance_distance > 0 (price will increase)
+    y_train_breakout = (resistance_dist_pct_clean.iloc[:split_idx] > 0).astype(float)
     
-    y_test_support = future_support_clean.iloc[split_idx:]
-    y_test_resistance = future_resistance_clean.iloc[split_idx:]
-    y_test_breakout = (future_resistance_clean.iloc[split_idx:] > df_test['close']).astype(float)
+    y_test_support = support_dist_pct_clean.iloc[split_idx:]
+    y_test_resistance = resistance_dist_pct_clean.iloc[split_idx:]
+    y_test_breakout = (resistance_dist_pct_clean.iloc[split_idx:] > 0).astype(float)
 
     logger.info(f'Training samples: {len(df_train)}')
     logger.info(f'Testing samples: {len(df_test)}')
-    logger.info(f'Average support prediction (train): {y_train_support.mean():.2f}')
-    logger.info(f'Average resistance prediction (train): {y_train_resistance.mean():.2f}')
-    logger.info(f'Current price range: {df["close"].mean():.2f}')
+    logger.info(f'Avg support distance (train): {y_train_support.mean():.2f}%')
+    logger.info(f'Avg resistance distance (train): {y_train_resistance.mean():.2f}%')
+    logger.info(f'Breakout ratio: {y_train_breakout.mean():.2%}')
 
     # Get feature columns (exclude OHLCV)
     feature_cols = [col for col in df_clean.columns if col not in ['open', 'high', 'low', 'close', 'volume']]
@@ -229,7 +237,8 @@ def train_model(args):
                 logger.info(f"  Status: Mild overfitting")
             else:
                 logger.info(f"  Status: Healthy model")
-        logger.info(f"  Test MAE: {row['test_mae']:.4f} (avg prediction error)")
+        if row['test_mae'] is not None:
+            logger.info(f"  Test MAE: {row['test_mae']:.4f}% (avg distance error)")
 
     return True
 
@@ -362,23 +371,23 @@ def backtest_strategy(args):
     df_features = engineer.engineer_features(df)
 
     # Create targets
-    current_support, current_resistance, future_support, future_resistance, direction = _create_regression_targets(
+    support_dist_pct, resistance_dist_pct, direction = _create_regression_targets(
         df, lookback=20, forward_lookback=20
     )
 
     # Remove NaN
-    mask = future_support.notna() & future_resistance.notna()
+    mask = support_dist_pct.notna() & resistance_dist_pct.notna()
     df_clean = df_features[mask].copy()
-    future_support = future_support[mask]
-    future_resistance = future_resistance[mask]
+    support_dist_pct = support_dist_pct[mask]
+    resistance_dist_pct = resistance_dist_pct[mask]
 
     # Split into train/test
     split_idx = int(len(df_clean) * 0.7)
     df_test = df_clean.iloc[split_idx:].copy()
     
-    y_test_support = future_support.iloc[split_idx:]
-    y_test_resistance = future_resistance.iloc[split_idx:]
-    y_test_breakout = (future_resistance.iloc[split_idx:] > df_test['close']).astype(float)
+    y_test_support = support_dist_pct.iloc[split_idx:]
+    y_test_resistance = resistance_dist_pct.iloc[split_idx:]
+    y_test_breakout = (resistance_dist_pct.iloc[split_idx:] > 0).astype(float)
 
     # Load models
     logger.info('Loading trained models...')
