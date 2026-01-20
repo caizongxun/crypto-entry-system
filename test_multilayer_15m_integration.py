@@ -3,17 +3,27 @@ import pandas as pd
 from pathlib import Path
 from loguru import logger
 import sys
+import os
 
 sys.path.insert(0, str(Path(__file__).parent))
 
+from strategy_v3 import StrategyConfig, DataLoader, FeatureEngineer
 from strategy_v3.multilayer_features import MultiLayerFeatureEngineer
 from strategy_v3.targets_multilayer import MultiLayerLabelGenerator
 from strategy_v3.pattern_detector import PatternDetector
-from strategy_v3.feature_engineer import FeatureEngineer
-from data_loader import DataLoader
+from strategy_v3.targets_pattern_v1 import create_pattern_labels
 
 logger.remove()
 logger.add(lambda msg: print(msg, end=''), format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}')
+
+
+def setup_logging():
+    logger.remove()
+    logger.add(
+        sys.stderr,
+        level='INFO',
+        format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}'
+    )
 
 
 def main():
@@ -21,25 +31,51 @@ def main():
     logger.info('Multi-Layer Feature Integration Test for 15m Framework')
     logger.info('='*70)
     
+    config = StrategyConfig.get_default()
+    os.makedirs(config.model_save_dir, exist_ok=True)
+    os.makedirs(config.results_save_dir, exist_ok=True)
+    
     logger.info('Loading 15m data...')
-    loader = DataLoader()
-    df = loader.load_bitcoin_15m()
+    loader = DataLoader(
+        hf_repo=config.data.hf_repo,
+        cache_dir=config.data.cache_dir,
+        verbose=False
+    )
+    
+    df = loader.load_data(
+        symbol='BTCUSDT',
+        timeframe='15m',
+        cache=True
+    )
+    
+    if not loader.validate_data(df):
+        logger.error('Data validation failed')
+        return False
     
     logger.info(f'Loaded {len(df)} candles')
     logger.info(f'Date range: {df.index[0]} to {df.index[-1]}')
     
     logger.info('\nEngineering existing features...')
-    feature_engineer = FeatureEngineer()
+    feature_engineer = FeatureEngineer(config)
     df = feature_engineer.engineer_features(df)
-    logger.info(f'Generated {len([c for c in df.columns if c not in ["open", "high", "low", "close", "volume"]])} existing features')
+    logger.info(f'Generated existing features')
     
     logger.info('\nDetecting patterns...')
-    pattern_detector = PatternDetector()
-    patterns_df = pattern_detector.detect_patterns(df)
-    logger.info(f'Detected {len(patterns_df)} patterns')
-    if len(patterns_df) > 0:
-        logger.info(f'  - Double tops: {len(patterns_df[patterns_df["pattern_type"] == "double_top"])}')
-        logger.info(f'  - Double bottoms: {len(patterns_df[patterns_df["pattern_type"] == "double_bottom"])}')
+    target, profits = create_pattern_labels(
+        df,
+        profit_target_pct=0.01,
+        stop_loss_pct=0.01,
+        max_hold_bars=20,
+        min_breakout_pct=0.005
+    )
+    
+    df['pattern_target'] = target
+    df['pattern_pnl'] = profits * 100
+    
+    pattern_mask = target != -1
+    pattern_count = pattern_mask.sum()
+    
+    logger.info(f'Detected patterns: {pattern_count}')
     
     logger.info('\nEngineering multi-layer features...')
     multilayer_engineer = MultiLayerFeatureEngineer()
@@ -53,45 +89,32 @@ def main():
     logger.info('  - Risk: 5 features')
     logger.info('  - Environment: 5 features')
     
-    logger.info('\nGenerating multi-layer labels...')
-    label_generator = MultiLayerLabelGenerator(config={
-        'quality_threshold': 60,
-        'min_confirmations': 2,
-        'volatility_threshold': 0.03,
-        'gap_threshold': 0.02,
-    })
-    
-    labels, confidences, stats = label_generator.generate_multilayer_labels(df, patterns_df)
-    
-    logger.info('\nMulti-Layer Label Statistics:')
-    logger.info(f'  - Total patterns: {stats["total_patterns"]}')
-    logger.info(f'  - Labeled patterns: {stats["labeled_patterns"]}')
-    logger.info(f'  - High confidence (3+ layers): {stats["high_confidence_patterns"]}')
-    logger.info(f'  - Label rate: {stats["label_rate"]:.2%}')
-    logger.info(f'  - Profitable rate: {stats["profitable_rate"]:.2%}')
-    logger.info(f'  - Average confidence: {stats["average_confidence"]:.2f} layers')
-    
-    logger.info('\nLabel Distribution:')
-    logger.info(f'  - No trade (-1): {np.sum(labels == -1)} ({np.sum(labels == -1) / len(labels) * 100:.2f}%)')
-    logger.info(f'  - Uncertain (0): {np.sum(labels == 0)} ({np.sum(labels == 0) / len(labels) * 100:.2f}%)')
-    logger.info(f'  - Bullish (1): {np.sum(labels == 1)} ({np.sum(labels == 1) / len(labels) * 100:.2f}%)')
-    logger.info(f'  - Bearish (-1): {np.sum(labels == -1)} ({np.sum(labels == -1) / len(labels) * 100:.2f}%)')
-    
-    logger.info('\nConfidence Distribution:')
-    for conf_level in range(1, 6):
-        count = np.sum(confidences == conf_level)
-        if count > 0:
-            logger.info(f'  - {conf_level} layers: {count} ({count / np.sum(confidences > 0) * 100:.2f}% of labeled)')
-    
     logger.info('\nCombining all features...')
     df_combined = pd.concat([df, multilayer_features], axis=1)
-    logger.info(f'Total features in combined dataset: {len(df_combined.columns) - 5}')  # -5 for OHLCV
+    logger.info(f'Total feature count: {len(df_combined.columns) - 5}')  # -5 for OHLCV
     
-    logger.info('\nFeature Statistics:')
-    feature_cols = [c for c in multilayer_features.columns]
-    for col in feature_cols[:5]:
-        logger.info(f'  - {col}: mean={multilayer_features[col].mean():.4f}, std={multilayer_features[col].std():.4f}')
-    logger.info(f'  - ... ({len(feature_cols)} total)')
+    logger.info('\nFeature Statistics (Sample):')
+    feature_cols = list(multilayer_features.columns)[:5]
+    for col in feature_cols:
+        valid_mask = np.isfinite(multilayer_features[col])
+        if valid_mask.sum() > 0:
+            mean_val = multilayer_features[col][valid_mask].mean()
+            std_val = multilayer_features[col][valid_mask].std()
+            logger.info(f'  - {col}: mean={mean_val:.6f}, std={std_val:.6f}')
+    
+    logger.info('\nMulti-Layer Label Statistics:')
+    positive = (target == 1).sum()
+    negative = (target == 0).sum()
+    total_labeled = positive + negative
+    
+    if total_labeled > 0:
+        win_rate = positive / total_labeled * 100
+        logger.info(f'  - Total labeled patterns: {total_labeled}')
+        logger.info(f'  - Profitable patterns: {positive}')
+        logger.info(f'  - Unprofitable patterns: {negative}')
+        logger.info(f'  - Win rate: {win_rate:.2f}%')
+    else:
+        logger.info(f'  - No labeled patterns found')
     
     logger.info('\nProjected Win Rate Improvement:')
     logger.info('  Baseline (single layer): 30.61%')
@@ -109,7 +132,11 @@ def main():
     logger.info('='*70)
     logger.info('Integration test complete')
     logger.info('='*70)
+    
+    return True
 
 
 if __name__ == '__main__':
-    main()
+    setup_logging()
+    success = main()
+    sys.exit(0 if success else 1)
