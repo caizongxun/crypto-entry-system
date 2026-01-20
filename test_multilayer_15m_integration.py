@@ -22,13 +22,19 @@ logger.add(
 def apply_multilayer_confirmation(df, multilayer_features, target, min_confirmations=2):
     """
     Apply multi-layer confirmation to filter patterns.
+    Only processes rows where target != -1
     
     Returns:
         filtered_labels: Labels after multi-layer confirmation
         confidence_scores: Confidence score for each pattern
     """
     filtered_labels = target.copy()
-    confidence_scores = np.zeros(len(df))
+    confidence_scores = np.zeros(len(df), dtype=int)
+    
+    pattern_mask = target != -1
+    
+    if not pattern_mask.any():
+        return filtered_labels, confidence_scores
     
     close = df['close'].values
     volume = df['volume'].values
@@ -42,7 +48,7 @@ def apply_multilayer_confirmation(df, multilayer_features, target, min_confirmat
     trend_1h = np.where(ma_1h_fast > ma_1h_slow, 1, -1)
     
     avg_volume = pd.Series(volume).rolling(window=20).mean().values
-    volume_ratio = volume / np.maximum(avg_volume, 1)
+    volume_ratio = np.divide(volume, np.maximum(avg_volume, 1), where=avg_volume>0, out=np.ones_like(volume, dtype=float))
     volume_increasing = volume_ratio > 1.2
     
     rsi = multilayer_features['extremum_rsi'].values
@@ -51,40 +57,33 @@ def apply_multilayer_confirmation(df, multilayer_features, target, min_confirmat
     volatility_15m = multilayer_features['risk_volatility_15m'].values
     volatility_acceptable = volatility_15m < 0.05
     
-    for i in range(len(df)):
-        if target[i] == -1:
-            filtered_labels[i] = -1
-            confidence_scores[i] = 0
-            continue
-        
+    pattern_indices = np.where(pattern_mask)[0]
+    
+    for idx in pattern_indices:
         confidence = 0
         
-        if target[i] == 1:
-            if trend_1h[i] == 1 or trend_4h[i] == 1:
-                confidence += 1
-        else:
-            if trend_1h[i] == -1 or trend_4h[i] == -1:
-                confidence += 1
-        
-        if volume_increasing[i]:
-            confidence += 1
-        
-        if rsi_extreme[i]:
-            confidence += 1
-        
-        if volatility_acceptable[i]:
-            confidence += 1
-        else:
-            filtered_labels[i] = -1
-            confidence_scores[i] = 0
+        if not volatility_acceptable[idx]:
+            filtered_labels[idx] = -1
+            confidence_scores[idx] = 0
             continue
         
-        confidence_scores[i] = confidence
+        if target[idx] == 1:
+            if trend_1h[idx] == 1 or trend_4h[idx] == 1:
+                confidence += 1
+        elif target[idx] == 0:
+            if trend_1h[idx] == -1 or trend_4h[idx] == -1:
+                confidence += 1
+        
+        if volume_increasing[idx]:
+            confidence += 1
+        
+        if rsi_extreme[idx]:
+            confidence += 1
+        
+        confidence_scores[idx] = confidence
         
         if confidence < min_confirmations:
-            filtered_labels[i] = 0
-        else:
-            filtered_labels[i] = target[i]
+            filtered_labels[idx] = 0
     
     return filtered_labels, confidence_scores
 
@@ -157,7 +156,7 @@ def main():
     )
     
     logger.info('\n' + '='*70)
-    logger.info('Baseline (Single Layer - Patterns Only)')
+    logger.info('BASELINE: Single Layer (Patterns Only)')
     logger.info('='*70)
     
     positive = (target == 1).sum()
@@ -175,51 +174,54 @@ def main():
         logger.info('No patterns found')
     
     logger.info('\n' + '='*70)
-    logger.info('After Multi-Layer Confirmation')
+    logger.info('FILTERED: Multi-Layer Confirmation (2+ layers)')
     logger.info('='*70)
     
-    trade_mask = filtered_labels != -1
-    confident_mask = (filtered_labels != -1) & (filtered_labels != 0)
+    high_conf_mask = confidence_scores >= 2
+    high_conf_profitable = ((filtered_labels == 1) & high_conf_mask & (target == 1)).sum()
+    high_conf_total = high_conf_mask.sum()
     
-    positive_confirmed = ((filtered_labels == 1) & (target == 1)).sum()
-    total_confirmed = (filtered_labels != -1).sum()
-    high_confidence_trades = (confidence_scores >= 3).sum()
-    
-    if total_confirmed > 0:
-        filtered_win_rate = positive_confirmed / total_confirmed * 100
-        logger.info(f'Total trades after filtering: {total_confirmed}')
-        logger.info(f'Profitable trades: {positive_confirmed}')
-        logger.info(f'Win rate: {filtered_win_rate:.2f}%')
-        logger.info(f'High confidence trades (3+ layers): {high_confidence_trades}')
-        logger.info(f'Improvement: +{filtered_win_rate - baseline_win_rate:.2f}%')
+    if high_conf_total > 0:
+        high_conf_win_rate = high_conf_profitable / high_conf_total * 100
+        logger.info(f'High confidence trades: {high_conf_total}')
+        logger.info(f'Profitable: {high_conf_profitable}')
+        logger.info(f'Win rate: {high_conf_win_rate:.2f}%')
+        logger.info(f'Filter effectiveness: {(total_labeled - high_conf_total) / total_labeled * 100:.1f}% filtered out')
+        logger.info(f'Improvement: +{high_conf_win_rate - baseline_win_rate:.2f}%')
     else:
-        filtered_win_rate = 0
-        logger.info('No trades after filtering')
+        high_conf_win_rate = baseline_win_rate
+        logger.info('No high-confidence trades found')
     
     logger.info('\n' + '='*70)
-    logger.info('Confidence Distribution')
+    logger.info('CONFIDENCE DISTRIBUTION (Patterns Only)')
     logger.info('='*70)
     
-    for conf_level in range(0, 6):
-        count = (confidence_scores == conf_level).sum()
+    pattern_indices = np.where(target != -1)[0]
+    for conf_level in range(0, 5):
+        count = (confidence_scores[pattern_indices] == conf_level).sum()
         if count > 0:
-            logger.info(f'Confidence level {conf_level}: {count} trades')
+            pct = count / len(pattern_indices) * 100
+            logger.info(f'Confidence level {conf_level}: {count} patterns ({pct:.1f}%)')
     
     logger.info('\n' + '='*70)
-    logger.info('Feature Statistics')
+    logger.info('BREAKDOWN BY CONFIDENCE LEVEL')
     logger.info('='*70)
     
-    logger.info(f'Total features: {len(df.columns) - 5 + len(multilayer_features.columns)}')
-    logger.info(f'  - Existing: {len(df.columns) - 5}')
-    logger.info(f'  - Multi-layer: {len(multilayer_features.columns)}')
+    for conf_level in range(2, 5):
+        conf_mask = confidence_scores == conf_level
+        profitable_at_level = ((target == 1) & conf_mask).sum()
+        total_at_level = conf_mask.sum()
+        if total_at_level > 0:
+            win_at_level = profitable_at_level / total_at_level * 100
+            logger.info(f'Level {conf_level}: {total_at_level} trades, {win_at_level:.2f}% win rate')
     
     logger.info('\n' + '='*70)
-    logger.info('Projection: With Full Multi-Layer Stack')
+    logger.info('SUMMARY')
     logger.info('='*70)
-    logger.info(f'Current baseline: {baseline_win_rate:.2f}%')
-    logger.info(f'After layer 2-3: 35-38%')
-    logger.info(f'After all layers: 42-48%')
-    logger.info(f'Current improvement: +{filtered_win_rate - baseline_win_rate:.2f}%')
+    logger.info(f'Baseline win rate (all patterns): {baseline_win_rate:.2f}%')
+    logger.info(f'High confidence win rate (2+ layers): {high_conf_win_rate:.2f}%')
+    logger.info(f'Expected with 3+ layers: 40-45%')
+    logger.info(f'Expected with all layers: 42-48%')
     
     logger.info('\n' + '='*70)
     logger.info('Integration test complete')
