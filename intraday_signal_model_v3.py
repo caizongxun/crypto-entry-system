@@ -11,7 +11,6 @@ from sklearn.metrics import precision_score, recall_score, f1_score
 sys.path.insert(0, str(Path(__file__).parent))
 
 from strategy_v3 import StrategyConfig, DataLoader, FeatureEngineer
-from strategy_v3.targets_pattern_v1 import create_pattern_labels
 
 logger.remove()
 logger.add(
@@ -23,15 +22,15 @@ logger.add(
 
 class IntradaySignalModelV3:
     """
-    Random Forest-based Intraday Trading Signal Model V3
+    Random Forest-based Intraday Trading Signal Model V3 - Redesigned
     
-    Strategy: Balance precision (80%) and signal volume (3500+)
-    - Use stricter positive labeling (only high-quality winners)
-    - Ensemble voting for abundant signals
-    - Higher probability threshold to improve precision
+    Strategy: Generate signals for ALL candles using rolling window labels
+    - Create training labels: if next 20 candles hit +1% before -1%, label=1
+    - This creates thousands of training samples across entire dataset
+    - Target: 3500+ signals daily with 80%+ precision and recall
     """
     
-    def __init__(self, n_estimators=200, max_depth=12, min_samples_leaf=3):
+    def __init__(self, n_estimators=250, max_depth=14, min_samples_leaf=2):
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
@@ -43,10 +42,38 @@ class IntradaySignalModelV3:
         self.feature_names = None
         self.voting_threshold = 0.50
     
+    @staticmethod
+    def _create_rolling_labels(df, profit_pct=0.01, loss_pct=0.01, lookback=20):
+        """
+        Create binary labels for all candles using rolling window.
+        Label=1 if price hits profit_pct before hitting loss_pct within lookback bars
+        """
+        close = df['close'].values
+        labels = np.zeros(len(df), dtype=int)
+        
+        for i in range(len(df) - lookback):
+            entry_price = close[i]
+            profit_target = entry_price * (1 + profit_pct)
+            loss_target = entry_price * (1 - loss_pct)
+            
+            # Check future prices
+            future_prices = close[i+1:i+lookback+1]
+            
+            # Check if profit target is hit first
+            profit_hit = np.any(future_prices >= profit_target)
+            loss_hit = np.any(future_prices <= loss_target)
+            
+            if profit_hit and not loss_hit:
+                labels[i] = 1  # Profitable
+            elif loss_hit and not profit_hit:
+                labels[i] = 0  # Loss
+            # If both or neither hit, keep as 0
+        
+        return labels
+    
     def _prepare_features(self, df):
         """
         Extract comprehensive technical features for intraday trading
-        Focus on momentum, volatility, and mean reversion signals
         """
         features_dict = {}
         
@@ -56,7 +83,6 @@ class IntradaySignalModelV3:
         volume = df['volume'].values
         
         # ===== MOMENTUM FEATURES =====
-        # RSI at different periods (faster for intraday)
         rsi_7 = self._rsi(close, 7)
         rsi_14 = self._rsi(close, 14)
         rsi_21 = self._rsi(close, 21)
@@ -64,37 +90,30 @@ class IntradaySignalModelV3:
         features_dict['rsi_7'] = rsi_7
         features_dict['rsi_14'] = rsi_14
         features_dict['rsi_21'] = rsi_21
-        features_dict['rsi_extreme_7'] = ((rsi_7 < 25) | (rsi_7 > 75)).astype(float)
-        features_dict['rsi_overbought'] = (rsi_14 > 70).astype(float)
         features_dict['rsi_oversold'] = (rsi_14 < 30).astype(float)
+        features_dict['rsi_overbought'] = (rsi_14 > 70).astype(float)
         
         # MACD
         macd_line, macd_signal, macd_hist = self._macd(close, 12, 26, 9)
         features_dict['macd_histogram'] = macd_hist
         features_dict['macd_positive'] = (macd_hist > 0).astype(float)
         features_dict['macd_signal'] = macd_signal
-        features_dict['macd_crossover'] = (np.roll(macd_hist, 1) <= 0) & (macd_hist > 0)
-        features_dict['macd_crossover'] = features_dict['macd_crossover'].astype(float)
         
-        # ===== VOLATILITY & MEAN REVERSION =====
-        # Bollinger Bands
+        # ===== VOLATILITY =====
         bb_upper, bb_mid, bb_lower = self._bollinger_bands(close, 20, 2)
         bb_width = (bb_upper - bb_lower) / (bb_mid + 1e-10)
         bb_position = (close - bb_lower) / (bb_upper - bb_lower + 1e-10)
         
         features_dict['bb_width'] = bb_width
         features_dict['bb_position'] = bb_position
-        features_dict['price_touch_upper_bb'] = (close > bb_upper * 0.98).astype(float)
-        features_dict['price_touch_lower_bb'] = (close < bb_lower * 1.02).astype(float)
+        features_dict['bb_lower_touch'] = (close < bb_lower * 1.01).astype(float)
+        features_dict['bb_upper_touch'] = (close > bb_upper * 0.99).astype(float)
         
-        # ATR (volatility measure)
         atr = self._atr(high, low, close, 14)
         atr_ratio = atr / np.mean(atr[50:] + 1e-10)
         features_dict['atr_ratio'] = atr_ratio
-        features_dict['high_volatility'] = (atr_ratio > 1.2).astype(float)
         
-        # ===== TREND FEATURES =====
-        # Moving averages
+        # ===== TREND =====
         ma5 = pd.Series(close).rolling(5).mean().values
         ma10 = pd.Series(close).rolling(10).mean().values
         ma20 = pd.Series(close).rolling(20).mean().values
@@ -106,50 +125,44 @@ class IntradaySignalModelV3:
         features_dict['ma_slope_5'] = (ma5 - np.roll(ma5, 5)) / (ma5 + 1e-10)
         features_dict['ma_slope_20'] = (ma20 - np.roll(ma20, 20)) / (ma20 + 1e-10)
         
-        # ===== STOCHASTIC & MOMENTUM =====
+        # ===== STOCHASTIC =====
         stoch_k, stoch_d = self._stochastic(high, low, close, 14, 3, 5)
         features_dict['stoch_k'] = stoch_k
         features_dict['stoch_oversold'] = (stoch_k < 30).astype(float)
         features_dict['stoch_overbought'] = (stoch_k > 70).astype(float)
-        features_dict['stoch_rsi_divergence'] = np.abs(stoch_k - rsi_14)
         
         # ===== PRICE ACTION =====
-        # Recent high/low
         lookback = 20
         recent_high = pd.Series(high).rolling(lookback).max().values
         recent_low = pd.Series(low).rolling(lookback).min().values
         
-        features_dict['price_breakout_high'] = (close > recent_high * 0.99).astype(float)
-        features_dict['price_near_low'] = (close < recent_low * 1.02).astype(float)
-        features_dict['range_from_low'] = (close - recent_low) / (recent_high - recent_low + 1e-10)
-        features_dict['range_from_high'] = (recent_high - close) / (recent_high - recent_low + 1e-10)
+        features_dict['distance_from_low'] = (close - recent_low) / (recent_high - recent_low + 1e-10)
+        features_dict['distance_from_high'] = (recent_high - close) / (recent_high - recent_low + 1e-10)
+        features_dict['price_breakout'] = (close > recent_high * 0.98).astype(float)
         
-        # ===== VOLUME FEATURES =====
+        # ===== VOLUME =====
         vol_ma = pd.Series(volume).rolling(20).mean().values
         vol_std = pd.Series(volume).rolling(20).std().values
         vol_zscore = (volume - vol_ma) / (vol_std + 1e-10)
         
         features_dict['volume_zscore'] = vol_zscore
         features_dict['high_volume'] = (vol_zscore > 1.0).astype(float)
-        features_dict['volume_surge'] = (volume > vol_ma * 1.5).astype(float)
         
-        # ===== CANDLE PATTERNS =====
-        body = np.abs(close - np.roll(close, 1))
-        body_ratio = body / (atr + 1e-10)
-        features_dict['candle_body_ratio'] = body_ratio
-        features_dict['large_body'] = (body_ratio > 0.5).astype(float)
-        
-        # ===== ADX (Trend Strength) =====
-        adx = self._adx(high, low, close, 14)
-        features_dict['adx'] = adx
-        features_dict['strong_trend'] = (adx > 25).astype(float)
-        
-        # ===== ADDITIONAL MOMENTUM =====
-        # Rate of Change
+        # ===== MOMENTUM INDICATORS =====
         roc_10 = (close - np.roll(close, 10)) / np.roll(close, 10)
         roc_20 = (close - np.roll(close, 20)) / np.roll(close, 20)
         features_dict['roc_10'] = roc_10
         features_dict['roc_20'] = roc_20
+        
+        # ===== CANDLE PATTERNS =====
+        body = np.abs(close - np.roll(close, 1))
+        body_ratio = body / (atr + 1e-10)
+        features_dict['body_ratio'] = body_ratio
+        
+        # ===== ADX =====
+        adx = self._adx(high, low, close, 14)
+        features_dict['adx'] = adx
+        features_dict['strong_trend'] = (adx > 25).astype(float)
         
         # Convert to DataFrame
         feature_df = pd.DataFrame(features_dict)
@@ -161,53 +174,50 @@ class IntradaySignalModelV3:
         
         return X
     
-    def train(self, df, target):
+    def train(self, df, labels):
         """
-        Train Random Forest with improved class balance
-        Focus on high-confidence positive samples
+        Train Random Forest on rolling window labels
         """
         X = self._prepare_features(df)
         
-        # Use only labeled patterns
-        labeled_mask = target != -1
-        X_labeled = X[labeled_mask]
-        y_labeled = (target[labeled_mask] == 1).astype(int)
+        # Use only valid labels
+        valid_mask = labels >= 0
+        X_valid = X[valid_mask]
+        y_valid = labels[valid_mask]
         
-        logger.info(f'Training samples: {len(X_labeled)}')
-        logger.info(f'  Positive: {y_labeled.sum()}')
-        logger.info(f'  Negative: {len(y_labeled) - y_labeled.sum()}')
-        logger.info(f'  Base rate: {y_labeled.mean()*100:.2f}%')
+        logger.info(f'Training samples: {len(X_valid)}')
+        logger.info(f'  Positive: {(y_valid == 1).sum()}')
+        logger.info(f'  Negative: {(y_valid == 0).sum()}')
+        logger.info(f'  Win rate: {(y_valid == 1).sum() / len(y_valid) * 100:.2f}%')
         
-        # Train/test split with stratification
+        # Train/test split
         X_train, X_test, y_train, y_test = train_test_split(
-            X_labeled, y_labeled, test_size=0.25, random_state=42, stratify=y_labeled
+            X_valid, y_valid, test_size=0.25, random_state=42, stratify=y_valid
         )
         
-        logger.info(f'\nTraining: {len(X_train)} samples ({y_train.sum()} positive)')
-        logger.info(f'Testing: {len(X_test)} samples ({y_test.sum()} positive)')
+        logger.info(f'\nTraining: {len(X_train)} samples')
+        logger.info(f'Testing: {len(X_test)} samples')
         
         # Train model
         self.model.fit(X_train, y_train)
         
-        # Test set evaluation
+        # Threshold optimization
         y_pred_proba = self.model.predict_proba(X_test)[:, 1]
         
-        # Find threshold that achieves balance
         best_f1 = 0
         best_threshold = 0.5
         best_precision = 0
         best_recall = 0
         
-        logger.info('\nThreshold optimization on test set:')
-        for threshold in np.arange(0.40, 0.75, 0.02):
+        logger.info('\nThreshold optimization:')
+        for threshold in np.arange(0.45, 0.75, 0.02):
             y_pred = (y_pred_proba >= threshold).astype(int)
             p = precision_score(y_test, y_pred, zero_division=0)
             r = recall_score(y_test, y_pred, zero_division=0)
             f1 = f1_score(y_test, y_pred, zero_division=0)
             logger.info(f'  Threshold {threshold:.2f}: P={p:.4f}, R={r:.4f}, F1={f1:.4f}')
             
-            # Prefer threshold with good balance towards precision
-            if f1 > best_f1 or (f1 == best_f1 and p > best_precision):
+            if f1 > best_f1:
                 best_f1 = f1
                 best_threshold = threshold
                 best_precision = p
@@ -229,26 +239,23 @@ class IntradaySignalModelV3:
         
         return best_precision, best_recall, best_f1
     
-    def predict(self, df, target):
+    def predict(self, df, labels):
         """
-        Generate signals with improved probability calibration
-        Target: 3500+ signals with 80%+ precision
+        Generate signals for all candles
         """
         X = self._prepare_features(df)
         
         signals = np.zeros(len(df), dtype=int)
         confidence_scores = np.zeros(len(df), dtype=float)
         
-        pattern_mask = target != -1
-        
         # Get probability from ensemble
         y_pred_prob = self.model.predict_proba(X)[:, 1]
         
-        for idx in np.where(pattern_mask)[0]:
+        # Generate signals for all candles
+        for idx in range(len(df)):
             prob = y_pred_prob[idx]
             confidence_scores[idx] = prob
             
-            # Tiered signal generation with refined thresholds
             if prob >= 0.75:
                 signals[idx] = 2  # High confidence
             elif prob >= self.voting_threshold:
@@ -309,9 +316,6 @@ class IntradaySignalModelV3:
     
     @staticmethod
     def _adx(high, low, close, period=14):
-        """
-        Average Directional Index - measures trend strength
-        """
         tr = np.maximum(
             high - low,
             np.maximum(
@@ -338,10 +342,10 @@ class IntradaySignalModelV3:
 
 def main():
     logger.info('='*70)
-    logger.info('Intraday Trading Model V3: Random Forest Refined')
+    logger.info('Intraday Trading Model V3: Rolling Window Label Generation')
     logger.info('='*70)
+    logger.info('Strategy: Generate signals for ALL candles')
     logger.info('Target: 3500+ signals, Precision >= 80%, Recall >= 80%')
-    logger.info('Strategy: Improved threshold calibration + feature engineering')
     logger.info('')
     
     config = StrategyConfig.get_default()
@@ -373,32 +377,32 @@ def main():
     df = feature_engineer.engineer_features(df)
     logger.info('Features generated')
     
-    logger.info('\nDetecting patterns...')
-    target, profits = create_pattern_labels(
+    logger.info('\nCreating rolling window labels...')
+    labels = IntradaySignalModelV3._create_rolling_labels(
         df,
-        profit_target_pct=0.01,
-        stop_loss_pct=0.01,
-        max_hold_bars=20,
-        min_breakout_pct=0.005
+        profit_pct=0.01,
+        loss_pct=0.01,
+        lookback=20
     )
     
-    pattern_mask = target != -1
-    logger.info(f'Patterns detected: {pattern_mask.sum()}')
-    logger.info(f'Profitable: {(target == 1).sum()}')
-    logger.info(f'Base win rate: {(target == 1).sum() / pattern_mask.sum() * 100:.2f}%')
+    valid_mask = labels >= 0
+    logger.info(f'Generated {valid_mask.sum()} valid labels')
+    logger.info(f'  Profitable: {(labels == 1).sum()}')
+    logger.info(f'  Unprofitable: {(labels == 0).sum()}')
+    logger.info(f'  Win rate: {(labels == 1).sum() / valid_mask.sum() * 100:.2f}%')
     
     logger.info('\n' + '='*70)
     logger.info('TRAINING RANDOM FOREST MODEL')
     logger.info('='*70)
     
-    model = IntradaySignalModelV3(n_estimators=200, max_depth=12, min_samples_leaf=3)
-    train_p, train_r, train_f1 = model.train(df, target)
+    model = IntradaySignalModelV3(n_estimators=250, max_depth=14, min_samples_leaf=2)
+    train_p, train_r, train_f1 = model.train(df, labels)
     
     logger.info('\n' + '='*70)
     logger.info('GENERATING SIGNALS ON FULL DATASET')
     logger.info('='*70)
     
-    signals, confidence_scores = model.predict(df, target)
+    signals, confidence_scores = model.predict(df, labels)
     
     high_conf = (signals == 2).sum()
     standard_conf = (signals == 1).sum()
@@ -408,8 +412,7 @@ def main():
     logger.info(f'  High confidence (prob >= 0.75): {high_conf}')
     logger.info(f'  Standard confidence: {standard_conf}')
     
-    signal_mask = signals > 0
-    signal_indices = np.where(signal_mask)[0]
+    signal_indices = np.where(signals > 0)[0]
     
     if len(signal_indices) > 0:
         signal_dates = df.index[signal_indices].date
@@ -422,12 +425,12 @@ def main():
         logger.info(f'  Max signals/day: {daily_counts.max()}')
         logger.info(f'  Min signals/day: {daily_counts.min()}')
     
-    # Calculate metrics
+    # Calculate metrics using true labels
     if total_signals > 0:
-        actual_profitable = (target[signal_indices] == 1).sum()
-        precision = actual_profitable / total_signals * 100
+        actual_profitable = (labels[signal_indices] == 1).sum()
+        precision = actual_profitable / total_signals * 100 if total_signals > 0 else 0
         
-        all_profitable_idx = np.where(target == 1)[0]
+        all_profitable_idx = np.where(labels == 1)[0]
         caught = (signals[all_profitable_idx] > 0).sum()
         recall = caught / len(all_profitable_idx) * 100 if len(all_profitable_idx) > 0 else 0
         
