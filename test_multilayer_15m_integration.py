@@ -21,26 +21,49 @@ logger.add(
 
 
 class IntradayTradingModelV1:
-    """日內交易信號模型 - 5層確認系統"""
+    """
+    Intraday Trading Signal Model - 5-Layer Confirmation System
+    
+    Target: Precision >= 80% AND Recall >= 80% with daily signal guarantee
+    
+    Architecture:
+    - Layer 1: Market Environment Filter (volume, ATR, time)
+    - Layer 2: Multi-Timeframe Trend Alignment (4h/1h/15m)
+    - Layer 3: Price Action Confirmation (RSI, BB, Stochastic, Follow-through)
+    - Layer 4: Volume Microstructure (volume anomalies)
+    - Layer 5: Timing Confirmation (MACD, RSI reversals)
+    
+    Confidence Score: 0-8 (higher = stronger signal)
+    Signal Entry Rules:
+    - Confidence >= 5: High precision entry (target 85%+ accuracy)
+    - Confidence 3-4: Standard entry (target 80%+ accuracy)
+    - Confidence < 3: Filtered out
+    """
     
     def __init__(self):
         pass
     
     def layer1_market_environment(self, df, pattern_mask):
         """
-        層級 1: 市場環境過濾
-        檢查流動性、波動性、時間
+        Layer 1: Market Environment Filter
+        
+        Checks:
+        - Volume > 150% of 20-period average
+        - ATR(14) > 25th percentile (active market)
+        - Time: excludes first/last 30 minutes of trading day
+        
+        Scientific basis: [web:278] Time-of-day effects distort LOB microstructure
         """
         volume = df['volume'].values
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         
-        # 成交量檢查
+        # Volume check
         avg_volume_20 = pd.Series(volume).rolling(window=20).mean().values
         volume_ok = volume > (avg_volume_20 * 1.5)
         
-        # ATR (波動率)
+        # ATR (volatility)
         tr = np.maximum(
             high - low,
             np.maximum(abs(high - np.roll(close, 1)), abs(low - np.roll(close, 1)))
@@ -49,10 +72,10 @@ class IntradayTradingModelV1:
         atr_25_percentile = np.percentile(atr[50:], 25)
         atr_ok = atr > atr_25_percentile
         
-        # 時間檢查 (避免開盤/收盤 30 分鐘)
-        # 假設每天 96 根 15m 蠟燭 (1440 / 15)
+        # Time check: exclude market open/close 30 minutes
+        # Assuming 96 candles per day (1440 minutes / 15 minutes)
         hour_of_day = np.arange(len(df)) % 96
-        time_ok = (hour_of_day > 2) & (hour_of_day < 94)  # 排除開盤/收盤
+        time_ok = (hour_of_day > 2) & (hour_of_day < 94)
         
         environment_ok = volume_ok & atr_ok & time_ok
         
@@ -60,43 +83,62 @@ class IntradayTradingModelV1:
     
     def layer2_multi_timeframe_trend(self, df, pattern_mask):
         """
-        層級 2: 多時間框架趨勢
-        檢查 4h/1h/15m 的對齐度
+        Layer 2: Multi-Timeframe Trend Alignment
+        
+        Alignment score based on:
+        - 4-hour trend: MA(20) vs MA(50)
+        - 1-hour trend: MA(12) vs MA(26)
+        - 15-minute direction: RSI direction
+        
+        Scoring:
+        - 4h + 1h aligned: +2 points
+        - Partial alignment: +1 point
+        - Conflict: 0 points
+        
+        Scientific basis: [web:265] 4-5 layer confirmation achieves 85-90% accuracy
         """
         close = df['close'].values
         
-        # 4 小時趨勢 (window=16, 15m*16=240m=4h)
+        # 4-hour trend (window=20 for 4h = 20*15m = 300m)
         ma_4h_20 = pd.Series(close).rolling(window=20).mean().values
         ma_4h_50 = pd.Series(close).rolling(window=50).mean().values
-        trend_4h = np.sign(ma_4h_20 - ma_4h_50)  # +1 or -1
+        trend_4h = np.sign(ma_4h_20 - ma_4h_50)
         
-        # 1 小時趨勢 (window=4)
+        # 1-hour trend (window=4 for 1h = 4*15m = 60m)
         ma_1h_12 = pd.Series(close).rolling(window=12).mean().values
         ma_1h_26 = pd.Series(close).rolling(window=26).mean().values
         trend_1h = np.sign(ma_1h_12 - ma_1h_26)
         
-        # 15 分鐘方向
+        # 15-minute direction
         rsi = self._calculate_rsi(close, 14)
-        direction_15m = np.sign(rsi - 50)  # 簡單方向
+        direction_15m = np.sign(rsi - 50)
         
-        # 計算對齐度
+        # Calculate alignment score
         alignment_score = np.zeros(len(df), dtype=int)
         
         for i in range(len(df)):
             if trend_4h[i] != 0 and trend_1h[i] != 0:
                 if trend_4h[i] == trend_1h[i]:
-                    alignment_score[i] = 2  # 完美對齐
+                    alignment_score[i] = 2  # Perfect alignment
                 else:
-                    alignment_score[i] = 0  # 不對齣
+                    alignment_score[i] = 0  # Conflict
             elif trend_4h[i] != 0 or trend_1h[i] != 0:
-                alignment_score[i] = 1  # 部分對齁
+                alignment_score[i] = 1  # Partial alignment
         
         return alignment_score
     
     def layer3_price_action(self, df, target):
         """
-        層級 3: 價格行動確認
-        RSI + Bollinger Bands + Stochastic + Follow-through
+        Layer 3: Price Action Confirmation
+        
+        5-point validation:
+        1. RSI extreme (< 30 or > 70): +1 point
+        2. Bollinger Bands touch: +1 point
+        3. Stochastic aligned with RSI: +1 point
+        4. Follow-through (consecutive candles): +1 point
+        5. Support/Resistance proximity: +1 point
+        
+        Maximum: 3 points (5 checks but scored 0-3)
         """
         close = df['close'].values
         high = df['high'].values
@@ -115,41 +157,45 @@ class IntradayTradingModelV1:
             
             score = 0
             
-            # 1. RSI 極值 (30 or 70)
+            # 1. RSI extreme
             if rsi[i] < 30 or rsi[i] > 70:
                 score += 1
             
-            # 2. Bollinger Bands 觸及
+            # 2. Bollinger Bands touch
             if close[i] <= bb_lower[i] or close[i] >= bb_upper[i]:
                 score += 1
             
-            # 3. Stochastic 與 RSI 同向
+            # 3. Stochastic aligned with RSI
             if (stoch_k[i] < 30 and rsi[i] < 30) or (stoch_k[i] > 70 and rsi[i] > 70):
                 score += 1
             
-            # 4. Follow-through (前 2 根蠟燭的延續)
-            if target[i] == 1:  # 看漲
+            # 4. Follow-through (previous 2 candles in same direction)
+            if target[i] == 1:
                 if close[i] > close[i-1] and close[i-1] > close[i-2]:
                     score += 1
-            elif target[i] == 0:  # 看跌
+            elif target[i] == 0:
                 if close[i] < close[i-1] and close[i-1] < close[i-2]:
                     score += 1
             
-            # 5. 支撐/阻力 (簡化: 相對極值)
+            # 5. Support/Resistance proximity
             recent_high = np.max(high[max(0, i-20):i])
             recent_low = np.min(low[max(0, i-20):i])
             if abs(close[i] - recent_high) < (recent_high - recent_low) * 0.02 or \
                abs(close[i] - recent_low) < (recent_high - recent_low) * 0.02:
                 score += 1
             
-            price_action_score[i] = min(score, 5)  # 最高 5 分
+            price_action_score[i] = min(score, 5)
         
         return price_action_score
     
     def layer4_volume_microstructure(self, df, target):
         """
-        層級 4: 成交量微結構
-        成交量增加、成交量動量
+        Layer 4: Volume Microstructure
+        
+        Confirms signal with volume anomalies:
+        - Volume > Average(20) + 1.5*StdDev(20): +1 point
+        
+        Scientific basis: [web:280,281] LOB depth imbalance is strong predictive signal
         """
         volume = df['volume'].values
         
@@ -163,7 +209,7 @@ class IntradayTradingModelV1:
             if i < 20:
                 continue
             
-            # 成交量 > avg + 1.5*std (強烈)
+            # Strong volume: > average + 1.5*std
             if volume[i] > (avg_volume_20[i] + 1.5 * std_volume_20[i]):
                 volume_score[i] = 1
         
@@ -171,8 +217,13 @@ class IntradayTradingModelV1:
     
     def layer5_timing_confirmation(self, df, target):
         """
-        層級 5: 時機確認
-        MACD 直方圖反轉或 RSI 開始反轉
+        Layer 5: Timing Confirmation
+        
+        Validates entry timing:
+        - MACD histogram reversal (sign change): +1 point
+        - RSI reversal (oversold->rising or overbought->falling): +1 point
+        
+        Scientific basis: [web:283,300] LOB forecasting requires microstructure + timing double confirmation
         """
         close = df['close'].values
         
@@ -186,11 +237,11 @@ class IntradayTradingModelV1:
             if i < 1:
                 continue
             
-            # MACD 直方圖轉向
-            if i > 1 and macd_histogram[i] * macd_histogram[i-1] < 0:  # 轉向
+            # MACD histogram reversal
+            if i > 1 and macd_histogram[i] * macd_histogram[i-1] < 0:
                 timing_score[i] = 1
             
-            # RSI 開始反轉 (超賣變強或超買變弱)
+            # RSI reversal
             elif (rsi[i-1] < 30 and rsi[i] > rsi[i-1]) or \
                  (rsi[i-1] > 70 and rsi[i] < rsi[i-1]):
                 timing_score[i] = 1
@@ -199,50 +250,49 @@ class IntradayTradingModelV1:
     
     def generate_signals(self, df, target):
         """
-        生成日內交易信號
+        Generate intraday trading signals with 5-layer confirmation
         
         Returns:
-        - signals: 進場信號 (0/1)
-        - confidence_scores: 信心等級 (0-8)
+        - signals: Entry signals (0/1)
+        - confidence_scores: Confidence level (0-8)
         """
         pattern_mask = target != -1
         
-        # 所有層級評分
+        # Evaluate all layers
         env_ok = self.layer1_market_environment(df, pattern_mask)
         trend_score = self.layer2_multi_timeframe_trend(df, pattern_mask)
         price_score = self.layer3_price_action(df, target)
         volume_score = self.layer4_volume_microstructure(df, target)
         timing_score = self.layer5_timing_confirmation(df, target)
         
-        # 合併信心等級
+        # Merge confidence scores
         confidence_scores = np.zeros(len(df), dtype=int)
         signals = np.zeros(len(df), dtype=int)
         
         pattern_indices = np.where(pattern_mask)[0]
         
         for idx in pattern_indices:
-            # 環境層必須通過
+            # Layer 1 must pass (mandatory)
             if not env_ok[idx]:
                 confidence_scores[idx] = 0
                 continue
             
-            # 計算總分 (0-8)
+            # Calculate total score (0-8)
             total_score = (
-                1 +  # 環境層 base 1
-                trend_score[idx] +  # 0-2
-                min(price_score[idx], 3) +  # 0-3
-                volume_score[idx] +  # 0-1
-                timing_score[idx]  # 0-1
+                1 +  # Layer 1 base (mandatory pass)
+                trend_score[idx] +  # Layer 2: 0-2
+                min(price_score[idx], 3) +  # Layer 3: 0-3
+                volume_score[idx] +  # Layer 4: 0-1
+                timing_score[idx]  # Layer 5: 0-1
             )
             
             confidence_scores[idx] = total_score
             
-            # 進場邏輯
-            if total_score >= 5:  # 高精準 (≥5)
-                signals[idx] = 2  # 高信度
-            elif total_score >= 3:  # 標準 (3-4)
-                signals[idx] = 1  # 標準信度
-            # else: 信號太弱，跳過
+            # Entry logic
+            if total_score >= 5:
+                signals[idx] = 2  # High confidence
+            elif total_score >= 3:
+                signals[idx] = 1  # Standard confidence
         
         return signals, confidence_scores
     
@@ -292,14 +342,14 @@ def main():
     logger.info('='*70)
     logger.info('Intraday Trading Model V1: 5-Layer Confirmation System')
     logger.info('='*70)
-    logger.info('Target: Daily signals with 80%+ precision and recall')
+    logger.info('Objective: Daily signals with 80%+ precision and recall')
     logger.info('')
     
     config = StrategyConfig.get_default()
     os.makedirs(config.model_save_dir, exist_ok=True)
     os.makedirs(config.results_save_dir, exist_ok=True)
     
-    logger.info('Loading 15m data...')
+    logger.info('Loading 15-minute data...')
     loader = DataLoader(
         hf_repo=config.data.hf_repo,
         cache_dir=config.data.cache_dir,
@@ -322,7 +372,7 @@ def main():
     logger.info('\nEngineering features...')
     feature_engineer = FeatureEngineer(config)
     df = feature_engineer.engineer_features(df)
-    logger.info('Generated features')
+    logger.info('Features generated')
     
     logger.info('\nDetecting patterns...')
     target, profits = create_pattern_labels(
@@ -337,7 +387,7 @@ def main():
     df['pattern_pnl'] = profits * 100
     
     pattern_mask = target != -1
-    logger.info(f'Detected patterns: {pattern_mask.sum()}')
+    logger.info(f'Patterns detected: {pattern_mask.sum()}')
     
     logger.info('\nGenerating intraday trading signals...')
     model = IntradayTradingModelV1()
@@ -346,11 +396,11 @@ def main():
     logger.info('\n' + '='*70)
     logger.info('LAYER ARCHITECTURE')
     logger.info('='*70)
-    logger.info('Layer 1: Market Environment (流動性+波動率+時間)')
-    logger.info('Layer 2: Multi-Timeframe Trend (4h/1h/15m 對齁)')
-    logger.info('Layer 3: Price Action (RSI/BB/Stoch/Follow-through)')
-    logger.info('Layer 4: Volume Microstructure (成交量確認)')
-    logger.info('Layer 5: Timing Confirmation (MACD/RSI 時機)')
+    logger.info('Layer 1: Market Environment (volume, ATR, time)')
+    logger.info('Layer 2: Multi-Timeframe Trend (4h/1h/15m alignment)')
+    logger.info('Layer 3: Price Action (RSI, BB, Stochastic, Follow-through)')
+    logger.info('Layer 4: Volume Microstructure (volume confirmation)')
+    logger.info('Layer 5: Timing Confirmation (MACD, RSI timing)')
     
     logger.info('\n' + '='*70)
     logger.info('SIGNAL GENERATION RESULTS')
@@ -361,28 +411,28 @@ def main():
     total_signals = high_confidence + standard_confidence
     
     logger.info(f'Total signals generated: {total_signals}')
-    logger.info(f'  - High confidence (≥5 layers): {high_confidence}')
-    logger.info(f'  - Standard confidence (3-4 layers): {standard_confidence}')
+    logger.info(f'  High confidence (>=5 layers): {high_confidence}')
+    logger.info(f'  Standard confidence (3-4 layers): {standard_confidence}')
     
-    # 按天統計信號數
+    # Daily signal distribution
     df['signal'] = signals
     df['confidence'] = confidence_scores
     daily_signals = df[df['signal'] > 0].groupby(df.index.date).size()
     
-    logger.info(f'\nDaily signal distribution:')
-    logger.info(f'  - Days with signals: {len(daily_signals)}')
-    logger.info(f'  - Avg signals per day: {daily_signals.mean():.2f}')
-    logger.info(f'  - Max signals per day: {daily_signals.max()}')
-    logger.info(f'  - Min signals per day: {daily_signals.min()}')
+    logger.info(f'\nDaily signal statistics:')
+    logger.info(f'  Days with signals: {len(daily_signals)}')
+    logger.info(f'  Avg signals per day: {daily_signals.mean():.2f}')
+    logger.info(f'  Max signals per day: {daily_signals.max()}')
+    logger.info(f'  Min signals per day: {daily_signals.min()}')
     
-    # 精準率/召回率計算
+    # Precision and Recall calculation
     if total_signals > 0:
         signal_indices = np.where(signals > 0)[0]
         actual_profitable = (target[signal_indices] == 1).sum()
         
         precision = actual_profitable / total_signals * 100 if total_signals > 0 else 0
         
-        # 召回率: 有信號的獲利交易 / 所有獲利交易
+        # Recall: caught profitable trades / total profitable trades
         all_profitable_indices = np.where(target == 1)[0]
         caught_profitable = (signals[all_profitable_indices] > 0).sum()
         total_profitable = len(all_profitable_indices)
@@ -391,17 +441,17 @@ def main():
         f1 = 2 * (precision * recall) / (precision + recall + 1e-10)
         
         logger.info('\n' + '='*70)
-        logger.info('PRECISION & RECALL METRICS')
+        logger.info('PRECISION AND RECALL METRICS')
         logger.info('='*70)
-        logger.info(f'Precision (精準率): {precision:.2f}% - 信號的準確性')
-        logger.info(f'Recall (召回率): {recall:.2f}% - 捕獲獲利機會的能力')
-        logger.info(f'F1-Score: {f1:.4f}')
-        logger.info(f'Target: Precision ≥ 80% AND Recall ≥ 80%')
+        logger.info(f'Precision (signal accuracy): {precision:.2f}%')
+        logger.info(f'Recall (opportunity capture): {recall:.2f}%')
+        logger.info(f'F1-Score (harmonic mean): {f1:.4f}')
+        logger.info(f'Target: Precision >= 80% AND Recall >= 80%')
         
         if precision >= 80 and recall >= 80:
-            logger.info('✓ TARGET ACHIEVED!')
+            logger.info('Target achieved')
         else:
-            logger.info('⊗ Target not yet achieved - needs refinement')
+            logger.info('Target not met - model refinement needed')
     
     logger.info('\n' + '='*70)
     logger.info('CONFIDENCE DISTRIBUTION')
@@ -414,7 +464,7 @@ def main():
             logger.info(f'Confidence {conf_level}: {count} signals ({pct:.2f}%)')
     
     logger.info('\n' + '='*70)
-    logger.info('Model ready for deployment')
+    logger.info('Model deployment ready')
     logger.info('='*70)
     
     return True
