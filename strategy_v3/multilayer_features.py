@@ -25,20 +25,30 @@ class MultiLayerFeatureEngineer:
         
         self.logger.info('Computing momentum features')
         
-        lookback_4 = 4  # 1 hour = 4 x 15m
-        lookback_16 = 16  # 4 hours = 16 x 15m
+        lookback_4 = 4
+        lookback_16 = 16
         lookback_10 = 10
         
-        features['momentum_1h'] = close - np.concatenate([[close[0]] * lookback_4, close[:-lookback_4]])
-        features['momentum_1h_pct'] = (features['momentum_1h'] / np.concatenate([[close[0]] * lookback_4, close[:-lookback_4]])) * 100
+        close_shift_4 = np.concatenate([[close[0]] * lookback_4, close[:-lookback_4]])
+        close_shift_16 = np.concatenate([[close[0]] * lookback_16, close[:-lookback_16]])
+        close_shift_10 = np.concatenate([[close[0]] * lookback_10, close[:-lookback_10]])
         
-        features['momentum_4h'] = close - np.concatenate([[close[0]] * lookback_16, close[:-lookback_16]])
+        features['momentum_1h'] = close - close_shift_4
+        
+        with np.errstate(divide='ignore', invalid='ignore'):
+            momentum_1h_pct = (features['momentum_1h'] / close_shift_4) * 100
+            momentum_1h_pct = np.where(np.isfinite(momentum_1h_pct), momentum_1h_pct, 0)
+        features['momentum_1h_pct'] = momentum_1h_pct
+        
+        features['momentum_4h'] = close - close_shift_16
         
         features['velocity'] = np.gradient(close, edge_order=2)
         features['acceleration'] = np.gradient(np.gradient(close, edge_order=2), edge_order=2)
         
-        features['roc_10'] = ((close - np.concatenate([[close[0]] * lookback_10, close[:-lookback_10]])) / 
-                             np.concatenate([[close[0]] * lookback_10, close[:-lookback_10]])) * 100
+        with np.errstate(divide='ignore', invalid='ignore'):
+            roc_10 = ((close - close_shift_10) / close_shift_10) * 100
+            roc_10 = np.where(np.isfinite(roc_10), roc_10, 0)
+        features['roc_10'] = roc_10
         
         ema_20 = pd.Series(close).ewm(span=20).mean().values
         features['ema_slope'] = np.gradient(ema_20, edge_order=2)
@@ -55,7 +65,10 @@ class MultiLayerFeatureEngineer:
         self.logger.info('Computing volume features')
         
         avg_volume = pd.Series(volume).rolling(window=20).mean().values
-        features['volume_ratio'] = np.where(avg_volume > 0, volume / avg_volume, 1.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            vol_ratio = volume / np.where(avg_volume > 0, avg_volume, 1)
+            vol_ratio = np.where(np.isfinite(vol_ratio), vol_ratio, 1.0)
+        features['volume_ratio'] = vol_ratio
         
         features['volume_trend'] = volume - np.concatenate([[volume[0]], volume[:-1]])
         
@@ -75,13 +88,14 @@ class MultiLayerFeatureEngineer:
         clv_values = np.zeros(len(close))
         for i in range(len(close)):
             range_hl = high[i] - low[i]
-            if range_hl > 0:
+            if range_hl > 1e-10:
                 clv_values[i] = ((close[i] - low[i]) - (high[i] - close[i])) / range_hl
             else:
                 clv_values[i] = 0
         
         ad = clv_values * volume
-        features['ad_indicator'] = pd.Series(ad).rolling(window=14).mean().values
+        ad_smooth = pd.Series(ad).rolling(window=14).mean().values
+        features['ad_indicator'] = np.where(np.isfinite(ad_smooth), ad_smooth, 0)
         
         return features
     
@@ -100,8 +114,11 @@ class MultiLayerFeatureEngineer:
         avg_gain = pd.Series(gain).rolling(window=14).mean().values
         avg_loss = pd.Series(loss).rolling(window=14).mean().values
         
-        rs = np.where(avg_loss != 0, avg_gain / avg_loss, 0)
-        features['rsi'] = 100 - (100 / (1 + rs))
+        with np.errstate(divide='ignore', invalid='ignore'):
+            rs = avg_gain / np.where(avg_loss > 0, avg_loss, 1)
+            rs = np.where(np.isfinite(rs), rs, 0)
+        rsi = 100 - (100 / (1 + np.maximum(rs, 0)))
+        features['rsi'] = np.where(np.isfinite(rsi), rsi, 50)
         
         ema_12 = pd.Series(close).ewm(span=12).mean().values
         ema_26 = pd.Series(close).ewm(span=26).mean().values
@@ -122,12 +139,15 @@ class MultiLayerFeatureEngineer:
         features['bb_lower'] = bb_lower
         
         bb_range = bb_upper - bb_lower
-        features['bb_position'] = np.where(bb_range > 0, (close - bb_lower) / bb_range, 0.5)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            bb_pos = (close - bb_lower) / np.where(bb_range > 0, bb_range, 1)
+            bb_pos = np.where(np.isfinite(bb_pos), bb_pos, 0.5)
+        features['bb_position'] = bb_pos
         
         stoch_k = np.zeros(len(close))
         for i in range(14, len(close)):
-            low_14 = low[i-14:i].min()
-            high_14 = high[i-14:i].max()
+            low_14 = low[max(0, i-14):i].min()
+            high_14 = high[max(0, i-14):i].max()
             if high_14 > low_14:
                 stoch_k[i] = 100 * (close[i] - low_14) / (high_14 - low_14)
             else:
@@ -135,6 +155,7 @@ class MultiLayerFeatureEngineer:
         
         features['stochastic_k'] = stoch_k
         features['stochastic_d'] = pd.Series(stoch_k).rolling(window=3).mean().values
+        features['stochastic_d'] = np.where(np.isfinite(features['stochastic_d']), features['stochastic_d'], 50)
         
         return features
     
@@ -147,21 +168,27 @@ class MultiLayerFeatureEngineer:
         
         self.logger.info('Computing risk features')
         
-        returns = np.concatenate([[0], np.diff(close) / close[:-1]])
+        returns = np.concatenate([[0], np.diff(close) / np.maximum(close[:-1], 1e-10)])
+        returns = np.where(np.isfinite(returns), returns, 0)
         volatility_15m = pd.Series(returns).rolling(window=20).std().values
-        features['volatility_15m'] = volatility_15m
+        features['volatility_15m'] = np.where(np.isfinite(volatility_15m), volatility_15m, 0)
         
-        high_low_range = pd.Series(close).rolling(window=4).std().values / pd.Series(close).rolling(window=4).mean().values
+        with np.errstate(divide='ignore', invalid='ignore'):
+            high_low_range = pd.Series(close).rolling(window=4).std().values / np.maximum(pd.Series(close).rolling(window=4).mean().values, 1e-10)
+            high_low_range = np.where(np.isfinite(high_low_range), high_low_range, 0)
         features['volatility_1h'] = high_low_range
         
         avg_vol_1h = pd.Series(high_low_range).rolling(window=20).mean().values
-        features['volatility_ratio'] = np.where(avg_vol_1h > 0, high_low_range / avg_vol_1h, 1.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            vol_ratio = high_low_range / np.where(avg_vol_1h > 0, avg_vol_1h, 1)
+            vol_ratio = np.where(np.isfinite(vol_ratio), vol_ratio, 1.0)
+        features['volatility_ratio'] = vol_ratio
         
-        gap = np.abs(open_price - np.concatenate([[close[0]], close[:-1]])) / np.concatenate([[close[0]], close[:-1]]) * 100
-        features['gap_from_previous_close'] = gap
+        gap = np.abs(open_price - np.concatenate([[close[0]], close[:-1]])) / np.maximum(np.concatenate([[close[0]], close[:-1]]), 1e-10) * 100
+        features['gap_from_previous_close'] = np.where(np.isfinite(gap), gap, 0)
         
-        range_hl = (high - low) / low * 100
-        features['range_hl_pct'] = range_hl
+        range_hl = (high - low) / np.maximum(low, 1e-10) * 100
+        features['range_hl_pct'] = np.where(np.isfinite(range_hl), range_hl, 0)
         
         return features
     
@@ -181,15 +208,20 @@ class MultiLayerFeatureEngineer:
         features['trend_1h'] = np.where(ma_1h_fast > ma_1h_slow, 1.0, 0.0)
         
         avg_vol = pd.Series(volume).rolling(window=20).mean().values
-        features['session_strength'] = np.where(avg_vol > 0, volume / avg_vol, 1.0)
+        with np.errstate(divide='ignore', invalid='ignore'):
+            sess_strength = volume / np.where(avg_vol > 0, avg_vol, 1)
+            sess_strength = np.where(np.isfinite(sess_strength), sess_strength, 1.0)
+        features['session_strength'] = sess_strength
         
-        volatility = pd.Series(np.concatenate([[0], np.diff(close) / close[:-1]])).rolling(window=20).std().values
+        returns = np.concatenate([[0], np.diff(close) / np.maximum(close[:-1], 1e-10)])
+        returns = np.where(np.isfinite(returns), returns, 0)
+        volatility = pd.Series(returns).rolling(window=20).std().values
         vol_75th = pd.Series(volatility).rolling(window=100).quantile(0.75).values
         features['volatility_regime'] = np.where(volatility > vol_75th, 1.0, 0.0)
         
         concentration = (pd.Series(close).rolling(window=20).std().values / 
-                        pd.Series(close).rolling(window=20).mean().values)
-        features['concentration'] = concentration
+                        np.maximum(pd.Series(close).rolling(window=20).mean().values, 1e-10))
+        features['concentration'] = np.where(np.isfinite(concentration), concentration, 0)
         
         return features
     
@@ -198,9 +230,9 @@ class MultiLayerFeatureEngineer:
         Combine all multi-layer features into a single dataframe.
         
         Returns dataframe with 32 new features:
-        - 6 momentum features
+        - 7 momentum features
         - 5 volume features
-        - 5 extremum features
+        - 7 extremum features
         - 5 risk features
         - 5 environment features
         """
