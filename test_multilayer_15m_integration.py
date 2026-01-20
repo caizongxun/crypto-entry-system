@@ -6,7 +6,7 @@ import sys
 import os
 import xgboost as xgb
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+from sklearn.metrics import precision_score, recall_score, f1_score
 
 sys.path.insert(0, str(Path(__file__).parent))
 
@@ -49,7 +49,7 @@ class IntradaySignalModelXGBoost:
         """
         Extract key technical features for pattern classification
         """
-        features_list = []
+        features_dict = {}
         
         close = df['close'].values
         high = df['high'].values
@@ -57,59 +57,62 @@ class IntradaySignalModelXGBoost:
         volume = df['volume'].values
         
         # Price momentum
-        features_list.append(('rsi_14', self._rsi(close, 14)))
-        features_list.append(('rsi_extreme', (self._rsi(close, 14) < 30) | (self._rsi(close, 14) > 70)))
+        rsi = self._rsi(close, 14)
+        features_dict['rsi_14'] = rsi
+        features_dict['rsi_extreme'] = ((rsi < 30) | (rsi > 70)).astype(float)
         
         # Volatility
         atr = self._atr(high, low, close, 14)
-        features_list.append(('atr_ratio', atr / np.mean(atr[50:])))
+        atr_mean = np.mean(atr[50:])
+        features_dict['atr_ratio'] = atr / (atr_mean + 1e-10)
         
         bb_upper, bb_mid, bb_lower = self._bollinger_bands(close, 20, 2)
-        bb_width = (bb_upper - bb_lower) / bb_mid
-        features_list.append(('bb_width', bb_width))
-        features_list.append(('price_to_bb_upper', (close - bb_mid) / (bb_upper - bb_mid + 1e-10)))
-        features_list.append(('price_to_bb_lower', (close - bb_lower) / (bb_mid - bb_lower + 1e-10)))
+        bb_width = (bb_upper - bb_lower) / (bb_mid + 1e-10)
+        features_dict['bb_width'] = bb_width
+        features_dict['price_to_bb_upper'] = (close - bb_mid) / (bb_upper - bb_mid + 1e-10)
+        features_dict['price_to_bb_lower'] = (close - bb_lower) / (bb_mid - bb_lower + 1e-10)
         
         # Trends
         ma12 = pd.Series(close).rolling(12).mean().values
         ma26 = pd.Series(close).rolling(26).mean().values
         ma50 = pd.Series(close).rolling(50).mean().values
-        features_list.append(('ma_12_26_cross', ma12 - ma26))
-        features_list.append(('price_to_ma50', close - ma50))
+        features_dict['ma_12_26_diff'] = ma12 - ma26
+        features_dict['price_to_ma50_diff'] = close - ma50
         
         # MACD
         macd_line, macd_signal, macd_hist = self._macd(close, 12, 26, 9)
-        features_list.append(('macd_histogram', macd_hist))
-        features_list.append(('macd_signal', macd_signal))
+        features_dict['macd_histogram'] = macd_hist
+        features_dict['macd_line'] = macd_line
         
         # Stochastic
         stoch_k, stoch_d = self._stochastic(high, low, close, 14, 3, 5)
-        features_list.append(('stoch_k', stoch_k))
-        features_list.append(('stoch_d_rsi_align', np.abs(stoch_k - self._rsi(close, 14)) < 10))
+        features_dict['stoch_k'] = stoch_k
+        features_dict['stoch_rsi_diff'] = np.abs(stoch_k - rsi)
         
         # Volume
         vol_ma = pd.Series(volume).rolling(20).mean().values
         vol_std = pd.Series(volume).rolling(20).std().values
-        features_list.append(('volume_zscore', (volume - vol_ma) / (vol_std + 1e-10)))
+        features_dict['volume_zscore'] = (volume - vol_ma) / (vol_std + 1e-10)
         
         # Candle patterns
         body = np.abs(close - np.roll(close, 1))
-        shadow_up = high - np.maximum(close, np.roll(close, 1))
-        shadow_down = np.minimum(close, np.roll(close, 1)) - low
-        features_list.append(('candle_body_ratio', body / (atr + 1e-10)))
+        features_dict['body_atr_ratio'] = body / (atr + 1e-10)
         
         # Support/Resistance
         lookback = 20
         recent_high = pd.Series(high).rolling(lookback).max().values
         recent_low = pd.Series(low).rolling(lookback).min().values
-        features_list.append(('price_to_recent_high', (close - recent_high) / (recent_high + 1e-10)))
-        features_list.append(('price_to_recent_low', (close - recent_low) / (recent_low + 1e-10)))
+        features_dict['price_to_recent_high'] = (close - recent_high) / (recent_high + 1e-10)
+        features_dict['price_to_recent_low'] = (close - recent_low) / (recent_low + 1e-10)
         
-        # Convert to DataFrame
-        feature_df = pd.DataFrame(dict(features_list))
+        # Convert to DataFrame and ensure all numeric
+        feature_df = pd.DataFrame(features_dict)
         self.feature_names = feature_df.columns.tolist()
         
-        return feature_df.values
+        # Convert to numpy array
+        X = feature_df.values.astype(np.float32)
+        
+        return X
     
     def train(self, df, target):
         """
@@ -123,10 +126,16 @@ class IntradaySignalModelXGBoost:
         X_labeled = X[labeled_mask]
         y_labeled = (target[labeled_mask] == 1).astype(int)
         
-        # Remove NaN values
+        logger.info(f'Total labeled patterns: {len(X_labeled)}')
+        logger.info(f'Positive patterns: {y_labeled.sum()}')
+        logger.info(f'Negative patterns: {len(y_labeled) - y_labeled.sum()}')
+        
+        # Remove rows with NaN
         valid_mask = np.all(np.isfinite(X_labeled), axis=1)
         X_clean = X_labeled[valid_mask]
         y_clean = y_labeled[valid_mask]
+        
+        logger.info(f'Valid samples after NaN removal: {len(X_clean)}')
         
         # Train/test split
         X_train, X_test, y_train, y_test = train_test_split(
@@ -151,7 +160,7 @@ class IntradaySignalModelXGBoost:
         recall = recall_score(y_test, y_pred, zero_division=0)
         f1 = f1_score(y_test, y_pred, zero_division=0)
         
-        logger.info(f'\nTest Set Performance:')
+        logger.info(f'\nTest Set Performance (threshold={self.threshold}):')
         logger.info(f'  Precision: {precision:.4f}')
         logger.info(f'  Recall: {recall:.4f}')
         logger.info(f'  F1-Score: {f1:.4f}')
@@ -352,7 +361,9 @@ def main():
         if precision >= 80 and recall >= 80:
             logger.info('Status: Target achieved')
         else:
-            logger.info(f'Status: Gap - Precision {80-precision:.1f}% short, Recall {80-recall:.1f}% short')
+            gap_precision = max(0, 80 - precision)
+            gap_recall = max(0, 80 - recall)
+            logger.info(f'Status: Precision gap {gap_precision:.1f}%, Recall gap {gap_recall:.1f}%')
     
     logger.info('\n' + '='*70)
     logger.info('Model deployment ready')
