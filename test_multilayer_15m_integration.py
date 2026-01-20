@@ -414,20 +414,27 @@ def main():
     logger.info(f'  High confidence (>=5 layers): {high_confidence}')
     logger.info(f'  Standard confidence (3-4 layers): {standard_confidence}')
     
-    # Daily signal distribution
-    df['signal'] = signals
-    df['confidence'] = confidence_scores
-    daily_signals = df[df['signal'] > 0].groupby(df.index.date).size()
+    # Daily signal distribution - use numpy arrays directly
+    signal_mask = signals > 0
+    signal_indices = np.where(signal_mask)[0]
     
-    logger.info(f'\nDaily signal statistics:')
-    logger.info(f'  Days with signals: {len(daily_signals)}')
-    logger.info(f'  Avg signals per day: {daily_signals.mean():.2f}')
-    logger.info(f'  Max signals per day: {daily_signals.max()}')
-    logger.info(f'  Min signals per day: {daily_signals.min()}')
+    if len(signal_indices) > 0:
+        signal_dates = df.index[signal_indices].date
+        unique_dates = pd.Series(signal_dates).unique()
+        
+        logger.info(f'\nDaily signal statistics:')
+        logger.info(f'  Days with signals: {len(unique_dates)}')
+        
+        daily_counts = pd.Series(signal_dates).value_counts()
+        logger.info(f'  Avg signals per day: {daily_counts.mean():.2f}')
+        logger.info(f'  Max signals per day: {daily_counts.max()}')
+        logger.info(f'  Min signals per day: {daily_counts.min()}')
+    else:
+        logger.info('\nDaily signal statistics:')
+        logger.info('  No signals generated')
     
     # Precision and Recall calculation
     if total_signals > 0:
-        signal_indices = np.where(signals > 0)[0]
         actual_profitable = (target[signal_indices] == 1).sum()
         
         precision = actual_profitable / total_signals * 100 if total_signals > 0 else 0
