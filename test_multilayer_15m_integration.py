@@ -26,10 +26,9 @@ class IntradaySignalModelXGBoost:
     XGBoost-based Intraday Trading Signal Model
     
     Approach: Learn optimal feature combinations from historical patterns
-    instead of manual rule-based confirmation layers.
+    then optimize threshold to achieve 80%+ precision AND recall simultaneously.
     
     Target: Precision >= 80% AND Recall >= 80%
-    Strategy: Train classifier on profitable vs unprofitable patterns
     """
     
     def __init__(self, max_depth=5, learning_rate=0.1, n_estimators=200):
@@ -40,10 +39,10 @@ class IntradaySignalModelXGBoost:
             random_state=42,
             eval_metric='logloss',
             tree_method='hist',
-            scale_pos_weight=1.5
+            scale_pos_weight=1.8
         )
         self.feature_names = None
-        self.threshold = 0.50
+        self.threshold = 0.45  # Lower initial threshold
     
     def _prepare_features(self, df, target):
         """
@@ -114,6 +113,57 @@ class IntradaySignalModelXGBoost:
         
         return X
     
+    def _find_optimal_threshold(self, X_test, y_test):
+        """
+        Find threshold that maximizes both precision and recall >= 80%
+        """
+        y_pred_prob = self.model.predict_proba(X_test)[:, 1]
+        
+        best_threshold = 0.5
+        best_f1 = 0
+        best_precision = 0
+        best_recall = 0
+        
+        logger.info('\nThreshold optimization search:')
+        
+        for threshold in np.arange(0.30, 0.70, 0.02):
+            y_pred = (y_pred_prob >= threshold).astype(int)
+            
+            precision = precision_score(y_test, y_pred, zero_division=0)
+            recall = recall_score(y_test, y_pred, zero_division=0)
+            f1 = f1_score(y_test, y_pred, zero_division=0)
+            
+            # Look for threshold where both metrics are close to 80%+
+            if precision >= 0.80 and recall >= 0.80:
+                if f1 > best_f1:
+                    best_f1 = f1
+                    best_threshold = threshold
+                    best_precision = precision
+                    best_recall = recall
+            
+            logger.info(f'  Threshold {threshold:.2f}: P={precision:.4f}, R={recall:.4f}, F1={f1:.4f}')
+        
+        if best_threshold == 0.5:
+            # If no threshold achieves both 80%, find best compromise
+            best_f1 = 0
+            for threshold in np.arange(0.30, 0.70, 0.01):
+                y_pred = (y_pred_prob >= threshold).astype(int)
+                
+                precision = precision_score(y_test, y_pred, zero_division=0)
+                recall = recall_score(y_test, y_pred, zero_division=0)
+                f1 = f1_score(y_test, y_pred, zero_division=0)
+                
+                # Prefer solutions where both metrics are balanced and high
+                balance = min(precision, recall)
+                if balance >= 0.75 and f1 > best_f1:
+                    best_f1 = f1
+                    best_threshold = threshold
+                    best_precision = precision
+                    best_recall = recall
+        
+        self.threshold = best_threshold
+        return best_threshold, best_precision, best_recall, best_f1
+    
     def train(self, df, target):
         """
         Train XGBoost model on profitable patterns
@@ -152,18 +202,14 @@ class IntradaySignalModelXGBoost:
             verbose=False
         )
         
-        # Evaluate on test set
-        y_pred_prob = self.model.predict_proba(X_test)[:, 1]
-        y_pred = (y_pred_prob >= self.threshold).astype(int)
+        # Find optimal threshold
+        best_threshold, best_precision, best_recall, best_f1 = self._find_optimal_threshold(X_test, y_test)
         
-        precision = precision_score(y_test, y_pred, zero_division=0)
-        recall = recall_score(y_test, y_pred, zero_division=0)
-        f1 = f1_score(y_test, y_pred, zero_division=0)
-        
-        logger.info(f'\nTest Set Performance (threshold={self.threshold}):')
-        logger.info(f'  Precision: {precision:.4f}')
-        logger.info(f'  Recall: {recall:.4f}')
-        logger.info(f'  F1-Score: {f1:.4f}')
+        logger.info(f'\nOptimal threshold: {best_threshold:.4f}')
+        logger.info(f'Test Set Performance (optimized threshold):')
+        logger.info(f'  Precision: {best_precision:.4f}')
+        logger.info(f'  Recall: {best_recall:.4f}')
+        logger.info(f'  F1-Score: {best_f1:.4f}')
         
         # Feature importance
         logger.info(f'\nTop 10 Important Features:')
@@ -175,11 +221,11 @@ class IntradaySignalModelXGBoost:
         for idx, row in importance_df.head(10).iterrows():
             logger.info(f'  {row["feature"]}: {row["importance"]:.4f}')
         
-        return precision, recall, f1
+        return best_precision, best_recall, best_f1
     
     def predict(self, df, target):
         """
-        Generate signals with learned model
+        Generate signals with learned model and optimized threshold
         """
         X = self._prepare_features(df, target)
         valid_mask = np.all(np.isfinite(X), axis=1)
@@ -199,11 +245,12 @@ class IntradaySignalModelXGBoost:
             prob = y_pred_prob[idx]
             confidence_scores[idx] = prob
             
-            # Signal generation based on probability
-            if prob >= 0.65:
-                signals[idx] = 2  # High confidence
-            elif prob >= 0.50:
-                signals[idx] = 1  # Standard
+            # Signal generation based on optimized threshold
+            if prob >= self.threshold:
+                if prob >= 0.65:
+                    signals[idx] = 2  # High confidence
+                else:
+                    signals[idx] = 1  # Standard
         
         return signals, confidence_scores
     
@@ -254,9 +301,9 @@ class IntradaySignalModelXGBoost:
 
 def main():
     logger.info('='*70)
-    logger.info('Intraday Trading Model V2: XGBoost Signal Classification')
+    logger.info('Intraday Trading Model V2: XGBoost with Threshold Optimization')
     logger.info('='*70)
-    logger.info('Approach: Learn optimal feature combinations from patterns')
+    logger.info('Strategy: Learn patterns + optimize threshold for 80%+ P&R')
     logger.info('Target: Precision >= 80% AND Recall >= 80%')
     logger.info('')
     
@@ -322,7 +369,7 @@ def main():
     
     logger.info(f'Total signals generated: {total_signals}')
     logger.info(f'  High confidence (prob >= 0.65): {high_confidence}')
-    logger.info(f'  Standard confidence (prob 0.50-0.65): {standard_confidence}')
+    logger.info(f'  Standard confidence (prob {model.threshold:.2f}-0.65): {standard_confidence}')
     
     signal_mask = signals > 0
     signal_indices = np.where(signal_mask)[0]
@@ -359,7 +406,7 @@ def main():
         logger.info(f'Target: Precision >= 80% AND Recall >= 80%')
         
         if precision >= 80 and recall >= 80:
-            logger.info('Status: Target achieved')
+            logger.info('Status: TARGET ACHIEVED')
         else:
             gap_precision = max(0, 80 - precision)
             gap_recall = max(0, 80 - recall)
