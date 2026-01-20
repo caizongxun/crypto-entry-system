@@ -4,12 +4,13 @@ from pathlib import Path
 from loguru import logger
 import sys
 import os
-from collections import defaultdict
+import xgboost as xgb
+from sklearn.model_selection import train_test_split
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
 
 sys.path.insert(0, str(Path(__file__).parent))
 
 from strategy_v3 import StrategyConfig, DataLoader, FeatureEngineer
-from strategy_v3.multilayer_features import MultiLayerFeatureEngineer
 from strategy_v3.targets_pattern_v1 import create_pattern_labels
 
 logger.remove()
@@ -20,308 +21,234 @@ logger.add(
 )
 
 
-class IntradayTradingModelV1:
+class IntradaySignalModelXGBoost:
     """
-    Intraday Trading Signal Model - 5-Layer Confirmation System
+    XGBoost-based Intraday Trading Signal Model
     
-    Target: Precision >= 80% AND Recall >= 80% with daily signal guarantee
+    Approach: Learn optimal feature combinations from historical patterns
+    instead of manual rule-based confirmation layers.
     
-    Architecture:
-    - Layer 1: Market Environment Filter (volume, ATR, time)
-    - Layer 2: Multi-Timeframe Trend Alignment (4h/1h/15m)
-    - Layer 3: Price Action Confirmation (RSI, BB, Stochastic, Follow-through)
-    - Layer 4: Volume Microstructure (volume anomalies)
-    - Layer 5: Timing Confirmation (MACD, RSI reversals)
-    
-    Confidence Score: 0-10 (higher = stronger signal)
-    Signal Entry Rules:
-    - Confidence >= 8: High precision entry (target 85%+ accuracy)
-    - Confidence 6-7: Standard entry (target 80%+ accuracy)
-    - Confidence < 6: Filtered out
+    Target: Precision >= 80% AND Recall >= 80%
+    Strategy: Train classifier on profitable vs unprofitable patterns
     """
     
-    def __init__(self):
-        pass
-    
-    def layer1_market_environment(self, df, pattern_mask):
-        """
-        Layer 1: Market Environment Filter (Mandatory)
-        
-        Strict checks:
-        - Volume > 200% of 20-period average (high activity)
-        - ATR(14) > 50th percentile (moderate+ volatility)
-        - Time: excludes first/last 30 minutes
-        
-        Returns binary: pass/fail only
-        """
-        volume = df['volume'].values
-        high = df['high'].values
-        low = df['low'].values
-        close = df['close'].values
-        
-        # Stricter volume check
-        avg_volume_20 = pd.Series(volume).rolling(window=20).mean().values
-        volume_ok = volume > (avg_volume_20 * 2.0)
-        
-        # ATR: stricter median-based threshold
-        tr = np.maximum(
-            high - low,
-            np.maximum(abs(high - np.roll(close, 1)), abs(low - np.roll(close, 1)))
+    def __init__(self, max_depth=5, learning_rate=0.1, n_estimators=200):
+        self.model = xgb.XGBClassifier(
+            max_depth=max_depth,
+            learning_rate=learning_rate,
+            n_estimators=n_estimators,
+            random_state=42,
+            eval_metric='logloss',
+            tree_method='hist',
+            scale_pos_weight=1.5
         )
-        atr = pd.Series(tr).rolling(window=14).mean().values
-        atr_median = np.median(atr[50:])
-        atr_ok = atr > atr_median
-        
-        # Time check
-        hour_of_day = np.arange(len(df)) % 96
-        time_ok = (hour_of_day > 2) & (hour_of_day < 94)
-        
-        environment_ok = volume_ok & atr_ok & time_ok
-        return environment_ok
+        self.feature_names = None
+        self.threshold = 0.50
     
-    def layer2_multi_timeframe_trend(self, df, pattern_mask):
+    def _prepare_features(self, df, target):
         """
-        Layer 2: Multi-Timeframe Trend Alignment
-        
-        Requires strong alignment across timeframes.
-        Scoring:
-        - Perfect 4h+1h alignment: +2 points
-        - Partial: 0 points (no half credit)
-        - Conflict: -2 points (penalty)
+        Extract key technical features for pattern classification
         """
-        close = df['close'].values
+        features_list = []
         
-        ma_4h_20 = pd.Series(close).rolling(window=20).mean().values
-        ma_4h_50 = pd.Series(close).rolling(window=50).mean().values
-        trend_4h = np.sign(ma_4h_20 - ma_4h_50)
-        
-        ma_1h_12 = pd.Series(close).rolling(window=12).mean().values
-        ma_1h_26 = pd.Series(close).rolling(window=26).mean().values
-        trend_1h = np.sign(ma_1h_12 - ma_1h_26)
-        
-        rsi = self._calculate_rsi(close, 14)
-        
-        trend_score = np.zeros(len(df), dtype=int)
-        
-        for i in range(len(df)):
-            if trend_4h[i] != 0 and trend_1h[i] != 0:
-                if trend_4h[i] == trend_1h[i]:
-                    trend_score[i] = 2
-                else:
-                    trend_score[i] = -2
-            else:
-                trend_score[i] = 0
-        
-        return trend_score
-    
-    def layer3_price_action(self, df, target):
-        """
-        Layer 3: Price Action - Strict Requirements
-        
-        Must satisfy BOTH conditions:
-        1. RSI extreme AND (BB touch OR Stochastic align)
-        2. Follow-through OR Support/Resistance touch
-        
-        Scoring: 0 or 2 points (all-or-nothing)
-        """
         close = df['close'].values
         high = df['high'].values
         low = df['low'].values
-        
-        rsi = self._calculate_rsi(close, 14)
-        bb_upper, bb_middle, bb_lower = self._calculate_bollinger_bands(close, 20, 2)
-        stoch_k, stoch_d = self._calculate_stochastic(high, low, close, 14, 3, 5)
-        
-        price_action_score = np.zeros(len(df), dtype=int)
-        pattern_indices = np.where(target != -1)[0]
-        
-        for i in pattern_indices:
-            if i < 2:
-                continue
-            
-            # Condition 1: RSI extreme
-            rsi_extreme = (rsi[i] < 25 or rsi[i] > 75)
-            
-            # Support: BB or Stochastic confirmation
-            bb_touch = (close[i] <= bb_lower[i] or close[i] >= bb_upper[i])
-            stoch_align = ((stoch_k[i] < 20 and rsi[i] < 30) or (stoch_k[i] > 80 and rsi[i] > 70))
-            condition1 = rsi_extreme and (bb_touch or stoch_align)
-            
-            # Condition 2: Follow-through or Support/Resistance
-            follow_through = False
-            if target[i] == 1:
-                follow_through = close[i] > close[i-1] and close[i-1] > close[i-2]
-            elif target[i] == 0:
-                follow_through = close[i] < close[i-1] and close[i-1] < close[i-2]
-            
-            recent_high = np.max(high[max(0, i-20):i])
-            recent_low = np.min(low[max(0, i-20):i])
-            sr_touch = (abs(close[i] - recent_high) < (recent_high - recent_low) * 0.01 or
-                       abs(close[i] - recent_low) < (recent_high - recent_low) * 0.01)
-            condition2 = follow_through or sr_touch
-            
-            # Both conditions required
-            if condition1 and condition2:
-                price_action_score[i] = 2
-        
-        return price_action_score
-    
-    def layer4_volume_microstructure(self, df, target):
-        """
-        Layer 4: Volume Microstructure - Strict Anomaly Detection
-        
-        Requires volume > Average(20) + 2.0*StdDev (very high)
-        Scoring: 0 or 2 points (binary)
-        """
         volume = df['volume'].values
         
-        avg_volume_20 = pd.Series(volume).rolling(window=20).mean().values
-        std_volume_20 = pd.Series(volume).rolling(window=20).std().values
+        # Price momentum
+        features_list.append(('rsi_14', self._rsi(close, 14)))
+        features_list.append(('rsi_extreme', (self._rsi(close, 14) < 30) | (self._rsi(close, 14) > 70)))
         
-        volume_score = np.zeros(len(df), dtype=int)
-        pattern_indices = np.where(target != -1)[0]
+        # Volatility
+        atr = self._atr(high, low, close, 14)
+        features_list.append(('atr_ratio', atr / np.mean(atr[50:])))
         
-        for i in pattern_indices:
-            if i < 20:
-                continue
-            
-            # Much stricter: 2 std deviations
-            if volume[i] > (avg_volume_20[i] + 2.0 * std_volume_20[i]):
-                volume_score[i] = 2
+        bb_upper, bb_mid, bb_lower = self._bollinger_bands(close, 20, 2)
+        bb_width = (bb_upper - bb_lower) / bb_mid
+        features_list.append(('bb_width', bb_width))
+        features_list.append(('price_to_bb_upper', (close - bb_mid) / (bb_upper - bb_mid + 1e-10)))
+        features_list.append(('price_to_bb_lower', (close - bb_lower) / (bb_mid - bb_lower + 1e-10)))
         
-        return volume_score
+        # Trends
+        ma12 = pd.Series(close).rolling(12).mean().values
+        ma26 = pd.Series(close).rolling(26).mean().values
+        ma50 = pd.Series(close).rolling(50).mean().values
+        features_list.append(('ma_12_26_cross', ma12 - ma26))
+        features_list.append(('price_to_ma50', close - ma50))
+        
+        # MACD
+        macd_line, macd_signal, macd_hist = self._macd(close, 12, 26, 9)
+        features_list.append(('macd_histogram', macd_hist))
+        features_list.append(('macd_signal', macd_signal))
+        
+        # Stochastic
+        stoch_k, stoch_d = self._stochastic(high, low, close, 14, 3, 5)
+        features_list.append(('stoch_k', stoch_k))
+        features_list.append(('stoch_d_rsi_align', np.abs(stoch_k - self._rsi(close, 14)) < 10))
+        
+        # Volume
+        vol_ma = pd.Series(volume).rolling(20).mean().values
+        vol_std = pd.Series(volume).rolling(20).std().values
+        features_list.append(('volume_zscore', (volume - vol_ma) / (vol_std + 1e-10)))
+        
+        # Candle patterns
+        body = np.abs(close - np.roll(close, 1))
+        shadow_up = high - np.maximum(close, np.roll(close, 1))
+        shadow_down = np.minimum(close, np.roll(close, 1)) - low
+        features_list.append(('candle_body_ratio', body / (atr + 1e-10)))
+        
+        # Support/Resistance
+        lookback = 20
+        recent_high = pd.Series(high).rolling(lookback).max().values
+        recent_low = pd.Series(low).rolling(lookback).min().values
+        features_list.append(('price_to_recent_high', (close - recent_high) / (recent_high + 1e-10)))
+        features_list.append(('price_to_recent_low', (close - recent_low) / (recent_low + 1e-10)))
+        
+        # Convert to DataFrame
+        feature_df = pd.DataFrame(dict(features_list))
+        self.feature_names = feature_df.columns.tolist()
+        
+        return feature_df.values
     
-    def layer5_timing_confirmation(self, df, target):
+    def train(self, df, target):
         """
-        Layer 5: Timing Confirmation - Strict Entry Timing
-        
-        Requires BOTH MACD and RSI confirmation:
-        - MACD histogram reversal (sign change)
-        - RSI inflection (starts reversing)
-        
-        Scoring: 0 or 2 points (both required)
+        Train XGBoost model on profitable patterns
         """
-        close = df['close'].values
+        # Prepare features
+        X = self._prepare_features(df, target)
         
-        macd_line, macd_signal, macd_histogram = self._calculate_macd(close, 12, 26, 9)
-        rsi = self._calculate_rsi(close, 14)
+        # Use only labeled patterns
+        labeled_mask = target != -1
+        X_labeled = X[labeled_mask]
+        y_labeled = (target[labeled_mask] == 1).astype(int)
         
-        timing_score = np.zeros(len(df), dtype=int)
-        pattern_indices = np.where(target != -1)[0]
+        # Remove NaN values
+        valid_mask = np.all(np.isfinite(X_labeled), axis=1)
+        X_clean = X_labeled[valid_mask]
+        y_clean = y_labeled[valid_mask]
         
-        for i in pattern_indices:
-            if i < 2:
-                continue
-            
-            # MACD reversal check
-            macd_reversal = (macd_histogram[i] * macd_histogram[i-1] < 0)
-            
-            # RSI inflection check
-            rsi_inflection = False
-            if rsi[i-1] < 30 and rsi[i] > rsi[i-1]:
-                rsi_inflection = True
-            elif rsi[i-1] > 70 and rsi[i] < rsi[i-1]:
-                rsi_inflection = True
-            
-            # Both required for timing confirmation
-            if macd_reversal and rsi_inflection:
-                timing_score[i] = 2
+        # Train/test split
+        X_train, X_test, y_train, y_test = train_test_split(
+            X_clean, y_clean, test_size=0.3, random_state=42, stratify=y_clean
+        )
         
-        return timing_score
+        logger.info(f'Training data: {len(X_train)} samples (positive: {y_train.sum()})')
+        logger.info(f'Test data: {len(X_test)} samples (positive: {y_test.sum()})')
+        
+        # Train model
+        self.model.fit(
+            X_train, y_train,
+            eval_set=[(X_test, y_test)],
+            verbose=False
+        )
+        
+        # Evaluate on test set
+        y_pred_prob = self.model.predict_proba(X_test)[:, 1]
+        y_pred = (y_pred_prob >= self.threshold).astype(int)
+        
+        precision = precision_score(y_test, y_pred, zero_division=0)
+        recall = recall_score(y_test, y_pred, zero_division=0)
+        f1 = f1_score(y_test, y_pred, zero_division=0)
+        
+        logger.info(f'\nTest Set Performance:')
+        logger.info(f'  Precision: {precision:.4f}')
+        logger.info(f'  Recall: {recall:.4f}')
+        logger.info(f'  F1-Score: {f1:.4f}')
+        
+        # Feature importance
+        logger.info(f'\nTop 10 Important Features:')
+        importance_df = pd.DataFrame({
+            'feature': self.feature_names,
+            'importance': self.model.feature_importances_
+        }).sort_values('importance', ascending=False)
+        
+        for idx, row in importance_df.head(10).iterrows():
+            logger.info(f'  {row["feature"]}: {row["importance"]:.4f}')
+        
+        return precision, recall, f1
     
-    def generate_signals(self, df, target):
+    def predict(self, df, target):
         """
-        Generate signals with stricter confirmation requirements
-        
-        Confidence scoring (0-10):
-        - Layer 1: Must pass (binary)
-        - Layer 2: -2/0/+2 points
-        - Layer 3: 0/2 points
-        - Layer 4: 0/2 points
-        - Layer 5: 0/2 points
-        
-        Total: -2 to +10 range (only 2+ considered)
+        Generate signals with learned model
         """
+        X = self._prepare_features(df, target)
+        valid_mask = np.all(np.isfinite(X), axis=1)
+        
+        signals = np.zeros(len(df), dtype=int)
+        confidence_scores = np.zeros(len(df), dtype=float)
+        
         pattern_mask = target != -1
         
-        env_ok = self.layer1_market_environment(df, pattern_mask)
-        trend_score = self.layer2_multi_timeframe_trend(df, pattern_mask)
-        price_score = self.layer3_price_action(df, target)
-        volume_score = self.layer4_volume_microstructure(df, target)
-        timing_score = self.layer5_timing_confirmation(df, target)
+        # Predict on patterns
+        y_pred_prob = self.model.predict_proba(X)[:, 1]
         
-        confidence_scores = np.zeros(len(df), dtype=int)
-        signals = np.zeros(len(df), dtype=int)
-        
-        pattern_indices = np.where(pattern_mask)[0]
-        
-        for idx in pattern_indices:
-            # Layer 1: mandatory gate
-            if not env_ok[idx]:
-                confidence_scores[idx] = 0
+        for idx in np.where(pattern_mask)[0]:
+            if not valid_mask[idx]:
                 continue
             
-            # Calculate score: trend + price + volume + timing
-            total_score = trend_score[idx] + price_score[idx] + volume_score[idx] + timing_score[idx]
+            prob = y_pred_prob[idx]
+            confidence_scores[idx] = prob
             
-            confidence_scores[idx] = max(0, total_score)  # No negative scores
-            
-            # Entry logic: stricter thresholds
-            if total_score >= 8:  # All 4 layers strong
-                signals[idx] = 2  # High precision
-            elif total_score >= 6:  # Most layers confirmed
+            # Signal generation based on probability
+            if prob >= 0.65:
+                signals[idx] = 2  # High confidence
+            elif prob >= 0.50:
                 signals[idx] = 1  # Standard
         
         return signals, confidence_scores
     
     @staticmethod
-    def _calculate_rsi(close, period=14):
+    def _rsi(close, period=14):
         delta = np.diff(close, prepend=close[0])
         gain = np.where(delta > 0, delta, 0)
         loss = np.where(delta < 0, -delta, 0)
         
-        avg_gain = pd.Series(gain).rolling(window=period).mean().values
-        avg_loss = pd.Series(loss).rolling(window=period).mean().values
+        avg_gain = pd.Series(gain).rolling(period).mean().values
+        avg_loss = pd.Series(loss).rolling(period).mean().values
         
         rs = np.divide(avg_gain, avg_loss, where=avg_loss != 0, out=np.zeros_like(avg_gain))
         rsi = 100 - (100 / (1 + rs))
         return rsi
     
     @staticmethod
-    def _calculate_bollinger_bands(close, period=20, std_dev=2):
-        ma = pd.Series(close).rolling(window=period).mean().values
-        std = pd.Series(close).rolling(window=period).std().values
+    def _atr(high, low, close, period=14):
+        tr = np.maximum(high - low, np.maximum(abs(high - np.roll(close, 1)), abs(low - np.roll(close, 1))))
+        return pd.Series(tr).rolling(period).mean().values
+    
+    @staticmethod
+    def _bollinger_bands(close, period=20, std_dev=2):
+        ma = pd.Series(close).rolling(period).mean().values
+        std = pd.Series(close).rolling(period).std().values
         upper = ma + std_dev * std
         lower = ma - std_dev * std
         return upper, ma, lower
     
     @staticmethod
-    def _calculate_stochastic(high, low, close, period=14, k_smooth=3, d_smooth=5):
-        low_min = pd.Series(low).rolling(window=period).min().values
-        high_max = pd.Series(high).rolling(window=period).max().values
-        
-        stoch = 100 * (close - low_min) / (high_max - low_min + 1e-10)
-        k = pd.Series(stoch).rolling(window=k_smooth).mean().values
-        d = pd.Series(k).rolling(window=d_smooth).mean().values
-        
-        return k, d
-    
-    @staticmethod
-    def _calculate_macd(close, fast=12, slow=26, signal=9):
+    def _macd(close, fast=12, slow=26, signal=9):
         ema_fast = pd.Series(close).ewm(span=fast).mean().values
         ema_slow = pd.Series(close).ewm(span=slow).mean().values
         macd_line = ema_fast - ema_slow
         macd_signal = pd.Series(macd_line).ewm(span=signal).mean().values
-        macd_histogram = macd_line - macd_signal
-        return macd_line, macd_signal, macd_histogram
+        macd_hist = macd_line - macd_signal
+        return macd_line, macd_signal, macd_hist
+    
+    @staticmethod
+    def _stochastic(high, low, close, period=14, k_smooth=3, d_smooth=5):
+        low_min = pd.Series(low).rolling(period).min().values
+        high_max = pd.Series(high).rolling(period).max().values
+        stoch = 100 * (close - low_min) / (high_max - low_min + 1e-10)
+        k = pd.Series(stoch).rolling(k_smooth).mean().values
+        d = pd.Series(k).rolling(d_smooth).mean().values
+        return k, d
 
 
 def main():
     logger.info('='*70)
-    logger.info('Intraday Trading Model V1: 5-Layer Confirmation System')
+    logger.info('Intraday Trading Model V2: XGBoost Signal Classification')
     logger.info('='*70)
-    logger.info('Objective: Daily signals with 80%+ precision and recall')
-    logger.info('Strategy: Strict all-or-nothing layer confirmation')
+    logger.info('Approach: Learn optimal feature combinations from patterns')
+    logger.info('Target: Precision >= 80% AND Recall >= 80%')
     logger.info('')
     
     config = StrategyConfig.get_default()
@@ -362,38 +289,31 @@ def main():
         min_breakout_pct=0.005
     )
     
-    df['pattern_target'] = target
-    df['pattern_pnl'] = profits * 100
-    
     pattern_mask = target != -1
     logger.info(f'Patterns detected: {pattern_mask.sum()}')
-    
-    logger.info('\nGenerating intraday trading signals...')
-    model = IntradayTradingModelV1()
-    signals, confidence_scores = model.generate_signals(df, target)
+    logger.info(f'Profitable patterns: {(target == 1).sum()}')
+    logger.info(f'Base win rate: {(target == 1).sum() / pattern_mask.sum() * 100:.2f}%')
     
     logger.info('\n' + '='*70)
-    logger.info('LAYER ARCHITECTURE (Strict Mode)')
+    logger.info('TRAINING XGBOOST MODEL')
     logger.info('='*70)
-    logger.info('Layer 1: Market Environment (volume > 200% avg, ATR > median)')
-    logger.info('Layer 2: Trend Alignment (4h/1h perfect align only: +2 or -2)')
-    logger.info('Layer 3: Price Action (RSI extreme + (BB or Stochastic) + (FT or SR))')
-    logger.info('Layer 4: Volume Microstructure (volume > avg + 2.0*std)')
-    logger.info('Layer 5: Timing (MACD reversal + RSI inflection both required)')
-    logger.info('')
-    logger.info('Scoring: Base 2 per layer, total 0-10, gates at 6+ and 8+')
+    
+    model = IntradaySignalModelXGBoost(max_depth=5, learning_rate=0.1, n_estimators=200)
+    train_precision, train_recall, train_f1 = model.train(df, target)
     
     logger.info('\n' + '='*70)
-    logger.info('SIGNAL GENERATION RESULTS')
+    logger.info('GENERATING SIGNALS ON FULL DATASET')
     logger.info('='*70)
+    
+    signals, confidence_scores = model.predict(df, target)
     
     high_confidence = (signals == 2).sum()
     standard_confidence = (signals == 1).sum()
     total_signals = high_confidence + standard_confidence
     
     logger.info(f'Total signals generated: {total_signals}')
-    logger.info(f'  High confidence (score >= 8): {high_confidence}')
-    logger.info(f'  Standard confidence (score 6-7): {standard_confidence}')
+    logger.info(f'  High confidence (prob >= 0.65): {high_confidence}')
+    logger.info(f'  Standard confidence (prob 0.50-0.65): {standard_confidence}')
     
     signal_mask = signals > 0
     signal_indices = np.where(signal_mask)[0]
@@ -409,9 +329,6 @@ def main():
         logger.info(f'  Avg signals per day: {daily_counts.mean():.2f}')
         logger.info(f'  Max signals per day: {daily_counts.max()}')
         logger.info(f'  Min signals per day: {daily_counts.min()}')
-    else:
-        logger.info('\nDaily signal statistics:')
-        logger.info('  No signals generated - refinement needed')
     
     if total_signals > 0:
         actual_profitable = (target[signal_indices] == 1).sum()
@@ -425,31 +342,17 @@ def main():
         f1 = 2 * (precision * recall) / (precision + recall + 1e-10)
         
         logger.info('\n' + '='*70)
-        logger.info('PRECISION AND RECALL METRICS')
+        logger.info('LIVE DATASET PERFORMANCE')
         logger.info('='*70)
         logger.info(f'Precision (signal accuracy): {precision:.2f}%')
         logger.info(f'Recall (opportunity capture): {recall:.2f}%')
-        logger.info(f'F1-Score (harmonic mean): {f1:.4f}')
+        logger.info(f'F1-Score: {f1:.4f}')
         logger.info(f'Target: Precision >= 80% AND Recall >= 80%')
         
         if precision >= 80 and recall >= 80:
-            logger.info('Target achieved')
+            logger.info('Status: Target achieved')
         else:
-            logger.info('Status: Target not met - model refinement needed')
-    
-    logger.info('\n' + '='*70)
-    logger.info('CONFIDENCE DISTRIBUTION')
-    logger.info('='*70)
-    
-    unique_scores = sorted(np.unique(confidence_scores[confidence_scores > 0]))
-    if len(unique_scores) > 0:
-        for conf_level in unique_scores:
-            count = (confidence_scores == conf_level).sum()
-            if count > 0:
-                pct = count / len(df) * 100
-                logger.info(f'Score {conf_level}: {count} signals ({pct:.2f}%)')
-    else:
-        logger.info('No confidence scores generated')
+            logger.info(f'Status: Gap - Precision {80-precision:.1f}% short, Recall {80-recall:.1f}% short')
     
     logger.info('\n' + '='*70)
     logger.info('Model deployment ready')
