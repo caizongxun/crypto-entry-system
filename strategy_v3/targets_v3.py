@@ -88,29 +88,37 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
     """
     Create LEAD-LAG labels for reversal prediction.
     
-    CRITICAL CHANGE: Features at time t predict reversal profit at time t+lead_bars
+    CRITICAL FIX: Only label swing points, ignore non-swing bars
     
-    This avoids look-ahead bias and allows models to learn:
-    "When these market microstructure features appear NOW,
-     a profitable reversal will occur SOON"
+    Architecture:
+    1. Detect swing points (high and low)
+    2. For each swing point at index i:
+       - Simulate trade from i
+       - Place label at i - lead_bars
+    3. All other bars remain unlabeled (NaN)
+    
+    This ensures:
+    - Model only learns from actual trading opportunities
+    - No bias from labeling non-swing points
+    - Clean training signal
     
     Args:
     - lead_bars: How many bars ahead to place the label (default 3)
-                 This is the time window for features to "predict" the reversal
     - profit_target_pct: Profit target (e.g., 0.5%)
     - stop_loss_pct: Stop loss level (e.g., 1%)
     - max_hold_bars: Maximum bars to hold (e.g., 20)
     
     Returns:
-    - targets: Binary array (1 if profitable reversal within lead_bars, 0 otherwise)
-    - profits: Actual profit/loss percentages for analysis
+    - targets: Array with labels only at lead bars before swing points
+               Non-labeled bars are -1 (to be ignored in training)
+    - profits: Actual profit/loss percentages
     """
     high = df['high'].values
     low = df['low'].values
     close = df['close'].values
     
     n = len(df)
-    targets = np.zeros(n, dtype=int)
+    targets = np.full(n, -1, dtype=int)
     profits = np.zeros(n, dtype=float)
     
     swing_highs, swing_lows = detect_swing_points(high, low, left_bars, right_bars)
@@ -122,7 +130,7 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
     
     profitable_count = 0
     unprofitable_count = 0
-    forward_looking_count = 0
+    labeled_count = 0
     
     for idx in high_indices:
         if idx + max_hold_bars >= n:
@@ -145,7 +153,7 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
         if label_idx >= 0:
             targets[label_idx] = result
             profits[label_idx] = profit
-            forward_looking_count += 1
+            labeled_count += 1
     
     for idx in low_indices:
         if idx + max_hold_bars >= n:
@@ -168,7 +176,7 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
         if label_idx >= 0:
             targets[label_idx] = result
             profits[label_idx] = profit
-            forward_looking_count += 1
+            labeled_count += 1
     
     total_swings = profitable_count + unprofitable_count
     win_rate = profitable_count / total_swings * 100 if total_swings > 0 else 0
@@ -179,13 +187,15 @@ def create_reversal_target_v3(df: pd.DataFrame, lookback: int = 20,
     logger.info(f'Total swings: {total_swings}')
     logger.info(f'Win rate (at swing points): {win_rate:.2f}%')
     
-    logger.info(f'Forward-looking labels created: {forward_looking_count}')
-    logger.info(f'Labels that predict profitable reversal: {(targets == 1).sum()}')
-    logger.info(f'Labels that predict unprofitable reversal: {(targets == 0).sum()}')
+    logger.info(f'Labels created: {labeled_count}')
+    profitable_labels = (targets == 1).sum()
+    unprofitable_labels = (targets == 0).sum()
+    logger.info(f'Labels predicting profitable reversal: {profitable_labels}')
+    logger.info(f'Labels predicting unprofitable reversal: {unprofitable_labels}')
+    logger.info(f'Unlabeled bars (ignored in training): {(targets == -1).sum()}')
     
-    if forward_looking_count > 0:
-        profitable_labels = (targets == 1).sum()
-        label_win_rate = profitable_labels / forward_looking_count * 100
-        logger.info(f'Label win rate: {label_win_rate:.2f}% (at feature time t)')
+    if labeled_count > 0:
+        label_win_rate = profitable_labels / labeled_count * 100
+        logger.info(f'Win rate among labeled bars: {label_win_rate:.2f}%')
     
     return targets, profits
