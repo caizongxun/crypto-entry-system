@@ -33,11 +33,11 @@ class IntradayTradingModelV1:
     - Layer 4: Volume Microstructure (volume anomalies)
     - Layer 5: Timing Confirmation (MACD, RSI reversals)
     
-    Confidence Score: 0-8 (higher = stronger signal)
+    Confidence Score: 0-10 (higher = stronger signal)
     Signal Entry Rules:
-    - Confidence >= 5: High precision entry (target 85%+ accuracy)
-    - Confidence 3-4: Standard entry (target 80%+ accuracy)
-    - Confidence < 3: Filtered out
+    - Confidence >= 8: High precision entry (target 85%+ accuracy)
+    - Confidence 6-7: Standard entry (target 80%+ accuracy)
+    - Confidence < 6: Filtered out
     """
     
     def __init__(self):
@@ -45,100 +45,84 @@ class IntradayTradingModelV1:
     
     def layer1_market_environment(self, df, pattern_mask):
         """
-        Layer 1: Market Environment Filter
+        Layer 1: Market Environment Filter (Mandatory)
         
-        Checks:
-        - Volume > 150% of 20-period average
-        - ATR(14) > 25th percentile (active market)
-        - Time: excludes first/last 30 minutes of trading day
+        Strict checks:
+        - Volume > 200% of 20-period average (high activity)
+        - ATR(14) > 50th percentile (moderate+ volatility)
+        - Time: excludes first/last 30 minutes
         
-        Scientific basis: [web:278] Time-of-day effects distort LOB microstructure
+        Returns binary: pass/fail only
         """
         volume = df['volume'].values
         high = df['high'].values
         low = df['low'].values
         close = df['close'].values
         
-        # Volume check
+        # Stricter volume check
         avg_volume_20 = pd.Series(volume).rolling(window=20).mean().values
-        volume_ok = volume > (avg_volume_20 * 1.5)
+        volume_ok = volume > (avg_volume_20 * 2.0)
         
-        # ATR (volatility)
+        # ATR: stricter median-based threshold
         tr = np.maximum(
             high - low,
             np.maximum(abs(high - np.roll(close, 1)), abs(low - np.roll(close, 1)))
         )
         atr = pd.Series(tr).rolling(window=14).mean().values
-        atr_25_percentile = np.percentile(atr[50:], 25)
-        atr_ok = atr > atr_25_percentile
+        atr_median = np.median(atr[50:])
+        atr_ok = atr > atr_median
         
-        # Time check: exclude market open/close 30 minutes
-        # Assuming 96 candles per day (1440 minutes / 15 minutes)
+        # Time check
         hour_of_day = np.arange(len(df)) % 96
         time_ok = (hour_of_day > 2) & (hour_of_day < 94)
         
         environment_ok = volume_ok & atr_ok & time_ok
-        
         return environment_ok
     
     def layer2_multi_timeframe_trend(self, df, pattern_mask):
         """
         Layer 2: Multi-Timeframe Trend Alignment
         
-        Alignment score based on:
-        - 4-hour trend: MA(20) vs MA(50)
-        - 1-hour trend: MA(12) vs MA(26)
-        - 15-minute direction: RSI direction
-        
+        Requires strong alignment across timeframes.
         Scoring:
-        - 4h + 1h aligned: +2 points
-        - Partial alignment: +1 point
-        - Conflict: 0 points
-        
-        Scientific basis: [web:265] 4-5 layer confirmation achieves 85-90% accuracy
+        - Perfect 4h+1h alignment: +2 points
+        - Partial: 0 points (no half credit)
+        - Conflict: -2 points (penalty)
         """
         close = df['close'].values
         
-        # 4-hour trend (window=20 for 4h = 20*15m = 300m)
         ma_4h_20 = pd.Series(close).rolling(window=20).mean().values
         ma_4h_50 = pd.Series(close).rolling(window=50).mean().values
         trend_4h = np.sign(ma_4h_20 - ma_4h_50)
         
-        # 1-hour trend (window=4 for 1h = 4*15m = 60m)
         ma_1h_12 = pd.Series(close).rolling(window=12).mean().values
         ma_1h_26 = pd.Series(close).rolling(window=26).mean().values
         trend_1h = np.sign(ma_1h_12 - ma_1h_26)
         
-        # 15-minute direction
         rsi = self._calculate_rsi(close, 14)
-        direction_15m = np.sign(rsi - 50)
         
-        # Calculate alignment score
-        alignment_score = np.zeros(len(df), dtype=int)
+        trend_score = np.zeros(len(df), dtype=int)
         
         for i in range(len(df)):
             if trend_4h[i] != 0 and trend_1h[i] != 0:
                 if trend_4h[i] == trend_1h[i]:
-                    alignment_score[i] = 2  # Perfect alignment
+                    trend_score[i] = 2
                 else:
-                    alignment_score[i] = 0  # Conflict
-            elif trend_4h[i] != 0 or trend_1h[i] != 0:
-                alignment_score[i] = 1  # Partial alignment
+                    trend_score[i] = -2
+            else:
+                trend_score[i] = 0
         
-        return alignment_score
+        return trend_score
     
     def layer3_price_action(self, df, target):
         """
-        Layer 3: Price Action Confirmation
+        Layer 3: Price Action - Strict Requirements
         
-        5-point validation:
-        1. RSI extreme (< 30 or > 70): +1 point
-        2. Bollinger Bands touch: +1 point
-        3. Stochastic aligned with RSI: +1 point
-        4. Follow-through (consecutive candles): +1 point
-        5. Support/Resistance proximity: +1 point
+        Must satisfy BOTH conditions:
+        1. RSI extreme AND (BB touch OR Stochastic align)
+        2. Follow-through OR Support/Resistance touch
         
-        Maximum: 3 points (5 checks but scored 0-3)
+        Scoring: 0 or 2 points (all-or-nothing)
         """
         close = df['close'].values
         high = df['high'].values
@@ -155,47 +139,39 @@ class IntradayTradingModelV1:
             if i < 2:
                 continue
             
-            score = 0
+            # Condition 1: RSI extreme
+            rsi_extreme = (rsi[i] < 25 or rsi[i] > 75)
             
-            # 1. RSI extreme
-            if rsi[i] < 30 or rsi[i] > 70:
-                score += 1
+            # Support: BB or Stochastic confirmation
+            bb_touch = (close[i] <= bb_lower[i] or close[i] >= bb_upper[i])
+            stoch_align = ((stoch_k[i] < 20 and rsi[i] < 30) or (stoch_k[i] > 80 and rsi[i] > 70))
+            condition1 = rsi_extreme and (bb_touch or stoch_align)
             
-            # 2. Bollinger Bands touch
-            if close[i] <= bb_lower[i] or close[i] >= bb_upper[i]:
-                score += 1
-            
-            # 3. Stochastic aligned with RSI
-            if (stoch_k[i] < 30 and rsi[i] < 30) or (stoch_k[i] > 70 and rsi[i] > 70):
-                score += 1
-            
-            # 4. Follow-through (previous 2 candles in same direction)
+            # Condition 2: Follow-through or Support/Resistance
+            follow_through = False
             if target[i] == 1:
-                if close[i] > close[i-1] and close[i-1] > close[i-2]:
-                    score += 1
+                follow_through = close[i] > close[i-1] and close[i-1] > close[i-2]
             elif target[i] == 0:
-                if close[i] < close[i-1] and close[i-1] < close[i-2]:
-                    score += 1
+                follow_through = close[i] < close[i-1] and close[i-1] < close[i-2]
             
-            # 5. Support/Resistance proximity
             recent_high = np.max(high[max(0, i-20):i])
             recent_low = np.min(low[max(0, i-20):i])
-            if abs(close[i] - recent_high) < (recent_high - recent_low) * 0.02 or \
-               abs(close[i] - recent_low) < (recent_high - recent_low) * 0.02:
-                score += 1
+            sr_touch = (abs(close[i] - recent_high) < (recent_high - recent_low) * 0.01 or
+                       abs(close[i] - recent_low) < (recent_high - recent_low) * 0.01)
+            condition2 = follow_through or sr_touch
             
-            price_action_score[i] = min(score, 5)
+            # Both conditions required
+            if condition1 and condition2:
+                price_action_score[i] = 2
         
         return price_action_score
     
     def layer4_volume_microstructure(self, df, target):
         """
-        Layer 4: Volume Microstructure
+        Layer 4: Volume Microstructure - Strict Anomaly Detection
         
-        Confirms signal with volume anomalies:
-        - Volume > Average(20) + 1.5*StdDev(20): +1 point
-        
-        Scientific basis: [web:280,281] LOB depth imbalance is strong predictive signal
+        Requires volume > Average(20) + 2.0*StdDev (very high)
+        Scoring: 0 or 2 points (binary)
         """
         volume = df['volume'].values
         
@@ -209,21 +185,21 @@ class IntradayTradingModelV1:
             if i < 20:
                 continue
             
-            # Strong volume: > average + 1.5*std
-            if volume[i] > (avg_volume_20[i] + 1.5 * std_volume_20[i]):
-                volume_score[i] = 1
+            # Much stricter: 2 std deviations
+            if volume[i] > (avg_volume_20[i] + 2.0 * std_volume_20[i]):
+                volume_score[i] = 2
         
         return volume_score
     
     def layer5_timing_confirmation(self, df, target):
         """
-        Layer 5: Timing Confirmation
+        Layer 5: Timing Confirmation - Strict Entry Timing
         
-        Validates entry timing:
-        - MACD histogram reversal (sign change): +1 point
-        - RSI reversal (oversold->rising or overbought->falling): +1 point
+        Requires BOTH MACD and RSI confirmation:
+        - MACD histogram reversal (sign change)
+        - RSI inflection (starts reversing)
         
-        Scientific basis: [web:283,300] LOB forecasting requires microstructure + timing double confirmation
+        Scoring: 0 or 2 points (both required)
         """
         close = df['close'].values
         
@@ -234,65 +210,67 @@ class IntradayTradingModelV1:
         pattern_indices = np.where(target != -1)[0]
         
         for i in pattern_indices:
-            if i < 1:
+            if i < 2:
                 continue
             
-            # MACD histogram reversal
-            if i > 1 and macd_histogram[i] * macd_histogram[i-1] < 0:
-                timing_score[i] = 1
+            # MACD reversal check
+            macd_reversal = (macd_histogram[i] * macd_histogram[i-1] < 0)
             
-            # RSI reversal
-            elif (rsi[i-1] < 30 and rsi[i] > rsi[i-1]) or \
-                 (rsi[i-1] > 70 and rsi[i] < rsi[i-1]):
-                timing_score[i] = 1
+            # RSI inflection check
+            rsi_inflection = False
+            if rsi[i-1] < 30 and rsi[i] > rsi[i-1]:
+                rsi_inflection = True
+            elif rsi[i-1] > 70 and rsi[i] < rsi[i-1]:
+                rsi_inflection = True
+            
+            # Both required for timing confirmation
+            if macd_reversal and rsi_inflection:
+                timing_score[i] = 2
         
         return timing_score
     
     def generate_signals(self, df, target):
         """
-        Generate intraday trading signals with 5-layer confirmation
+        Generate signals with stricter confirmation requirements
         
-        Returns:
-        - signals: Entry signals (0/1)
-        - confidence_scores: Confidence level (0-8)
+        Confidence scoring (0-10):
+        - Layer 1: Must pass (binary)
+        - Layer 2: -2/0/+2 points
+        - Layer 3: 0/2 points
+        - Layer 4: 0/2 points
+        - Layer 5: 0/2 points
+        
+        Total: -2 to +10 range (only 2+ considered)
         """
         pattern_mask = target != -1
         
-        # Evaluate all layers
         env_ok = self.layer1_market_environment(df, pattern_mask)
         trend_score = self.layer2_multi_timeframe_trend(df, pattern_mask)
         price_score = self.layer3_price_action(df, target)
         volume_score = self.layer4_volume_microstructure(df, target)
         timing_score = self.layer5_timing_confirmation(df, target)
         
-        # Merge confidence scores
         confidence_scores = np.zeros(len(df), dtype=int)
         signals = np.zeros(len(df), dtype=int)
         
         pattern_indices = np.where(pattern_mask)[0]
         
         for idx in pattern_indices:
-            # Layer 1 must pass (mandatory)
+            # Layer 1: mandatory gate
             if not env_ok[idx]:
                 confidence_scores[idx] = 0
                 continue
             
-            # Calculate total score (0-8)
-            total_score = (
-                1 +  # Layer 1 base (mandatory pass)
-                trend_score[idx] +  # Layer 2: 0-2
-                min(price_score[idx], 3) +  # Layer 3: 0-3
-                volume_score[idx] +  # Layer 4: 0-1
-                timing_score[idx]  # Layer 5: 0-1
-            )
+            # Calculate score: trend + price + volume + timing
+            total_score = trend_score[idx] + price_score[idx] + volume_score[idx] + timing_score[idx]
             
-            confidence_scores[idx] = total_score
+            confidence_scores[idx] = max(0, total_score)  # No negative scores
             
-            # Entry logic
-            if total_score >= 5:
-                signals[idx] = 2  # High confidence
-            elif total_score >= 3:
-                signals[idx] = 1  # Standard confidence
+            # Entry logic: stricter thresholds
+            if total_score >= 8:  # All 4 layers strong
+                signals[idx] = 2  # High precision
+            elif total_score >= 6:  # Most layers confirmed
+                signals[idx] = 1  # Standard
         
         return signals, confidence_scores
     
@@ -343,6 +321,7 @@ def main():
     logger.info('Intraday Trading Model V1: 5-Layer Confirmation System')
     logger.info('='*70)
     logger.info('Objective: Daily signals with 80%+ precision and recall')
+    logger.info('Strategy: Strict all-or-nothing layer confirmation')
     logger.info('')
     
     config = StrategyConfig.get_default()
@@ -394,13 +373,15 @@ def main():
     signals, confidence_scores = model.generate_signals(df, target)
     
     logger.info('\n' + '='*70)
-    logger.info('LAYER ARCHITECTURE')
+    logger.info('LAYER ARCHITECTURE (Strict Mode)')
     logger.info('='*70)
-    logger.info('Layer 1: Market Environment (volume, ATR, time)')
-    logger.info('Layer 2: Multi-Timeframe Trend (4h/1h/15m alignment)')
-    logger.info('Layer 3: Price Action (RSI, BB, Stochastic, Follow-through)')
-    logger.info('Layer 4: Volume Microstructure (volume confirmation)')
-    logger.info('Layer 5: Timing Confirmation (MACD, RSI timing)')
+    logger.info('Layer 1: Market Environment (volume > 200% avg, ATR > median)')
+    logger.info('Layer 2: Trend Alignment (4h/1h perfect align only: +2 or -2)')
+    logger.info('Layer 3: Price Action (RSI extreme + (BB or Stochastic) + (FT or SR))')
+    logger.info('Layer 4: Volume Microstructure (volume > avg + 2.0*std)')
+    logger.info('Layer 5: Timing (MACD reversal + RSI inflection both required)')
+    logger.info('')
+    logger.info('Scoring: Base 2 per layer, total 0-10, gates at 6+ and 8+')
     
     logger.info('\n' + '='*70)
     logger.info('SIGNAL GENERATION RESULTS')
@@ -411,10 +392,9 @@ def main():
     total_signals = high_confidence + standard_confidence
     
     logger.info(f'Total signals generated: {total_signals}')
-    logger.info(f'  High confidence (>=5 layers): {high_confidence}')
-    logger.info(f'  Standard confidence (3-4 layers): {standard_confidence}')
+    logger.info(f'  High confidence (score >= 8): {high_confidence}')
+    logger.info(f'  Standard confidence (score 6-7): {standard_confidence}')
     
-    # Daily signal distribution - use numpy arrays directly
     signal_mask = signals > 0
     signal_indices = np.where(signal_mask)[0]
     
@@ -431,15 +411,12 @@ def main():
         logger.info(f'  Min signals per day: {daily_counts.min()}')
     else:
         logger.info('\nDaily signal statistics:')
-        logger.info('  No signals generated')
+        logger.info('  No signals generated - refinement needed')
     
-    # Precision and Recall calculation
     if total_signals > 0:
         actual_profitable = (target[signal_indices] == 1).sum()
+        precision = actual_profitable / total_signals * 100
         
-        precision = actual_profitable / total_signals * 100 if total_signals > 0 else 0
-        
-        # Recall: caught profitable trades / total profitable trades
         all_profitable_indices = np.where(target == 1)[0]
         caught_profitable = (signals[all_profitable_indices] > 0).sum()
         total_profitable = len(all_profitable_indices)
@@ -458,17 +435,21 @@ def main():
         if precision >= 80 and recall >= 80:
             logger.info('Target achieved')
         else:
-            logger.info('Target not met - model refinement needed')
+            logger.info('Status: Target not met - model refinement needed')
     
     logger.info('\n' + '='*70)
     logger.info('CONFIDENCE DISTRIBUTION')
     logger.info('='*70)
     
-    for conf_level in sorted(np.unique(confidence_scores[confidence_scores > 0])):
-        count = (confidence_scores == conf_level).sum()
-        if count > 0 and conf_level > 0:
-            pct = count / len(df) * 100
-            logger.info(f'Confidence {conf_level}: {count} signals ({pct:.2f}%)')
+    unique_scores = sorted(np.unique(confidence_scores[confidence_scores > 0]))
+    if len(unique_scores) > 0:
+        for conf_level in unique_scores:
+            count = (confidence_scores == conf_level).sum()
+            if count > 0:
+                pct = count / len(df) * 100
+                logger.info(f'Score {conf_level}: {count} signals ({pct:.2f}%)')
+    else:
+        logger.info('No confidence scores generated')
     
     logger.info('\n' + '='*70)
     logger.info('Model deployment ready')
