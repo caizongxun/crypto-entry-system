@@ -10,8 +10,10 @@ Example:
 - At bar 103-120: Profitable reversal occurs
 - Model learns: These bar-100 features predict profitable reversal
 
-This allows the model to learn market microstructure that PRECEDES reversals,
-not just detect reversals after they happen.
+CRITICAL FIX: Only trains on labeled data (target != -1)
+- Unlabeled bars are ignored
+- Model learns from actual swing points only
+- No bias from non-swing bars
 
 Usage:
     python main_production.py --mode train --symbol BTCUSDT --timeframe 15m --lead-bars 3
@@ -67,6 +69,7 @@ def train_production_model(args):
     logger.info('='*70)
     logger.info(f'Symbol: {args.symbol}, Timeframe: {args.timeframe}')
     logger.info(f'Label Method: LEAD-LAG (features at t predict reversal at t+{args.lead_bars})')
+    logger.info(f'Training Strategy: Only labeled data (target != -1)')
     logger.info(f'Trading Parameters: PT={args.profit_pct*100:.2f}%, SL={args.stop_loss_pct*100:.2f}%, MaxBars={args.max_hold_bars}')
     logger.info('='*70)
     
@@ -120,15 +123,19 @@ def train_production_model(args):
     df_features['reversal_target'] = target
     df_features['trade_pnl'] = profits * 100
     
-    positive_count = (target == 1).sum()
-    negative_count = (target == 0).sum()
+    labeled_mask = target != -1
+    df_labeled = df_features[labeled_mask].copy()
+    
+    positive_count = (df_labeled['reversal_target'] == 1).sum()
+    negative_count = (df_labeled['reversal_target'] == 0).sum()
     total_labeled = positive_count + negative_count
     
     logger.info(f'Label Analysis:')
+    logger.info(f'Total data points: {len(df_features)}')
+    logger.info(f'Labeled data points: {total_labeled}')
+    logger.info(f'Unlabeled data points: {len(df_features) - total_labeled}')
     logger.info(f'Profitable reversals (target=1): {positive_count}')
     logger.info(f'Unprofitable reversals (target=0): {negative_count}')
-    logger.info(f'Total labeled points: {total_labeled}')
-    logger.info(f'Unlabeled points: {len(df_features) - total_labeled}')
     
     if total_labeled == 0:
         logger.error('No labeled data found')
@@ -141,18 +148,16 @@ def train_production_model(args):
     label_win_rate = positive_count / total_labeled * 100
     logger.info(f'Win rate (among labeled points): {label_win_rate:.2f}%')
     
-    train_size = int(len(df_features) * 0.7)
-    df_train = df_features.iloc[:train_size]
-    df_test = df_features.iloc[train_size:]
+    train_size = int(len(df_labeled) * 0.7)
+    df_train = df_labeled.iloc[:train_size]
+    df_test = df_labeled.iloc[train_size:]
     
     y_train = df_train['reversal_target'].values
     y_test = df_test['reversal_target'].values
     
     logger.info(f'Train/Test Split: {len(df_train)}/{len(df_test)}')
-    logger.info(f'Train labeled ratio: {(y_train != 0).sum() / len(y_train) * 100:.2f}%')
-    logger.info(f'Test labeled ratio: {(y_test != 0).sum() / len(y_test) * 100:.2f}%')
-    logger.info(f'Train win rate (labeled): {(y_train == 1).sum() / ((y_train == 1).sum() + (y_train == 0).sum()) * 100 if ((y_train == 1).sum() + (y_train == 0).sum()) > 0 else 0:.2f}%')
-    logger.info(f'Test win rate (labeled): {(y_test == 1).sum() / ((y_test == 1).sum() + (y_test == 0).sum()) * 100 if ((y_test == 1).sum() + (y_test == 0).sum()) > 0 else 0:.2f}%')
+    logger.info(f'Train profitable: {(y_train == 1).sum()} / {len(y_train)}')
+    logger.info(f'Test profitable: {(y_test == 1).sum()} / {len(y_test)}')
     
     feature_cols = [col for col in df_features.columns 
                     if col not in ['open', 'high', 'low', 'close', 'volume', 'reversal_target', 'trade_pnl']]
@@ -311,6 +316,9 @@ def train_production_model(args):
         'metric': 'profitable_signals',
         'value': positive_count,
     }, {
+        'metric': 'total_labeled',
+        'value': total_labeled,
+    }, {
         'metric': 'lead_bars',
         'value': args.lead_bars,
     }]
@@ -327,7 +335,9 @@ def train_production_model(args):
     logger.info('TRAINING COMPLETE')
     logger.info('='*70)
     logger.info(f'Architecture: LEAD-LAG (lead={args.lead_bars} bars)')
+    logger.info(f'Training Strategy: Labeled data only')
     logger.info(f'Trading Parameters: PT={args.profit_pct*100:.2f}%, SL={args.stop_loss_pct*100:.2f}%, MaxBars={args.max_hold_bars}')
+    logger.info(f'Total labeled: {total_labeled}')
     logger.info(f'Label Win Rate: {label_win_rate:.2f}%')
     logger.info(f'Profitable Signals: {positive_count}')
     logger.info(f'Ensemble AUC: {ensemble_auc:.4f}')
