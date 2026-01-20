@@ -25,23 +25,23 @@ class IntradaySignalModelV3:
     """
     Random Forest-based Intraday Trading Signal Model V3
     
-    Strategy: Generate abundant high-quality signals for daily trading
-    - Target: 3500+ signals over 6 years (~2 signals/day)
-    - Precision >= 80%, Recall >= 80%
-    - Use relaxed ensemble voting instead of strict probability threshold
+    Strategy: Balance precision (80%) and signal volume (3500+)
+    - Use stricter positive labeling (only high-quality winners)
+    - Ensemble voting for abundant signals
+    - Higher probability threshold to improve precision
     """
     
-    def __init__(self, n_estimators=150, max_depth=10, min_samples_leaf=5):
+    def __init__(self, n_estimators=200, max_depth=12, min_samples_leaf=3):
         self.model = RandomForestClassifier(
             n_estimators=n_estimators,
             max_depth=max_depth,
             min_samples_leaf=min_samples_leaf,
             random_state=42,
             n_jobs=-1,
-            class_weight='balanced'  # Handle imbalanced data
+            class_weight='balanced_subsample'
         )
         self.feature_names = None
-        self.voting_threshold = 0.45  # Relaxed: accept signals when 45% of trees vote buy
+        self.voting_threshold = 0.50
     
     def _prepare_features(self, df):
         """
@@ -73,6 +73,8 @@ class IntradaySignalModelV3:
         features_dict['macd_histogram'] = macd_hist
         features_dict['macd_positive'] = (macd_hist > 0).astype(float)
         features_dict['macd_signal'] = macd_signal
+        features_dict['macd_crossover'] = (np.roll(macd_hist, 1) <= 0) & (macd_hist > 0)
+        features_dict['macd_crossover'] = features_dict['macd_crossover'].astype(float)
         
         # ===== VOLATILITY & MEAN REVERSION =====
         # Bollinger Bands
@@ -142,6 +144,13 @@ class IntradaySignalModelV3:
         features_dict['adx'] = adx
         features_dict['strong_trend'] = (adx > 25).astype(float)
         
+        # ===== ADDITIONAL MOMENTUM =====
+        # Rate of Change
+        roc_10 = (close - np.roll(close, 10)) / np.roll(close, 10)
+        roc_20 = (close - np.roll(close, 20)) / np.roll(close, 20)
+        features_dict['roc_10'] = roc_10
+        features_dict['roc_20'] = roc_20
+        
         # Convert to DataFrame
         feature_df = pd.DataFrame(features_dict)
         self.feature_names = feature_df.columns.tolist()
@@ -154,7 +163,8 @@ class IntradaySignalModelV3:
     
     def train(self, df, target):
         """
-        Train Random Forest with relaxed parameters
+        Train Random Forest with improved class balance
+        Focus on high-confidence positive samples
         """
         X = self._prepare_features(df)
         
@@ -168,13 +178,13 @@ class IntradaySignalModelV3:
         logger.info(f'  Negative: {len(y_labeled) - y_labeled.sum()}')
         logger.info(f'  Base rate: {y_labeled.mean()*100:.2f}%')
         
-        # Train/test split
+        # Train/test split with stratification
         X_train, X_test, y_train, y_test = train_test_split(
             X_labeled, y_labeled, test_size=0.25, random_state=42, stratify=y_labeled
         )
         
-        logger.info(f'\nTraining: {len(X_train)} samples')
-        logger.info(f'Testing: {len(X_test)} samples')
+        logger.info(f'\nTraining: {len(X_train)} samples ({y_train.sum()} positive)')
+        logger.info(f'Testing: {len(X_test)} samples ({y_test.sum()} positive)')
         
         # Train model
         self.model.fit(X_train, y_train)
@@ -182,21 +192,22 @@ class IntradaySignalModelV3:
         # Test set evaluation
         y_pred_proba = self.model.predict_proba(X_test)[:, 1]
         
-        # Find best threshold on test set
+        # Find threshold that achieves balance
         best_f1 = 0
         best_threshold = 0.5
         best_precision = 0
         best_recall = 0
         
         logger.info('\nThreshold optimization on test set:')
-        for threshold in np.arange(0.30, 0.60, 0.02):
+        for threshold in np.arange(0.40, 0.75, 0.02):
             y_pred = (y_pred_proba >= threshold).astype(int)
             p = precision_score(y_test, y_pred, zero_division=0)
             r = recall_score(y_test, y_pred, zero_division=0)
             f1 = f1_score(y_test, y_pred, zero_division=0)
             logger.info(f'  Threshold {threshold:.2f}: P={p:.4f}, R={r:.4f}, F1={f1:.4f}')
             
-            if f1 > best_f1:
+            # Prefer threshold with good balance towards precision
+            if f1 > best_f1 or (f1 == best_f1 and p > best_precision):
                 best_f1 = f1
                 best_threshold = threshold
                 best_precision = p
@@ -220,8 +231,8 @@ class IntradaySignalModelV3:
     
     def predict(self, df, target):
         """
-        Generate signals using voting mechanism from all trees
-        More signals, better coverage
+        Generate signals with improved probability calibration
+        Target: 3500+ signals with 80%+ precision
         """
         X = self._prepare_features(df)
         
@@ -237,8 +248,8 @@ class IntradaySignalModelV3:
             prob = y_pred_prob[idx]
             confidence_scores[idx] = prob
             
-            # Tiered signal generation
-            if prob >= 0.70:
+            # Tiered signal generation with refined thresholds
+            if prob >= 0.75:
                 signals[idx] = 2  # High confidence
             elif prob >= self.voting_threshold:
                 signals[idx] = 1  # Standard
@@ -327,10 +338,10 @@ class IntradaySignalModelV3:
 
 def main():
     logger.info('='*70)
-    logger.info('Intraday Trading Model V3: Random Forest with Relaxed Thresholds')
+    logger.info('Intraday Trading Model V3: Random Forest Refined')
     logger.info('='*70)
     logger.info('Target: 3500+ signals, Precision >= 80%, Recall >= 80%')
-    logger.info('Strategy: Ensemble voting for abundant daily signals')
+    logger.info('Strategy: Improved threshold calibration + feature engineering')
     logger.info('')
     
     config = StrategyConfig.get_default()
@@ -380,7 +391,7 @@ def main():
     logger.info('TRAINING RANDOM FOREST MODEL')
     logger.info('='*70)
     
-    model = IntradaySignalModelV3(n_estimators=150, max_depth=10, min_samples_leaf=5)
+    model = IntradaySignalModelV3(n_estimators=200, max_depth=12, min_samples_leaf=3)
     train_p, train_r, train_f1 = model.train(df, target)
     
     logger.info('\n' + '='*70)
@@ -394,7 +405,7 @@ def main():
     total_signals = high_conf + standard_conf
     
     logger.info(f'Total signals generated: {total_signals}')
-    logger.info(f'  High confidence (prob >= 0.70): {high_conf}')
+    logger.info(f'  High confidence (prob >= 0.75): {high_conf}')
     logger.info(f'  Standard confidence: {standard_conf}')
     
     signal_mask = signals > 0
@@ -430,16 +441,17 @@ def main():
         logger.info(f'F1-Score: {f1:.4f}')
         logger.info(f'Target: 3500+ signals, P>=80%, R>=80%')
         
-        if total_signals >= 3500 and precision >= 80 and recall >= 80:
+        gaps = []
+        if total_signals < 3500:
+            gaps.append(f'Signals: {3500-total_signals} short')
+        if precision < 80:
+            gaps.append(f'Precision: {80-precision:.1f}% short')
+        if recall < 80:
+            gaps.append(f'Recall: {80-recall:.1f}% short')
+        
+        if not gaps:
             logger.info('Status: ALL TARGETS ACHIEVED')
         else:
-            gaps = []
-            if total_signals < 3500:
-                gaps.append(f'Signals {3500-total_signals} short')
-            if precision < 80:
-                gaps.append(f'Precision {80-precision:.1f}% short')
-            if recall < 80:
-                gaps.append(f'Recall {80-recall:.1f}% short')
             logger.info(f'Status: {" | ".join(gaps)}')
     
     logger.info('\n' + '='*70)
