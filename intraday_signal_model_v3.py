@@ -201,32 +201,53 @@ def calculate_profit_factor(y_true, y_pred, threshold=0.5):
         return 0
     return correct / incorrect
 
-def optimize_threshold_by_f1_score(y_true, y_pred_proba):
-    """根據 F1 分數尋找最優閾值，平衡精準度和召回率"""
-    logger.info("正在根據 F1 分數優化閾值...")
+def optimize_threshold_weighted(y_true, y_pred_proba):
+    """
+    加權評分策略：平衡精準度、召回率、利潤因子
     
-    best_f1 = 0
+    分數 = 0.4 * (precision / 0.8) + 0.4 * (recall / 0.8) + 0.2 * (pf / 1.5)
+    最大化分數的閾值
+    """
+    logger.info("正在根據加權評分優化閾值...")
+    logger.info("權重: 精準度 40%, 召回率 40%, 利潤因子 20%")
+    
+    best_score = -np.inf
     best_threshold = 0.5
     best_metrics = {}
     
-    for threshold in np.arange(0.30, 0.75, 0.02):
+    for threshold in np.arange(0.35, 0.70, 0.01):
         precision = precision_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         recall = recall_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
-        f1 = f1_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
+        f1 = f1_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         
-        logger.info(f"  閾值 {threshold:.2f}: F1={f1:.4f}, 精準度={precision:.4f}, 召回率={recall:.4f}, PF={pf:.4f}")
+        # 加權評分（管理目標於肠上：精準度及召回率需超 80%）
+        precision_score_norm = min(precision / 0.80, 1.0)  # 正规化到 [0, 1]
+        recall_score_norm = min(recall / 0.80, 1.0)
+        pf_score_norm = min(pf / 1.5, 1.0)
         
-        if f1 > best_f1:
-            best_f1 = f1
+        weighted_score = 0.4 * precision_score_norm + 0.4 * recall_score_norm + 0.2 * pf_score_norm
+        
+        if threshold % 0.05 < 0.01:  # 每 5% 閾值時輸出
+            logger.info(f"  閾值 {threshold:.2f}: 精準度={precision:.4f}, 召回率={recall:.4f}, PF={pf:.4f}, F1={f1:.4f}, 加權分={weighted_score:.4f}")
+        
+        if weighted_score > best_score:
+            best_score = weighted_score
             best_threshold = threshold
-            best_metrics = {'precision': precision, 'recall': recall, 'pf': pf}
+            best_metrics = {
+                'precision': precision,
+                'recall': recall,
+                'pf': pf,
+                'f1': f1,
+                'score': weighted_score
+            }
     
     logger.info(f"\n選定閾值: {best_threshold:.4f}")
-    logger.info(f"  F1 分數: {best_f1:.4f}")
     logger.info(f"  精準度: {best_metrics['precision']:.4f}")
     logger.info(f"  召回率: {best_metrics['recall']:.4f}")
     logger.info(f"  利潤因子: {best_metrics['pf']:.4f}")
+    logger.info(f"  F1 分數: {best_metrics['f1']:.4f}")
+    logger.info(f"  加權分: {best_metrics['score']:.4f}")
     
     return best_threshold
 
@@ -266,7 +287,7 @@ def train_model(X_train, y_train, X_test, y_test):
     probs_train = calibrated_rf.predict_proba(X_train)[:, 1]
     probs_test = calibrated_rf.predict_proba(X_test)[:, 1]
     
-    optimal_threshold = optimize_threshold_by_f1_score(y_test, probs_test)
+    optimal_threshold = optimize_threshold_weighted(y_test, probs_test)
     
     y_pred_test = (probs_test >= optimal_threshold).astype(int)
     precision_test = precision_score(y_test, y_pred_test, zero_division=0)
@@ -384,7 +405,7 @@ def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     logger.info(f"交易對: {symbol}, 時間框: {timeframe}")
     logger.info("策略: 基於風險收益比的改進標籤定義")
     logger.info("增強: 概率校準 + 類別權重平衡")
-    logger.info("最佳化: 基於 F1 分數平衡精準度和召回率")
+    logger.info("最佳化: 加權評分法平衡精準度/召回率/利潤因子")
     logger.info("")
     
     df = load_data(symbol, timeframe)
