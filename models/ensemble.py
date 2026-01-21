@@ -216,7 +216,7 @@ class EnsembleModel:
         path.mkdir(parents=True, exist_ok=True)
         
         if self.xgb_model:
-            self.xgb_model.save_model(str(path / 'xgb_model.json'))
+            joblib.dump(self.xgb_model, path / 'xgb_model.pkl')
         if self.lgb_model:
             joblib.dump(self.lgb_model, path / 'lgb_model.pkl')
         if self.nn_model:
@@ -234,19 +234,22 @@ class EnsembleModel:
         
         path = Path(path)
         
-        if (path / 'xgb_model.json').exists():
-            self.xgb_model = xgb.XGBClassifier()
-            self.xgb_model.load_model(str(path / 'xgb_model.json'))
+        if (path / 'xgb_model.pkl').exists():
+            self.xgb_model = joblib.load(path / 'xgb_model.pkl')
+            logger.info("XGBoost model loaded")
         
         if (path / 'lgb_model.pkl').exists():
             self.lgb_model = joblib.load(path / 'lgb_model.pkl')
+            logger.info("LightGBM model loaded")
         
         if (path / 'nn_model.keras').exists():
             from tensorflow.keras.models import load_model
             self.nn_model = load_model(str(path / 'nn_model.keras'))
+            logger.info("Neural Network model loaded")
         
         if (path / 'lr_model.pkl').exists():
             self.lr_model = joblib.load(path / 'lr_model.pkl')
+            logger.info("Logistic Regression model loaded")
         
         if (path / 'weights.pkl').exists():
             self.ensemble_weights = joblib.load(path / 'weights.pkl')
