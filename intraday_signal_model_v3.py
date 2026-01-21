@@ -7,16 +7,27 @@ from sklearn.metrics import precision_score, recall_score, f1_score, confusion_m
 import ta
 from loguru import logger
 import warnings
+import os
 warnings.filterwarnings('ignore')
 
 logger.remove()
 logger.add(lambda msg: print(msg, end=''), format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}")
 
 def load_data():
-    from datasets import load_dataset
     logger.info("Loading 15-minute data...")
-    dataset = load_dataset("zong/BTC_OHLCV", split="train", cache_dir="./data_cache")
-    df = dataset.to_pandas()
+    parquet_path = "BTC_15m.parquet"
+    
+    if not os.path.exists(parquet_path):
+        try:
+            from datasets import load_dataset
+            dataset = load_dataset("zong/BTC_OHLCV", split="train", cache_dir="./data_cache")
+            df = dataset.to_pandas()
+        except Exception as e:
+            logger.error(f"Failed to load from Hub: {e}")
+            raise
+    else:
+        df = pd.read_parquet(parquet_path)
+    
     df['timestamp'] = pd.to_datetime(df['timestamp'])
     df = df.sort_values('timestamp').reset_index(drop=True)
     df = df.rename(columns={'open': 'o', 'high': 'h', 'low': 'l', 'close': 'c', 'volume': 'v'})
