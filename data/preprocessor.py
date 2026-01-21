@@ -8,6 +8,7 @@ import logging
 from features.technical import TechnicalIndicators
 from features.volatility import VolatilityRegime
 from features.microstructure_features import MicrostructureFeatures
+from models.regime_detector import RegimeDetector
 
 logger = logging.getLogger(__name__)
 
@@ -20,21 +21,55 @@ class DataPreprocessor:
         self.feature_names = []
     
     @staticmethod
-    def create_target_variable(df: pd.DataFrame, lookahead: int = 1, threshold: float = 0.0) -> pd.Series:
-        """Create binary target: 1 if price goes up, 0 if goes down.
+    def create_target_variable(
+        df: pd.DataFrame,
+        lookahead: int = 3,
+        threshold_up: float = 0.003,
+        threshold_down: float = -0.003
+    ) -> pd.Series:
+        """Create binary target with multi-period reversal detection.
+        
+        Detects mean reversion patterns:
+        - If price is currently above MA and will drop: 0 (predict DOWN)
+        - If price is currently below MA and will rise: 1 (predict UP)
+        - Otherwise: exclude from training
         
         Args:
-            df: DataFrame with OHLCV data
+            df: DataFrame with OHLCV data and indicators
             lookahead: Number of candles to look ahead
-            threshold: Minimum percent change to be considered "up"
+            threshold_up: Minimum return to consider as UP
+            threshold_down: Maximum return to consider as DOWN
         
         Returns:
-            Binary series: 1 for UP, 0 for DOWN
+            Binary series: 1 for UP reversal, 0 for DOWN reversal, NaN for neutral
         """
         future_close = df['close'].shift(-lookahead)
-        price_change = (future_close - df['close']) / df['close']
+        future_high = df['high'].shift(-lookahead)
+        future_low = df['low'].shift(-lookahead)
         
-        target = (price_change > threshold).astype(int)
+        current_close = df['close']
+        sma_20 = df['sma_20']
+        
+        # Calculate returns
+        returns = (future_close - current_close) / current_close
+        max_return = (future_high - current_close) / current_close
+        min_return = (future_low - current_close) / current_close
+        
+        # Direction bias: above/below MA
+        above_ma = current_close > sma_20
+        below_ma = current_close < sma_20
+        
+        # Reversal signals
+        # UP reversal: price below MA now, will go up in future
+        up_reversal = (below_ma) & (max_return > threshold_up)
+        
+        # DOWN reversal: price above MA now, will go down in future
+        down_reversal = (above_ma) & (min_return < threshold_down)
+        
+        target = pd.Series(np.nan, index=df.index)
+        target[up_reversal] = 1
+        target[down_reversal] = 0
+        
         return target
     
     @staticmethod
@@ -131,7 +166,7 @@ class DataPreprocessor:
         self,
         df: pd.DataFrame,
         create_target: bool = True,
-        lookahead: int = 1,
+        lookahead: int = 3,
         normalize: bool = True
     ) -> Tuple[pd.DataFrame, pd.Series]:
         """Complete preprocessing pipeline.
@@ -139,7 +174,7 @@ class DataPreprocessor:
         Args:
             df: Raw OHLCV DataFrame
             create_target: Whether to create target variable
-            lookahead: Lookahead period for target
+            lookahead: Lookahead period for target (3 candles = 45 minutes for 15m)
             normalize: Whether to normalize features
         
         Returns:
@@ -160,22 +195,30 @@ class DataPreprocessor:
         logger.info("Calculating microstructure features...")
         df = MicrostructureFeatures.calculate_all_microstructure_features(df, self.config)
         
+        # Calculate regime detection features
+        logger.info("Calculating regime detection features...")
+        df = RegimeDetector.calculate_regime_features(df, self.config)
+        
         # Calculate additional features
         logger.info("Calculating derived features...")
         df = self.calculate_returns_features(df)
         df = self.calculate_price_features(df)
         df = self.calculate_divergence_features(df)
         
+        # Create target variable BEFORE removing NaN
+        if create_target:
+            logger.info(f"Creating target variable (lookahead={lookahead})...")
+            target = self.create_target_variable(df, lookahead=lookahead, threshold_up=0.003, threshold_down=-0.003)
+            df['target'] = target
+        
         # Remove rows with NaN values
         initial_rows = len(df)
         df = df.dropna()
         logger.info(f"Removed {initial_rows - len(df)} rows with NaN values")
         
-        # Create target variable
-        if create_target:
-            logger.info(f"Creating target variable (lookahead={lookahead})...")
-            target = self.create_target_variable(df, lookahead=lookahead)
-            df['target'] = target
+        if len(df) == 0:
+            logger.error("No valid data after preprocessing")
+            return pd.DataFrame(), pd.Series()
         
         # Select features (numeric only)
         self.feature_names = self.select_features(df)
@@ -191,8 +234,12 @@ class DataPreprocessor:
         
         y = df['target'] if 'target' in df.columns else None
         
+        if y is not None:
+            target_dist = y.value_counts()
+            logger.info(f"Target distribution: {target_dist.to_dict()}")
+            logger.info(f"Class balance: {(target_dist[1] / len(y) * 100):.1f}% UP, {(target_dist[0] / len(y) * 100):.1f}% DOWN")
+        
         logger.info(f"Preprocessing complete: {len(X)} samples, {len(self.feature_names)} features")
-        logger.info(f"Feature names: {self.feature_names[:10]}...")  # Show first 10
         return X, y
     
     def split_data(
