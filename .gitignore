@@ -1,8 +1,12 @@
+# Python
 __pycache__/
 *.py[cod]
 *$py.class
 *.so
 .Python
+env/
+venv/
+ENV/
 build/
 develop-eggs/
 dist/
@@ -20,34 +24,31 @@ share/python-wheels/
 *.egg-info/
 .installed.cfg
 *.egg
-PIPFILE.lock
 
-.venv
-env/
-venv/
-ENV/
-env.bak/
-venv.bak/
-
-.idea/
+# IDE
 .vscode/
+.idea/
 *.swp
 *.swo
 *~
 .DS_Store
 
-models/cache/
-models/*.pkl
-models/*.joblib
-models/data/
-
+# Data and models
+data/cache/
+models/artifacts/
+logs/
 *.parquet
 *.csv
-*.h5
-*.model
+*.pkl
 
-.ipynb_checkpoints/
-*.ipynb
+# Environment
+.env
+.env.local
 
-logs/
-*.log
+# Testing
+.pytest_cache/
+.coverage
+htmlcov/
+
+# Streamlit
+.streamlit/
