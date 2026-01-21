@@ -126,7 +126,7 @@ def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.0, max
     """
     基於風險收益比的標籤生成
     
-    Label 1 (優質信號): 風險/收益 >= threshold AND 利潤潛力 >= min_profit_pct
+    Label 1 (優質信號): 風險/收益 >= threshold AND 利潤 >= min_profit_pct
     Label 0 (劣質信號): 其他情況
     """
     logger.info("正在生成基於風險收益比的標籤...")
@@ -201,25 +201,33 @@ def calculate_profit_factor(y_true, y_pred, threshold=0.5):
         return 0
     return correct / incorrect
 
-def optimize_threshold_by_profit_factor(y_true, y_pred_proba):
-    """基於利潤因子尋找最優閾值"""
-    logger.info("正在根據利潤因子優化閾值...")
+def optimize_threshold_by_f1_score(y_true, y_pred_proba):
+    """根據 F1 分數尋找最優閾值，平衡精準度和召回率"""
+    logger.info("正在根據 F1 分數優化閾值...")
     
-    best_pf = 0
+    best_f1 = 0
     best_threshold = 0.5
+    best_metrics = {}
     
     for threshold in np.arange(0.30, 0.75, 0.02):
-        pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
         precision = precision_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         recall = recall_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
+        f1 = f1_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
+        pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
         
-        logger.info(f"  閾值 {threshold:.2f}: PF={pf:.4f}, 精準度={precision:.4f}, 召回率={recall:.4f}")
+        logger.info(f"  閾值 {threshold:.2f}: F1={f1:.4f}, 精準度={precision:.4f}, 召回率={recall:.4f}, PF={pf:.4f}")
         
-        if pf > best_pf:
-            best_pf = pf
+        if f1 > best_f1:
+            best_f1 = f1
             best_threshold = threshold
+            best_metrics = {'precision': precision, 'recall': recall, 'pf': pf}
     
-    logger.info(f"\n選定閾值: {best_threshold:.4f} (利潤因子: {best_pf:.4f})")
+    logger.info(f"\n選定閾值: {best_threshold:.4f}")
+    logger.info(f"  F1 分數: {best_f1:.4f}")
+    logger.info(f"  精準度: {best_metrics['precision']:.4f}")
+    logger.info(f"  召回率: {best_metrics['recall']:.4f}")
+    logger.info(f"  利潤因子: {best_metrics['pf']:.4f}")
+    
     return best_threshold
 
 def train_model(X_train, y_train, X_test, y_test):
@@ -258,7 +266,7 @@ def train_model(X_train, y_train, X_test, y_test):
     probs_train = calibrated_rf.predict_proba(X_train)[:, 1]
     probs_test = calibrated_rf.predict_proba(X_test)[:, 1]
     
-    optimal_threshold = optimize_threshold_by_profit_factor(y_test, probs_test)
+    optimal_threshold = optimize_threshold_by_f1_score(y_test, probs_test)
     
     y_pred_test = (probs_test >= optimal_threshold).astype(int)
     precision_test = precision_score(y_test, y_pred_test, zero_division=0)
@@ -347,10 +355,12 @@ def evaluate_full_dataset(df):
     precision = precision_score(y_true, y_pred, zero_division=0)
     recall = recall_score(y_true, y_pred, zero_division=0)
     f1 = f1_score(y_true, y_pred, zero_division=0)
+    pf = calculate_profit_factor(y_true, y_pred.values)
     
     logger.info(f"精準度: {precision:.2%}")
     logger.info(f"召回率: {recall:.2%}")
     logger.info(f"F1 分數: {f1:.4f}")
+    logger.info(f"利潤因子: {pf:.4f}")
     
     logger.info("")
     logger.info("目標: 精準度 >= 80%, 召回率 >= 80%")
@@ -374,6 +384,7 @@ def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     logger.info(f"交易對: {symbol}, 時間框: {timeframe}")
     logger.info("策略: 基於風險收益比的改進標籤定義")
     logger.info("增強: 概率校準 + 類別權重平衡")
+    logger.info("最佳化: 基於 F1 分數平衡精準度和召回率")
     logger.info("")
     
     df = load_data(symbol, timeframe)
@@ -387,9 +398,9 @@ def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     df = generate_improved_labels(
         df,
         lookback_window=20,
-        rr_ratio_threshold=1.0,  # 降低至 1.0 增加正樣本
-        max_loss_pct=1.0,         # 允許最多 1% 虧損
-        min_profit_pct=0.5        # 最少 0.5% 利潤
+        rr_ratio_threshold=1.0,
+        max_loss_pct=1.0,
+        min_profit_pct=0.5
     )
     logger.info("")
     
