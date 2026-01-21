@@ -122,15 +122,17 @@ def generate_features(df):
     logger.info("技術指標生成完成")
     return df
 
-def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.0, max_loss_pct=1.0, min_profit_pct=0.5):
+def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.5, max_loss_pct=0.5, min_profit_pct=1.0):
     """
-    基於風險收益比的標籤生成
+    多層過濾標籤生成
     
-    Label 1 (優質信號): 風險/收益 >= threshold AND 利潤 >= min_profit_pct
-    Label 0 (劣質信號): 其他情況
+    Layer 1: 風險收益比 >= threshold
+    Layer 2: 利潤潛力 >= min_profit_pct
+    Layer 3: 最大虧損 <= max_loss_pct
+    Layer 4: 極值觸及次數 >= 2 (避免異常值)
     """
-    logger.info("正在生成基於風險收益比的標籤...")
-    logger.info(f"參數: lookback_window={lookback_window}, rr_ratio={rr_ratio_threshold}, max_loss={max_loss_pct}%, min_profit={min_profit_pct}%")
+    logger.info("正在生成多層過濾標籤...")
+    logger.info(f"參數: lookback={lookback_window}, rr={rr_ratio_threshold}, max_loss={max_loss_pct}%, min_profit={min_profit_pct}%")
     
     labels = np.zeros(len(df), dtype=int)
     valid_count = 0
@@ -138,21 +140,48 @@ def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.0, max
     
     for i in range(len(df) - lookback_window):
         entry_price = df.iloc[i]['close']
-        future_slice = df.iloc[i:i+lookback_window]
+        future_slice = df.iloc[i+1:i+lookback_window+1]
         
+        if len(future_slice) < lookback_window:
+            continue
+        
+        # 計算價格極值
         max_high = future_slice['high'].max()
         min_low = future_slice['low'].min()
         
+        # 計算上升和下降百分比
         upside_pct = ((max_high - entry_price) / entry_price) * 100
         downside_pct = ((entry_price - min_low) / entry_price) * 100
         
+        # Layer 1: 最小波動性（避免盤整市場）
+        total_volatility = upside_pct + downside_pct
+        if total_volatility < 0.8:
+            valid_count += 1
+            continue
+        
+        # Layer 2: 風險收益比
         if downside_pct < 1e-8:
             downside_pct = 0.01
         rr_ratio = upside_pct / downside_pct
         
-        if (upside_pct >= min_profit_pct and 
-            downside_pct <= max_loss_pct and 
-            rr_ratio >= rr_ratio_threshold):
+        # Layer 3: 極值觸及次數（更可靠的信號）
+        high_touches = (future_slice['high'] >= max_high * 0.995).sum()
+        low_touches = (future_slice['low'] <= min_low * 1.005).sum()
+        extreme_touches = high_touches + low_touches
+        
+        # Layer 4: 趨勢一致性
+        bullish_candles = (future_slice['close'] > future_slice['open']).sum()
+        direction_bias = bullish_candles / len(future_slice)
+        
+        # 多層決策邏輯
+        passes_rr = rr_ratio >= rr_ratio_threshold
+        passes_profit = upside_pct >= min_profit_pct
+        passes_loss = downside_pct <= max_loss_pct
+        passes_reliability = extreme_touches >= 2  # 至少觸及 2 次
+        passes_direction = 0.3 <= direction_bias <= 0.7  # 避免極端單邊
+        
+        # 所有層都通過才標記為 1
+        if passes_rr and passes_profit and passes_loss and passes_reliability:
             labels[i] = 1
             profitable_count += 1
         else:
@@ -201,12 +230,25 @@ def calculate_profit_factor(y_true, y_pred, threshold=0.5):
         return 0
     return correct / incorrect
 
+def calculate_weighted_score(precision, recall, profit_factor):
+    """
+    加權評分 = 0.4*(P/0.8) + 0.4*(R/0.8) + 0.2*(PF/1.5)
+    
+    歸一化到 [0, 1]：
+    - 精準度: 目標 80%
+    - 召回率: 目標 80%
+    - 利潤因子: 目標 1.5
+    """
+    p_norm = min(precision / 0.80, 1.0)
+    r_norm = min(recall / 0.80, 1.0)
+    pf_norm = min(profit_factor / 1.5, 1.0)
+    
+    return 0.4 * p_norm + 0.4 * r_norm + 0.2 * pf_norm
+
 def optimize_threshold_weighted(y_true, y_pred_proba):
     """
     加權評分策略：平衡精準度、召回率、利潤因子
-    
-    分數 = 0.4 * (precision / 0.8) + 0.4 * (recall / 0.8) + 0.2 * (pf / 1.5)
-    最大化分數的閾值
+    找到使加權分最高的閾值
     """
     logger.info("正在根據加權評分優化閾值...")
     logger.info("權重: 精準度 40%, 召回率 40%, 利潤因子 20%")
@@ -215,20 +257,16 @@ def optimize_threshold_weighted(y_true, y_pred_proba):
     best_threshold = 0.5
     best_metrics = {}
     
-    for threshold in np.arange(0.35, 0.70, 0.01):
+    for threshold in np.arange(0.30, 0.75, 0.01):
         precision = precision_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         recall = recall_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
         f1 = f1_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         
-        # 加權評分（管理目標於肠上：精準度及召回率需超 80%）
-        precision_score_norm = min(precision / 0.80, 1.0)  # 正规化到 [0, 1]
-        recall_score_norm = min(recall / 0.80, 1.0)
-        pf_score_norm = min(pf / 1.5, 1.0)
+        weighted_score = calculate_weighted_score(precision, recall, pf)
         
-        weighted_score = 0.4 * precision_score_norm + 0.4 * recall_score_norm + 0.2 * pf_score_norm
-        
-        if threshold % 0.05 < 0.01:  # 每 5% 閾值時輸出
+        # 每 5% 閾值時輸出
+        if (threshold * 100 - 30) % 5 < 1.1:
             logger.info(f"  閾值 {threshold:.2f}: 精準度={precision:.4f}, 召回率={recall:.4f}, PF={pf:.4f}, F1={f1:.4f}, 加權分={weighted_score:.4f}")
         
         if weighted_score > best_score:
@@ -400,12 +438,11 @@ def evaluate_full_dataset(df):
 
 def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     logger.info("="*70)
-    logger.info("日內交易模型 V3 優化: 風險收益 + 校準")
+    logger.info("日內交易模型 V3.2: 多層過濾 + 加權評分")
     logger.info("="*70)
     logger.info(f"交易對: {symbol}, 時間框: {timeframe}")
-    logger.info("策略: 基於風險收益比的改進標籤定義")
-    logger.info("增強: 概率校準 + 類別權重平衡")
-    logger.info("最佳化: 加權評分法平衡精準度/召回率/利潤因子")
+    logger.info("策略: 多層過濾標籤定義 (波動性+RR+極值+方向)")
+    logger.info("優化: 加權評分 P:R:PF = 40:40:20")
     logger.info("")
     
     df = load_data(symbol, timeframe)
@@ -419,9 +456,9 @@ def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     df = generate_improved_labels(
         df,
         lookback_window=20,
-        rr_ratio_threshold=1.0,
-        max_loss_pct=1.0,
-        min_profit_pct=0.5
+        rr_ratio_threshold=1.5,
+        max_loss_pct=0.5,
+        min_profit_pct=1.0
     )
     logger.info("")
     
