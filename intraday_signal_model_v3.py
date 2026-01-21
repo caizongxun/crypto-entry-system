@@ -8,16 +8,20 @@ import ta
 from loguru import logger
 import warnings
 import os
+import sys
 warnings.filterwarnings('ignore')
+
+if sys.stdout.encoding != 'utf-8':
+    sys.stdout.reconfigure(encoding='utf-8')
 
 logger.remove()
 logger.add(lambda msg: print(msg, end=''), format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}")
 
 def load_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     """
-    Load K-line data from HuggingFace dataset.
+    從 HuggingFace 資料集讀取 K 線資料
     
-    symbol: e.g. 'BTCUSDT', 'ETHUSDT'
+    symbol: 例如 'BTCUSDT', 'ETHUSDT'
     timeframe: '15m', '1h', '1d'
     """
     from huggingface_hub import hf_hub_download
@@ -35,30 +39,30 @@ def load_klines(symbol: str, timeframe: str) -> pd.DataFrame:
     return pd.read_parquet(local_path)
 
 def load_data(symbol: str = "BTCUSDT", timeframe: str = "15m"):
-    logger.info(f"Loading {timeframe} data for {symbol}...")
+    logger.info(f"正在讀取 {symbol} {timeframe} 資料...")
     
     try:
         df = load_klines(symbol, timeframe)
     except Exception as e:
-        logger.error(f"Failed to load from HuggingFace: {e}")
-        logger.info("Attempting to load from local parquet file...")
+        logger.error(f"從 HuggingFace 讀取失敗: {e}")
+        logger.info("嘗試從本地 parquet 檔案讀取...")
         
         parquet_path = f"{symbol.replace('USDT', '')}_{timeframe}.parquet"
         if os.path.exists(parquet_path):
             df = pd.read_parquet(parquet_path)
         else:
-            raise FileNotFoundError(f"Cannot find {parquet_path} locally or on HuggingFace")
+            raise FileNotFoundError(f"找不到 {parquet_path}")
     
     df['timestamp'] = pd.to_datetime(df['open_time'])
     df = df.sort_values('timestamp').reset_index(drop=True)
     df = df.rename(columns={'open': 'o', 'high': 'h', 'low': 'l', 'close': 'c', 'volume': 'v'})
     
-    logger.info(f"Loaded {len(df)} candles")
-    logger.info(f"Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+    logger.info(f"已讀取 {len(df)} 根 K 線")
+    logger.info(f"時間範圍: {df['timestamp'].min()} 至 {df['timestamp'].max()}")
     return df
 
 def generate_features(df):
-    logger.info("Generating features...")
+    logger.info("正在生成技術指標...")
     
     df['close'] = df['c']
     df['high'] = df['h']
@@ -115,17 +119,18 @@ def generate_features(df):
     df['stoch_rsi_divergence'] = (df['stoch_rsi_k'] - df['stoch_rsi_k'].shift(1)).abs()
     
     df = df.fillna(method='bfill').fillna(method='ffill')
-    logger.info("Features generated")
+    logger.info("技術指標生成完成")
     return df
 
-def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.5, max_loss_pct=0.5, min_profit_pct=1.0):
+def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.0, max_loss_pct=1.0, min_profit_pct=0.5):
     """
-    Generate labels based on risk-reward ratio analysis.
+    基於風險收益比的標籤生成
     
-    Label 1 (quality signal): Risk/Reward >= threshold AND profit >= min_profit_pct
-    Label 0 (poor signal): Otherwise
+    Label 1 (優質信號): 風險/收益 >= threshold AND 利潤潛力 >= min_profit_pct
+    Label 0 (劣質信號): 其他情況
     """
-    logger.info("Creating improved rolling window labels with risk-reward analysis...")
+    logger.info("正在生成基於風險收益比的標籤...")
+    logger.info(f"參數: lookback_window={lookback_window}, rr_ratio={rr_ratio_threshold}, max_loss={max_loss_pct}%, min_profit={min_profit_pct}%")
     
     labels = np.zeros(len(df), dtype=int)
     valid_count = 0
@@ -158,10 +163,11 @@ def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.5, max
     df['label'] = labels
     
     win_rate = (profitable_count / valid_count * 100) if valid_count > 0 else 0
-    logger.info(f"Generated {valid_count} valid labels")
-    logger.info(f"  Quality signals: {profitable_count}")
-    logger.info(f"  Poor signals: {valid_count - profitable_count}")
-    logger.info(f"  Quality rate: {win_rate:.2f}%")
+    logger.info(f"標籤生成完成")
+    logger.info(f"  總標籤數: {valid_count}")
+    logger.info(f"  優質信號: {profitable_count}")
+    logger.info(f"  劣質信號: {valid_count - profitable_count}")
+    logger.info(f"  優質率: {win_rate:.2f}%")
     
     return df
 
@@ -183,8 +189,8 @@ def prepare_features(df):
 
 def calculate_profit_factor(y_true, y_pred, threshold=0.5):
     """
-    Profit Factor = Correct Predictions / Incorrect Predictions
-    Higher is better. Target: > 1.5
+    利潤因子 = 正確預測數 / 不正確預測數
+    越高越好。目標: > 1.5
     """
     predictions = (y_pred >= threshold).astype(int)
     
@@ -196,34 +202,34 @@ def calculate_profit_factor(y_true, y_pred, threshold=0.5):
     return correct / incorrect
 
 def optimize_threshold_by_profit_factor(y_true, y_pred_proba):
-    """Find optimal threshold based on Profit Factor instead of F1-Score"""
-    logger.info("Optimizing threshold by Profit Factor...")
+    """基於利潤因子尋找最優閾值"""
+    logger.info("正在根據利潤因子優化閾值...")
     
     best_pf = 0
     best_threshold = 0.5
     
-    for threshold in np.arange(0.40, 0.75, 0.02):
+    for threshold in np.arange(0.30, 0.75, 0.02):
         pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
         precision = precision_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         recall = recall_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
         
-        logger.info(f"  Threshold {threshold:.2f}: PF={pf:.4f}, P={precision:.4f}, R={recall:.4f}")
+        logger.info(f"  閾值 {threshold:.2f}: PF={pf:.4f}, 精準度={precision:.4f}, 召回率={recall:.4f}")
         
         if pf > best_pf:
             best_pf = pf
             best_threshold = threshold
     
-    logger.info(f"\nSelected threshold: {best_threshold:.4f} (Profit Factor: {best_pf:.4f})")
+    logger.info(f"\n選定閾值: {best_threshold:.4f} (利潤因子: {best_pf:.4f})")
     return best_threshold
 
 def train_model(X_train, y_train, X_test, y_test):
-    logger.info("======================================================================")
-    logger.info("TRAINING OPTIMIZED RANDOM FOREST MODEL")
-    logger.info("======================================================================")
-    logger.info(f"Training samples: {len(X_train)}")
-    logger.info(f"  Positive: {(y_train == 1).sum()}")
-    logger.info(f"  Negative: {(y_train == 0).sum()}")
-    logger.info(f"  Base rate: {(y_train == 1).sum() / len(y_train) * 100:.2f}%")
+    logger.info("="*70)
+    logger.info("訓練隨機森林模型")
+    logger.info("="*70)
+    logger.info(f"訓練樣本數: {len(X_train)}")
+    logger.info(f"  正類: {(y_train == 1).sum()}")
+    logger.info(f"  負類: {(y_train == 0).sum()}")
+    logger.info(f"  正類比例: {(y_train == 1).sum() / len(y_train) * 100:.2f}%")
     logger.info("")
     
     rf = RandomForestClassifier(
@@ -238,16 +244,16 @@ def train_model(X_train, y_train, X_test, y_test):
     )
     
     rf.fit(X_train, y_train)
-    logger.info("Random Forest training complete")
+    logger.info("隨機森林訓練完成")
     
-    logger.info("Applying probability calibration (Isotonic Regression)...")
+    logger.info("正在應用概率校準 (等滲迴歸)...")
     calibrated_rf = CalibratedClassifierCV(
         estimator=rf,
         method='isotonic',
         cv=5
     )
     calibrated_rf.fit(X_train, y_train)
-    logger.info("Calibration complete")
+    logger.info("校準完成")
     
     probs_train = calibrated_rf.predict_proba(X_train)[:, 1]
     probs_test = calibrated_rf.predict_proba(X_test)[:, 1]
@@ -260,10 +266,10 @@ def train_model(X_train, y_train, X_test, y_test):
     f1_test = f1_score(y_test, y_pred_test, zero_division=0)
     
     logger.info("")
-    logger.info("Test Set Performance (Calibrated):")
-    logger.info(f"  Precision: {precision_test:.4f}")
-    logger.info(f"  Recall: {recall_test:.4f}")
-    logger.info(f"  F1-Score: {f1_test:.4f}")
+    logger.info("測試集性能 (已校準):")
+    logger.info(f"  精準度: {precision_test:.4f}")
+    logger.info(f"  召回率: {recall_test:.4f}")
+    logger.info(f"  F1 分數: {f1_test:.4f}")
     
     feature_cols = [
         'bb_width', 'bb_position', 'rsi_7', 'rsi_14', 'rsi_21',
@@ -281,16 +287,16 @@ def train_model(X_train, y_train, X_test, y_test):
     }).sort_values('importance', ascending=False)
     
     logger.info("")
-    logger.info("Top 15 Important Features:")
+    logger.info("前 15 個重要特徵:")
     for idx, row in feature_importance_df.head(15).iterrows():
         logger.info(f"  {row['feature']}: {row['importance']:.4f}")
     
     return calibrated_rf, optimal_threshold
 
 def generate_signals(df, model, threshold):
-    logger.info("======================================================================")
-    logger.info("GENERATING SIGNALS ON FULL DATASET")
-    logger.info("======================================================================")
+    logger.info("="*70)
+    logger.info("在完整資料集上生成信號")
+    logger.info("="*70)
     
     feature_cols = [
         'bb_width', 'bb_position', 'rsi_7', 'rsi_14', 'rsi_21',
@@ -310,85 +316,85 @@ def generate_signals(df, model, threshold):
     total_signals = df['signal'].sum()
     high_conf_signals = (df['signal_prob'] >= 0.75).sum()
     
-    logger.info(f"Total signals generated: {total_signals}")
-    logger.info(f"  High confidence (prob >= 0.75): {high_conf_signals}")
-    logger.info(f"  Standard confidence: {total_signals - high_conf_signals}")
+    logger.info(f"生成的總信號數: {total_signals}")
+    logger.info(f"  高信心信號 (概率 >= 0.75): {high_conf_signals}")
+    logger.info(f"  標準信心信號: {total_signals - high_conf_signals}")
     
     signal_df = df[df['signal'] == 1].copy()
     daily_signals = signal_df.groupby(signal_df['timestamp'].dt.date).size()
     
     logger.info("")
-    logger.info("Daily signal distribution:")
-    logger.info(f"  Days with signals: {len(daily_signals)}")
-    logger.info(f"  Avg signals/day: {daily_signals.mean():.2f}")
-    logger.info(f"  Max signals/day: {daily_signals.max()}")
-    logger.info(f"  Min signals/day: {daily_signals.min()}")
+    logger.info("日均信號分佈:")
+    logger.info(f"  有信號的天數: {len(daily_signals)}")
+    logger.info(f"  平均每日信號數: {daily_signals.mean():.2f}")
+    logger.info(f"  最多每日信號數: {daily_signals.max()}")
+    logger.info(f"  最少每日信號數: {daily_signals.min()}")
     
     return df
 
 def evaluate_full_dataset(df):
-    logger.info("======================================================================")
-    logger.info("FULL DATASET PERFORMANCE")
-    logger.info("======================================================================")
+    logger.info("="*70)
+    logger.info("完整資料集性能評估")
+    logger.info("="*70)
     
     y_true = df['label']
     y_pred = df['signal']
     
     if y_pred.sum() == 0:
-        logger.info("No signals generated, skipping evaluation")
+        logger.info("未生成任何信號，跳過評估")
         return
     
     precision = precision_score(y_true, y_pred, zero_division=0)
     recall = recall_score(y_true, y_pred, zero_division=0)
     f1 = f1_score(y_true, y_pred, zero_division=0)
     
-    logger.info(f"Precision: {precision:.2%}")
-    logger.info(f"Recall: {recall:.2%}")
-    logger.info(f"F1-Score: {f1:.4f}")
+    logger.info(f"精準度: {precision:.2%}")
+    logger.info(f"召回率: {recall:.2%}")
+    logger.info(f"F1 分數: {f1:.4f}")
     
     logger.info("")
-    logger.info("Target: P >= 80%, R >= 80%")
+    logger.info("目標: 精準度 >= 80%, 召回率 >= 80%")
     precision_gap = max(0, 0.80 - precision)
     recall_gap = max(0, 0.80 - recall)
     
     if precision_gap > 0:
-        logger.info(f"Status: Precision {precision_gap*100:.1f}% short")
+        logger.info(f"狀態: 精準度還差 {precision_gap*100:.1f}%")
     if recall_gap > 0:
-        logger.info(f"Status: Recall {recall_gap*100:.1f}% short")
+        logger.info(f"狀態: 召回率還差 {recall_gap*100:.1f}%")
     
     if precision >= 0.80 and recall >= 0.80:
-        logger.info("Status: TARGET ACHIEVED")
+        logger.info("狀態: 已達成目標")
     
     logger.info("")
 
 def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
-    logger.info("======================================================================")
-    logger.info("Intraday Trading Model V3 Optimized: Risk-Reward + Calibration")
-    logger.info("======================================================================")
-    logger.info(f"Symbol: {symbol}, Timeframe: {timeframe}")
-    logger.info("Strategy: Improved label definition with risk-reward ratio")
-    logger.info("Enhancement: Probability calibration + class weight balancing")
+    logger.info("="*70)
+    logger.info("日內交易模型 V3 優化: 風險收益 + 校準")
+    logger.info("="*70)
+    logger.info(f"交易對: {symbol}, 時間框: {timeframe}")
+    logger.info("策略: 基於風險收益比的改進標籤定義")
+    logger.info("增強: 概率校準 + 類別權重平衡")
     logger.info("")
     
     df = load_data(symbol, timeframe)
     logger.info("")
     
-    logger.info("Engineering features...")
+    logger.info("正在工程化特徵...")
     df = generate_features(df)
     logger.info("")
     
-    logger.info("Creating improved labels...")
+    logger.info("正在生成標籤...")
     df = generate_improved_labels(
         df,
         lookback_window=20,
-        rr_ratio_threshold=1.5,
-        max_loss_pct=0.5,
-        min_profit_pct=1.0
+        rr_ratio_threshold=1.0,  # 降低至 1.0 增加正樣本
+        max_loss_pct=1.0,         # 允許最多 1% 虧損
+        min_profit_pct=0.5        # 最少 0.5% 利潤
     )
     logger.info("")
     
     X, y = prepare_features(df)
-    logger.info(f"Total valid data points: {len(X)}")
+    logger.info(f"有效資料點總數: {len(X)}")
     logger.info("")
     
     X_train, X_test, y_train, y_test = train_test_split(
@@ -403,9 +409,9 @@ def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     
     evaluate_full_dataset(df)
     
-    logger.info("======================================================================")
-    logger.info("Model optimization complete")
-    logger.info("======================================================================")
+    logger.info("="*70)
+    logger.info("模型優化完成")
+    logger.info("="*70)
 
 if __name__ == "__main__":
     main(symbol="BTCUSDT", timeframe="15m")
