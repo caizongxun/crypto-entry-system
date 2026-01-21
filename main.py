@@ -1,6 +1,7 @@
 import logging
 from pathlib import Path
 import joblib
+import numpy as np
 
 from config import TRAINING_CONFIG, XGBOOST_PARAMS, LIGHTGBM_PARAMS, NEURAL_NETWORK_CONFIG, FEATURE_CONFIG
 from data.loader import KlinesDataLoader
@@ -56,7 +57,8 @@ def train_full_pipeline(
     
     # Calculate class weights for imbalanced data
     from sklearn.utils.class_weight import compute_class_weight
-    class_weights = compute_class_weight('balanced', classes=[0, 1], y=y)
+    unique_classes = np.array([0, 1])
+    class_weights = compute_class_weight('balanced', classes=unique_classes, y=y.values)
     class_weight_dict = {0: class_weights[0], 1: class_weights[1]}
     logger.info(f"Class weights: {class_weight_dict}")
     
