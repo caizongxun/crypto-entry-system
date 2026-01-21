@@ -1,469 +1,378 @@
-import numpy as np
 import pandas as pd
-from pathlib import Path
-from loguru import logger
-import sys
-import os
+import numpy as np
 from sklearn.ensemble import RandomForestClassifier
 from sklearn.model_selection import train_test_split
-from sklearn.metrics import precision_score, recall_score, f1_score
-
-sys.path.insert(0, str(Path(__file__).parent))
-
-from strategy_v3 import StrategyConfig, DataLoader, FeatureEngineer
+from sklearn.calibration import CalibratedClassifierCV
+from sklearn.metrics import precision_score, recall_score, f1_score, confusion_matrix
+import ta
+from loguru import logger
+import warnings
+warnings.filterwarnings('ignore')
 
 logger.remove()
-logger.add(
-    sys.stderr,
-    level='INFO',
-    format='{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}'
-)
+logger.add(lambda msg: print(msg, end=''), format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}")
 
+def load_data():
+    from datasets import load_dataset
+    logger.info("Loading 15-minute data...")
+    dataset = load_dataset("zong/BTC_OHLCV", split="train", cache_dir="./data_cache")
+    df = dataset.to_pandas()
+    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    df = df.sort_values('timestamp').reset_index(drop=True)
+    df = df.rename(columns={'open': 'o', 'high': 'h', 'low': 'l', 'close': 'c', 'volume': 'v'})
+    
+    logger.info(f"Loaded {len(df)} candles")
+    logger.info(f"Date range: {df['timestamp'].min()} to {df['timestamp'].max()}")
+    return df
 
-class IntradaySignalModelV3:
+def generate_features(df):
+    logger.info("Generating features...")
+    
+    df['close'] = df['c']
+    df['high'] = df['h']
+    df['low'] = df['l']
+    df['volume'] = df['v']
+    df['open'] = df['o']
+    
+    bb = ta.volatility.BollingerBands(close=df['close'], window=20, window_dev=2)
+    df['bb_high'] = bb.bollinger_hband()
+    df['bb_low'] = bb.bollinger_lband()
+    df['bb_mid'] = bb.bollinger_mavg()
+    df['bb_width'] = (df['bb_high'] - df['bb_low']) / df['bb_mid']
+    df['bb_position'] = (df['close'] - df['bb_low']) / (df['bb_high'] - df['bb_low'])
+    
+    df['rsi_7'] = ta.momentum.RSIIndicator(close=df['close'], window=7).rsi()
+    df['rsi_14'] = ta.momentum.RSIIndicator(close=df['close'], window=14).rsi()
+    df['rsi_21'] = ta.momentum.RSIIndicator(close=df['close'], window=21).rsi()
+    
+    macd = ta.trend.MACD(close=df['close'], window_fast=12, window_slow=26, window_sign=9)
+    df['macd'] = macd.macd()
+    df['macd_signal'] = macd.macd_signal()
+    df['macd_histogram'] = macd.macd_diff()
+    
+    atr = ta.volatility.AverageTrueRange(high=df['high'], low=df['low'], close=df['close'], window=14)
+    df['atr'] = atr.average_true_range()
+    df['atr_ratio'] = df['atr'] / df['close']
+    
+    df['roc_10'] = ta.momentum.ROCIndicator(close=df['close'], window=10).roc()
+    df['roc_20'] = ta.momentum.ROCIndicator(close=df['close'], window=20).roc()
+    
+    stoch = ta.momentum.StochasticOscillator(high=df['high'], low=df['low'], close=df['close'], window=14, smooth_window=3)
+    df['stoch_k'] = stoch.stoch()
+    df['stoch_d'] = stoch.stoch_signal()
+    
+    df['ma_5'] = ta.trend.SMAIndicator(close=df['close'], window=5).sma_indicator()
+    df['ma_20'] = ta.trend.SMAIndicator(close=df['close'], window=20).sma_indicator()
+    
+    df['ma_slope_5'] = df['ma_5'].diff()
+    df['ma_slope_20'] = df['ma_20'].diff()
+    
+    adx = ta.trend.ADXIndicator(high=df['high'], low=df['low'], close=df['close'], window=14)
+    df['adx'] = adx.adx()
+    
+    df['volume_ma_20'] = df['volume'].rolling(window=20).mean()
+    df['volume_zscore'] = (df['volume'] - df['volume_ma_20']) / (df['volume'].rolling(window=20).std() + 1e-8)
+    
+    df['candle_body'] = abs(df['close'] - df['open'])
+    df['candle_range'] = df['high'] - df['low']
+    df['candle_body_ratio'] = df['candle_body'] / (df['candle_range'] + 1e-8)
+    df['range_from_low'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-8)
+    
+    stoch_rsi = ta.momentum.StochasticRSIIndicator(close=df['close'], window=14, smooth1=14, smooth2=3)
+    df['stoch_rsi_k'] = stoch_rsi.stochasticrsi()
+    df['stoch_rsi_divergence'] = (df['stoch_rsi_k'] - df['stoch_rsi_k'].shift(1)).abs()
+    
+    df = df.fillna(method='bfill').fillna(method='ffill')
+    logger.info("Features generated")
+    return df
+
+def generate_improved_labels(df, lookback_window=20, rr_ratio_threshold=1.5, max_loss_pct=0.5, min_profit_pct=1.0):
     """
-    Random Forest-based Intraday Trading Signal Model V3 - Redesigned
+    Generate labels based on risk-reward ratio analysis.
     
-    Strategy: Generate signals for ALL candles using rolling window labels
-    - Create training labels: if next 20 candles hit +1% before -1%, label=1
-    - This creates thousands of training samples across entire dataset
-    - Target: 3500+ signals daily with 80%+ precision and recall
+    Label 1 (quality signal): Risk/Reward >= threshold AND profit >= min_profit_pct
+    Label 0 (poor signal): Otherwise
     """
+    logger.info("Creating improved rolling window labels with risk-reward analysis...")
     
-    def __init__(self, n_estimators=250, max_depth=14, min_samples_leaf=2):
-        self.model = RandomForestClassifier(
-            n_estimators=n_estimators,
-            max_depth=max_depth,
-            min_samples_leaf=min_samples_leaf,
-            random_state=42,
-            n_jobs=-1,
-            class_weight='balanced_subsample'
-        )
-        self.feature_names = None
-        self.voting_threshold = 0.50
+    labels = np.zeros(len(df), dtype=int)
+    valid_count = 0
+    profitable_count = 0
     
-    @staticmethod
-    def _create_rolling_labels(df, profit_pct=0.01, loss_pct=0.01, lookback=20):
-        """
-        Create binary labels for all candles using rolling window.
-        Label=1 if price hits profit_pct before hitting loss_pct within lookback bars
-        """
-        close = df['close'].values
-        labels = np.zeros(len(df), dtype=int)
+    for i in range(len(df) - lookback_window):
+        entry_price = df.iloc[i]['close']
+        future_slice = df.iloc[i:i+lookback_window]
         
-        for i in range(len(df) - lookback):
-            entry_price = close[i]
-            profit_target = entry_price * (1 + profit_pct)
-            loss_target = entry_price * (1 - loss_pct)
-            
-            # Check future prices
-            future_prices = close[i+1:i+lookback+1]
-            
-            # Check if profit target is hit first
-            profit_hit = np.any(future_prices >= profit_target)
-            loss_hit = np.any(future_prices <= loss_target)
-            
-            if profit_hit and not loss_hit:
-                labels[i] = 1  # Profitable
-            elif loss_hit and not profit_hit:
-                labels[i] = 0  # Loss
-            # If both or neither hit, keep as 0
+        max_high = future_slice['high'].max()
+        min_low = future_slice['low'].min()
         
-        return labels
+        upside_pct = ((max_high - entry_price) / entry_price) * 100
+        downside_pct = ((entry_price - min_low) / entry_price) * 100
+        
+        if downside_pct < 1e-8:
+            downside_pct = 0.01
+        rr_ratio = upside_pct / downside_pct
+        
+        if (upside_pct >= min_profit_pct and 
+            downside_pct <= max_loss_pct and 
+            rr_ratio >= rr_ratio_threshold):
+            labels[i] = 1
+            profitable_count += 1
+        else:
+            labels[i] = 0
+        
+        valid_count += 1
     
-    def _prepare_features(self, df):
-        """
-        Extract comprehensive technical features for intraday trading
-        """
-        features_dict = {}
-        
-        close = df['close'].values
-        high = df['high'].values
-        low = df['low'].values
-        volume = df['volume'].values
-        
-        # ===== MOMENTUM FEATURES =====
-        rsi_7 = self._rsi(close, 7)
-        rsi_14 = self._rsi(close, 14)
-        rsi_21 = self._rsi(close, 21)
-        
-        features_dict['rsi_7'] = rsi_7
-        features_dict['rsi_14'] = rsi_14
-        features_dict['rsi_21'] = rsi_21
-        features_dict['rsi_oversold'] = (rsi_14 < 30).astype(float)
-        features_dict['rsi_overbought'] = (rsi_14 > 70).astype(float)
-        
-        # MACD
-        macd_line, macd_signal, macd_hist = self._macd(close, 12, 26, 9)
-        features_dict['macd_histogram'] = macd_hist
-        features_dict['macd_positive'] = (macd_hist > 0).astype(float)
-        features_dict['macd_signal'] = macd_signal
-        
-        # ===== VOLATILITY =====
-        bb_upper, bb_mid, bb_lower = self._bollinger_bands(close, 20, 2)
-        bb_width = (bb_upper - bb_lower) / (bb_mid + 1e-10)
-        bb_position = (close - bb_lower) / (bb_upper - bb_lower + 1e-10)
-        
-        features_dict['bb_width'] = bb_width
-        features_dict['bb_position'] = bb_position
-        features_dict['bb_lower_touch'] = (close < bb_lower * 1.01).astype(float)
-        features_dict['bb_upper_touch'] = (close > bb_upper * 0.99).astype(float)
-        
-        atr = self._atr(high, low, close, 14)
-        atr_ratio = atr / np.mean(atr[50:] + 1e-10)
-        features_dict['atr_ratio'] = atr_ratio
-        
-        # ===== TREND =====
-        ma5 = pd.Series(close).rolling(5).mean().values
-        ma10 = pd.Series(close).rolling(10).mean().values
-        ma20 = pd.Series(close).rolling(20).mean().values
-        ma50 = pd.Series(close).rolling(50).mean().values
-        
-        features_dict['price_above_ma5'] = (close > ma5).astype(float)
-        features_dict['price_above_ma20'] = (close > ma20).astype(float)
-        features_dict['ma5_above_ma20'] = (ma5 > ma20).astype(float)
-        features_dict['ma_slope_5'] = (ma5 - np.roll(ma5, 5)) / (ma5 + 1e-10)
-        features_dict['ma_slope_20'] = (ma20 - np.roll(ma20, 20)) / (ma20 + 1e-10)
-        
-        # ===== STOCHASTIC =====
-        stoch_k, stoch_d = self._stochastic(high, low, close, 14, 3, 5)
-        features_dict['stoch_k'] = stoch_k
-        features_dict['stoch_oversold'] = (stoch_k < 30).astype(float)
-        features_dict['stoch_overbought'] = (stoch_k > 70).astype(float)
-        
-        # ===== PRICE ACTION =====
-        lookback = 20
-        recent_high = pd.Series(high).rolling(lookback).max().values
-        recent_low = pd.Series(low).rolling(lookback).min().values
-        
-        features_dict['distance_from_low'] = (close - recent_low) / (recent_high - recent_low + 1e-10)
-        features_dict['distance_from_high'] = (recent_high - close) / (recent_high - recent_low + 1e-10)
-        features_dict['price_breakout'] = (close > recent_high * 0.98).astype(float)
-        
-        # ===== VOLUME =====
-        vol_ma = pd.Series(volume).rolling(20).mean().values
-        vol_std = pd.Series(volume).rolling(20).std().values
-        vol_zscore = (volume - vol_ma) / (vol_std + 1e-10)
-        
-        features_dict['volume_zscore'] = vol_zscore
-        features_dict['high_volume'] = (vol_zscore > 1.0).astype(float)
-        
-        # ===== MOMENTUM INDICATORS =====
-        roc_10 = (close - np.roll(close, 10)) / np.roll(close, 10)
-        roc_20 = (close - np.roll(close, 20)) / np.roll(close, 20)
-        features_dict['roc_10'] = roc_10
-        features_dict['roc_20'] = roc_20
-        
-        # ===== CANDLE PATTERNS =====
-        body = np.abs(close - np.roll(close, 1))
-        body_ratio = body / (atr + 1e-10)
-        features_dict['body_ratio'] = body_ratio
-        
-        # ===== ADX =====
-        adx = self._adx(high, low, close, 14)
-        features_dict['adx'] = adx
-        features_dict['strong_trend'] = (adx > 25).astype(float)
-        
-        # Convert to DataFrame
-        feature_df = pd.DataFrame(features_dict)
-        self.feature_names = feature_df.columns.tolist()
-        
-        # Handle NaN and convert to float32
-        feature_df = feature_df.fillna(0)
-        X = feature_df.values.astype(np.float32)
-        
-        return X
+    df['label'] = labels
     
-    def train(self, df, labels):
-        """
-        Train Random Forest on rolling window labels
-        """
-        X = self._prepare_features(df)
-        
-        # Use only valid labels
-        valid_mask = labels >= 0
-        X_valid = X[valid_mask]
-        y_valid = labels[valid_mask]
-        
-        logger.info(f'Training samples: {len(X_valid)}')
-        logger.info(f'  Positive: {(y_valid == 1).sum()}')
-        logger.info(f'  Negative: {(y_valid == 0).sum()}')
-        logger.info(f'  Win rate: {(y_valid == 1).sum() / len(y_valid) * 100:.2f}%')
-        
-        # Train/test split
-        X_train, X_test, y_train, y_test = train_test_split(
-            X_valid, y_valid, test_size=0.25, random_state=42, stratify=y_valid
-        )
-        
-        logger.info(f'\nTraining: {len(X_train)} samples')
-        logger.info(f'Testing: {len(X_test)} samples')
-        
-        # Train model
-        self.model.fit(X_train, y_train)
-        
-        # Threshold optimization
-        y_pred_proba = self.model.predict_proba(X_test)[:, 1]
-        
-        best_f1 = 0
-        best_threshold = 0.5
-        best_precision = 0
-        best_recall = 0
-        
-        logger.info('\nThreshold optimization:')
-        for threshold in np.arange(0.45, 0.75, 0.02):
-            y_pred = (y_pred_proba >= threshold).astype(int)
-            p = precision_score(y_test, y_pred, zero_division=0)
-            r = recall_score(y_test, y_pred, zero_division=0)
-            f1 = f1_score(y_test, y_pred, zero_division=0)
-            logger.info(f'  Threshold {threshold:.2f}: P={p:.4f}, R={r:.4f}, F1={f1:.4f}')
-            
-            if f1 > best_f1:
-                best_f1 = f1
-                best_threshold = threshold
-                best_precision = p
-                best_recall = r
-        
-        self.voting_threshold = best_threshold
-        logger.info(f'\nSelected threshold: {best_threshold:.4f}')
-        logger.info(f'Test Performance: P={best_precision:.4f}, R={best_recall:.4f}, F1={best_f1:.4f}')
-        
-        # Feature importance
-        logger.info(f'\nTop 15 Important Features:')
-        importance_df = pd.DataFrame({
-            'feature': self.feature_names,
-            'importance': self.model.feature_importances_
-        }).sort_values('importance', ascending=False)
-        
-        for idx, row in importance_df.head(15).iterrows():
-            logger.info(f'  {row["feature"]}: {row["importance"]:.4f}')
-        
-        return best_precision, best_recall, best_f1
+    win_rate = (profitable_count / valid_count * 100) if valid_count > 0 else 0
+    logger.info(f"Generated {valid_count} valid labels")
+    logger.info(f"  Quality signals: {profitable_count}")
+    logger.info(f"  Poor signals: {valid_count - profitable_count}")
+    logger.info(f"  Quality rate: {win_rate:.2f}%")
     
-    def predict(self, df, labels):
-        """
-        Generate signals for all candles
-        """
-        X = self._prepare_features(df)
-        
-        signals = np.zeros(len(df), dtype=int)
-        confidence_scores = np.zeros(len(df), dtype=float)
-        
-        # Get probability from ensemble
-        y_pred_prob = self.model.predict_proba(X)[:, 1]
-        
-        # Generate signals for all candles
-        for idx in range(len(df)):
-            prob = y_pred_prob[idx]
-            confidence_scores[idx] = prob
-            
-            if prob >= 0.75:
-                signals[idx] = 2  # High confidence
-            elif prob >= self.voting_threshold:
-                signals[idx] = 1  # Standard
-        
-        return signals, confidence_scores
-    
-    # ===== TECHNICAL INDICATOR METHODS =====
-    @staticmethod
-    def _rsi(close, period=14):
-        delta = np.diff(close, prepend=close[0])
-        gain = np.where(delta > 0, delta, 0)
-        loss = np.where(delta < 0, -delta, 0)
-        
-        avg_gain = pd.Series(gain).rolling(period).mean().values
-        avg_loss = pd.Series(loss).rolling(period).mean().values
-        
-        rs = np.divide(avg_gain, avg_loss, where=avg_loss != 0, out=np.zeros_like(avg_gain))
-        rsi = 100 - (100 / (1 + rs))
-        return np.nan_to_num(rsi, 50)
-    
-    @staticmethod
-    def _macd(close, fast=12, slow=26, signal=9):
-        ema_fast = pd.Series(close).ewm(span=fast).mean().values
-        ema_slow = pd.Series(close).ewm(span=slow).mean().values
-        macd_line = ema_fast - ema_slow
-        macd_signal = pd.Series(macd_line).ewm(span=signal).mean().values
-        macd_hist = macd_line - macd_signal
-        return macd_line, macd_signal, macd_hist
-    
-    @staticmethod
-    def _bollinger_bands(close, period=20, std_dev=2):
-        ma = pd.Series(close).rolling(period).mean().values
-        std = pd.Series(close).rolling(period).std().values
-        upper = ma + std_dev * std
-        lower = ma - std_dev * std
-        return upper, ma, lower
-    
-    @staticmethod
-    def _atr(high, low, close, period=14):
-        tr = np.maximum(
-            high - low,
-            np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
-            )
-        )
-        return pd.Series(tr).rolling(period).mean().values
-    
-    @staticmethod
-    def _stochastic(high, low, close, period=14, k_smooth=3, d_smooth=5):
-        low_min = pd.Series(low).rolling(period).min().values
-        high_max = pd.Series(high).rolling(period).max().values
-        stoch = 100 * (close - low_min) / (high_max - low_min + 1e-10)
-        k = pd.Series(stoch).rolling(k_smooth).mean().values
-        d = pd.Series(k).rolling(d_smooth).mean().values
-        return np.nan_to_num(k, 50), np.nan_to_num(d, 50)
-    
-    @staticmethod
-    def _adx(high, low, close, period=14):
-        tr = np.maximum(
-            high - low,
-            np.maximum(
-                np.abs(high - np.roll(close, 1)),
-                np.abs(low - np.roll(close, 1))
-            )
-        )
-        
-        dm_plus = np.where(high - np.roll(high, 1) > np.roll(low, 1) - low, 
-                           high - np.roll(high, 1), 0)
-        dm_minus = np.where(np.roll(low, 1) - low > high - np.roll(high, 1),
-                            np.roll(low, 1) - low, 0)
-        
-        tr_smooth = pd.Series(tr).rolling(period).sum().values
-        dm_plus_smooth = pd.Series(dm_plus).rolling(period).sum().values
-        dm_minus_smooth = pd.Series(dm_minus).rolling(period).sum().values
-        
-        di_plus = 100 * dm_plus_smooth / (tr_smooth + 1e-10)
-        di_minus = 100 * dm_minus_smooth / (tr_smooth + 1e-10)
-        
-        adx = np.abs(di_plus - di_minus) / (di_plus + di_minus + 1e-10)
-        return np.nan_to_num(adx * 100, 0)
+    return df
 
+def prepare_features(df):
+    feature_cols = [
+        'bb_width', 'bb_position', 'rsi_7', 'rsi_14', 'rsi_21',
+        'macd', 'macd_signal', 'macd_histogram',
+        'atr_ratio', 'roc_10', 'roc_20',
+        'stoch_k', 'stoch_d', 'ma_slope_5', 'ma_slope_20', 'adx',
+        'volume_zscore', 'candle_body_ratio', 'range_from_low',
+        'stoch_rsi_divergence'
+    ]
+    
+    X = df[feature_cols].fillna(0)
+    y = df['label']
+    
+    valid_mask = (X.notna().all(axis=1)) & (y.notna())
+    return X[valid_mask], y[valid_mask]
+
+def calculate_profit_factor(y_true, y_pred, threshold=0.5):
+    """
+    Profit Factor = Correct Predictions / Incorrect Predictions
+    Higher is better. Target: > 1.5
+    """
+    predictions = (y_pred >= threshold).astype(int)
+    
+    correct = (predictions == y_true).sum()
+    incorrect = (predictions != y_true).sum()
+    
+    if incorrect == 0:
+        return 0
+    return correct / incorrect
+
+def optimize_threshold_by_profit_factor(y_true, y_pred_proba):
+    """Find optimal threshold based on Profit Factor instead of F1-Score"""
+    logger.info("Optimizing threshold by Profit Factor...")
+    
+    best_pf = 0
+    best_threshold = 0.5
+    
+    for threshold in np.arange(0.40, 0.75, 0.02):
+        pf = calculate_profit_factor(y_true, y_pred_proba, threshold)
+        precision = precision_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
+        recall = recall_score(y_true, (y_pred_proba >= threshold).astype(int), zero_division=0)
+        
+        logger.info(f"  Threshold {threshold:.2f}: PF={pf:.4f}, P={precision:.4f}, R={recall:.4f}")
+        
+        if pf > best_pf:
+            best_pf = pf
+            best_threshold = threshold
+    
+    logger.info(f"\nSelected threshold: {best_threshold:.4f} (Profit Factor: {best_pf:.4f})")
+    return best_threshold
+
+def train_model(X_train, y_train, X_test, y_test):
+    logger.info("======================================================================")
+    logger.info("TRAINING OPTIMIZED RANDOM FOREST MODEL")
+    logger.info("======================================================================")
+    logger.info(f"Training samples: {len(X_train)}")
+    logger.info(f"  Positive: {(y_train == 1).sum()}")
+    logger.info(f"  Negative: {(y_train == 0).sum()}")
+    logger.info(f"  Base rate: {(y_train == 1).sum() / len(y_train) * 100:.2f}%")
+    logger.info("")
+    
+    rf = RandomForestClassifier(
+        n_estimators=300,
+        max_depth=15,
+        min_samples_leaf=3,
+        min_samples_split=5,
+        class_weight='balanced_subsample',
+        random_state=42,
+        n_jobs=-1,
+        verbose=0
+    )
+    
+    rf.fit(X_train, y_train)
+    logger.info("Random Forest training complete")
+    
+    logger.info("Applying probability calibration (Isotonic Regression)...")
+    calibrated_rf = CalibratedClassifierCV(
+        estimator=rf,
+        method='isotonic',
+        cv=5
+    )
+    calibrated_rf.fit(X_train, y_train)
+    logger.info("Calibration complete")
+    
+    probs_train = calibrated_rf.predict_proba(X_train)[:, 1]
+    probs_test = calibrated_rf.predict_proba(X_test)[:, 1]
+    
+    optimal_threshold = optimize_threshold_by_profit_factor(y_test, probs_test)
+    
+    y_pred_test = (probs_test >= optimal_threshold).astype(int)
+    precision_test = precision_score(y_test, y_pred_test, zero_division=0)
+    recall_test = recall_score(y_test, y_pred_test, zero_division=0)
+    f1_test = f1_score(y_test, y_pred_test, zero_division=0)
+    
+    logger.info("")
+    logger.info("Test Set Performance (Calibrated):")
+    logger.info(f"  Precision: {precision_test:.4f}")
+    logger.info(f"  Recall: {recall_test:.4f}")
+    logger.info(f"  F1-Score: {f1_test:.4f}")
+    
+    feature_cols = [
+        'bb_width', 'bb_position', 'rsi_7', 'rsi_14', 'rsi_21',
+        'macd', 'macd_signal', 'macd_histogram',
+        'atr_ratio', 'roc_10', 'roc_20',
+        'stoch_k', 'stoch_d', 'ma_slope_5', 'ma_slope_20', 'adx',
+        'volume_zscore', 'candle_body_ratio', 'range_from_low',
+        'stoch_rsi_divergence'
+    ]
+    
+    importances = rf.feature_importances_
+    feature_importance_df = pd.DataFrame({
+        'feature': feature_cols,
+        'importance': importances
+    }).sort_values('importance', ascending=False)
+    
+    logger.info("")
+    logger.info("Top 15 Important Features:")
+    for idx, row in feature_importance_df.head(15).iterrows():
+        logger.info(f"  {row['feature']}: {row['importance']:.4f}")
+    
+    return calibrated_rf, optimal_threshold
+
+def generate_signals(df, model, threshold):
+    logger.info("======================================================================")
+    logger.info("GENERATING SIGNALS ON FULL DATASET")
+    logger.info("======================================================================")
+    
+    feature_cols = [
+        'bb_width', 'bb_position', 'rsi_7', 'rsi_14', 'rsi_21',
+        'macd', 'macd_signal', 'macd_histogram',
+        'atr_ratio', 'roc_10', 'roc_20',
+        'stoch_k', 'stoch_d', 'ma_slope_5', 'ma_slope_20', 'adx',
+        'volume_zscore', 'candle_body_ratio', 'range_from_low',
+        'stoch_rsi_divergence'
+    ]
+    
+    X_full = df[feature_cols].fillna(0)
+    probabilities = model.predict_proba(X_full)[:, 1]
+    
+    df['signal_prob'] = probabilities
+    df['signal'] = (probabilities >= threshold).astype(int)
+    
+    total_signals = df['signal'].sum()
+    high_conf_signals = (df['signal_prob'] >= 0.75).sum()
+    
+    logger.info(f"Total signals generated: {total_signals}")
+    logger.info(f"  High confidence (prob >= 0.75): {high_conf_signals}")
+    logger.info(f"  Standard confidence: {total_signals - high_conf_signals}")
+    
+    signal_df = df[df['signal'] == 1].copy()
+    daily_signals = signal_df.groupby(signal_df['timestamp'].dt.date).size()
+    
+    logger.info("")
+    logger.info("Daily signal distribution:")
+    logger.info(f"  Days with signals: {len(daily_signals)}")
+    logger.info(f"  Avg signals/day: {daily_signals.mean():.2f}")
+    logger.info(f"  Max signals/day: {daily_signals.max()}")
+    logger.info(f"  Min signals/day: {daily_signals.min()}")
+    
+    return df
+
+def evaluate_full_dataset(df):
+    logger.info("======================================================================")
+    logger.info("FULL DATASET PERFORMANCE")
+    logger.info("======================================================================")
+    
+    y_true = df['label']
+    y_pred = df['signal']
+    
+    if y_pred.sum() == 0:
+        logger.info("No signals generated, skipping evaluation")
+        return
+    
+    precision = precision_score(y_true, y_pred, zero_division=0)
+    recall = recall_score(y_true, y_pred, zero_division=0)
+    f1 = f1_score(y_true, y_pred, zero_division=0)
+    
+    logger.info(f"Precision: {precision:.2%}")
+    logger.info(f"Recall: {recall:.2%}")
+    logger.info(f"F1-Score: {f1:.4f}")
+    
+    logger.info("")
+    logger.info("Target: P >= 80%, R >= 80%")
+    precision_gap = max(0, 0.80 - precision)
+    recall_gap = max(0, 0.80 - recall)
+    
+    if precision_gap > 0:
+        logger.info(f"Status: Precision {precision_gap*100:.1f}% short")
+    if recall_gap > 0:
+        logger.info(f"Status: Recall {recall_gap*100:.1f}% short")
+    
+    if precision >= 0.80 and recall >= 0.80:
+        logger.info("Status: TARGET ACHIEVED")
+    
+    logger.info("")
 
 def main():
-    logger.info('='*70)
-    logger.info('Intraday Trading Model V3: Rolling Window Label Generation')
-    logger.info('='*70)
-    logger.info('Strategy: Generate signals for ALL candles')
-    logger.info('Target: 3500+ signals, Precision >= 80%, Recall >= 80%')
-    logger.info('')
+    logger.info("======================================================================")
+    logger.info("Intraday Trading Model V3 Optimized: Risk-Reward + Calibration")
+    logger.info("======================================================================")
+    logger.info("Strategy: Improved label definition with risk-reward ratio")
+    logger.info("Enhancement: Probability calibration + class weight balancing")
+    logger.info("")
     
-    config = StrategyConfig.get_default()
-    os.makedirs(config.model_save_dir, exist_ok=True)
-    os.makedirs(config.results_save_dir, exist_ok=True)
+    df = load_data()
+    logger.info("")
     
-    logger.info('Loading 15-minute data...')
-    loader = DataLoader(
-        hf_repo=config.data.hf_repo,
-        cache_dir=config.data.cache_dir,
-        verbose=False
-    )
+    logger.info("Engineering features...")
+    df = generate_features(df)
+    logger.info("")
     
-    df = loader.load_data(
-        symbol='BTCUSDT',
-        timeframe='15m',
-        cache=True
-    )
-    
-    if not loader.validate_data(df):
-        logger.error('Data validation failed')
-        return False
-    
-    logger.info(f'Loaded {len(df)} candles')
-    logger.info(f'Date range: {df.index[0]} to {df.index[-1]}')
-    
-    logger.info('\nEngineering features...')
-    feature_engineer = FeatureEngineer(config)
-    df = feature_engineer.engineer_features(df)
-    logger.info('Features generated')
-    
-    logger.info('\nCreating rolling window labels...')
-    labels = IntradaySignalModelV3._create_rolling_labels(
+    logger.info("Creating improved labels...")
+    df = generate_improved_labels(
         df,
-        profit_pct=0.01,
-        loss_pct=0.01,
-        lookback=20
+        lookback_window=20,
+        rr_ratio_threshold=1.5,
+        max_loss_pct=0.5,
+        min_profit_pct=1.0
+    )
+    logger.info("")
+    
+    X, y = prepare_features(df)
+    logger.info(f"Total valid data points: {len(X)}")
+    logger.info("")
+    
+    X_train, X_test, y_train, y_test = train_test_split(
+        X, y, test_size=0.25, random_state=42, stratify=y
     )
     
-    valid_mask = labels >= 0
-    logger.info(f'Generated {valid_mask.sum()} valid labels')
-    logger.info(f'  Profitable: {(labels == 1).sum()}')
-    logger.info(f'  Unprofitable: {(labels == 0).sum()}')
-    logger.info(f'  Win rate: {(labels == 1).sum() / valid_mask.sum() * 100:.2f}%')
+    model, threshold = train_model(X_train, y_train, X_test, y_test)
+    logger.info("")
     
-    logger.info('\n' + '='*70)
-    logger.info('TRAINING RANDOM FOREST MODEL')
-    logger.info('='*70)
+    df = generate_signals(df, model, threshold)
+    logger.info("")
     
-    model = IntradaySignalModelV3(n_estimators=250, max_depth=14, min_samples_leaf=2)
-    train_p, train_r, train_f1 = model.train(df, labels)
+    evaluate_full_dataset(df)
     
-    logger.info('\n' + '='*70)
-    logger.info('GENERATING SIGNALS ON FULL DATASET')
-    logger.info('='*70)
-    
-    signals, confidence_scores = model.predict(df, labels)
-    
-    high_conf = (signals == 2).sum()
-    standard_conf = (signals == 1).sum()
-    total_signals = high_conf + standard_conf
-    
-    logger.info(f'Total signals generated: {total_signals}')
-    logger.info(f'  High confidence (prob >= 0.75): {high_conf}')
-    logger.info(f'  Standard confidence: {standard_conf}')
-    
-    signal_indices = np.where(signals > 0)[0]
-    
-    if len(signal_indices) > 0:
-        signal_dates = df.index[signal_indices].date
-        unique_dates = pd.Series(signal_dates).unique()
-        
-        logger.info(f'\nDaily signal distribution:')
-        logger.info(f'  Days with signals: {len(unique_dates)}')
-        daily_counts = pd.Series(signal_dates).value_counts()
-        logger.info(f'  Avg signals/day: {daily_counts.mean():.2f}')
-        logger.info(f'  Max signals/day: {daily_counts.max()}')
-        logger.info(f'  Min signals/day: {daily_counts.min()}')
-    
-    # Calculate metrics using true labels
-    if total_signals > 0:
-        actual_profitable = (labels[signal_indices] == 1).sum()
-        precision = actual_profitable / total_signals * 100 if total_signals > 0 else 0
-        
-        all_profitable_idx = np.where(labels == 1)[0]
-        caught = (signals[all_profitable_idx] > 0).sum()
-        recall = caught / len(all_profitable_idx) * 100 if len(all_profitable_idx) > 0 else 0
-        
-        f1 = 2 * (precision * recall) / (precision + recall + 1e-10)
-        
-        logger.info('\n' + '='*70)
-        logger.info('FULL DATASET PERFORMANCE')
-        logger.info('='*70)
-        logger.info(f'Precision: {precision:.2f}%')
-        logger.info(f'Recall: {recall:.2f}%')
-        logger.info(f'F1-Score: {f1:.4f}')
-        logger.info(f'Target: 3500+ signals, P>=80%, R>=80%')
-        
-        gaps = []
-        if total_signals < 3500:
-            gaps.append(f'Signals: {3500-total_signals} short')
-        if precision < 80:
-            gaps.append(f'Precision: {80-precision:.1f}% short')
-        if recall < 80:
-            gaps.append(f'Recall: {80-recall:.1f}% short')
-        
-        if not gaps:
-            logger.info('Status: ALL TARGETS ACHIEVED')
-        else:
-            logger.info(f'Status: {" | ".join(gaps)}')
-    
-    logger.info('\n' + '='*70)
-    logger.info('Model ready for deployment')
-    logger.info('='*70)
-    
-    return True
+    logger.info("======================================================================")
+    logger.info("Model optimization complete")
+    logger.info("======================================================================")
 
-
-if __name__ == '__main__':
-    success = main()
-    sys.exit(0 if success else 1)
+if __name__ == "__main__":
+    main()
