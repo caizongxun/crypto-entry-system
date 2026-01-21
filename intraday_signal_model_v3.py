@@ -13,22 +13,43 @@ warnings.filterwarnings('ignore')
 logger.remove()
 logger.add(lambda msg: print(msg, end=''), format="{time:YYYY-MM-DD HH:mm:ss} | {level: <8} | {message}")
 
-def load_data():
-    logger.info("Loading 15-minute data...")
-    parquet_path = "BTC_15m.parquet"
+def load_klines(symbol: str, timeframe: str) -> pd.DataFrame:
+    """
+    Load K-line data from HuggingFace dataset.
     
-    if not os.path.exists(parquet_path):
-        try:
-            from datasets import load_dataset
-            dataset = load_dataset("zong/BTC_OHLCV", split="train", cache_dir="./data_cache")
-            df = dataset.to_pandas()
-        except Exception as e:
-            logger.error(f"Failed to load from Hub: {e}")
-            raise
-    else:
-        df = pd.read_parquet(parquet_path)
+    symbol: e.g. 'BTCUSDT', 'ETHUSDT'
+    timeframe: '15m', '1h', '1d'
+    """
+    from huggingface_hub import hf_hub_download
     
-    df['timestamp'] = pd.to_datetime(df['timestamp'])
+    repo_id = "zongowo111/v2-crypto-ohlcv-data"
+    base = symbol.replace("USDT", "")
+    filename = f"{base}_{timeframe}.parquet"
+    path_in_repo = f"klines/{symbol}/{filename}"
+    
+    local_path = hf_hub_download(
+        repo_id=repo_id,
+        filename=path_in_repo,
+        repo_type="dataset"
+    )
+    return pd.read_parquet(local_path)
+
+def load_data(symbol: str = "BTCUSDT", timeframe: str = "15m"):
+    logger.info(f"Loading {timeframe} data for {symbol}...")
+    
+    try:
+        df = load_klines(symbol, timeframe)
+    except Exception as e:
+        logger.error(f"Failed to load from HuggingFace: {e}")
+        logger.info("Attempting to load from local parquet file...")
+        
+        parquet_path = f"{symbol.replace('USDT', '')}_{timeframe}.parquet"
+        if os.path.exists(parquet_path):
+            df = pd.read_parquet(parquet_path)
+        else:
+            raise FileNotFoundError(f"Cannot find {parquet_path} locally or on HuggingFace")
+    
+    df['timestamp'] = pd.to_datetime(df['open_time'])
     df = df.sort_values('timestamp').reset_index(drop=True)
     df = df.rename(columns={'open': 'o', 'high': 'h', 'low': 'l', 'close': 'c', 'volume': 'v'})
     
@@ -340,15 +361,16 @@ def evaluate_full_dataset(df):
     
     logger.info("")
 
-def main():
+def main(symbol: str = "BTCUSDT", timeframe: str = "15m"):
     logger.info("======================================================================")
     logger.info("Intraday Trading Model V3 Optimized: Risk-Reward + Calibration")
     logger.info("======================================================================")
+    logger.info(f"Symbol: {symbol}, Timeframe: {timeframe}")
     logger.info("Strategy: Improved label definition with risk-reward ratio")
     logger.info("Enhancement: Probability calibration + class weight balancing")
     logger.info("")
     
-    df = load_data()
+    df = load_data(symbol, timeframe)
     logger.info("")
     
     logger.info("Engineering features...")
@@ -386,4 +408,4 @@ def main():
     logger.info("======================================================================")
 
 if __name__ == "__main__":
-    main()
+    main(symbol="BTCUSDT", timeframe="15m")
