@@ -110,15 +110,22 @@ class DataPreprocessor:
             'open_time', 'close_time', 'open', 'high', 'low', 'close',
             'volume', 'quote_asset_volume', 'number_of_trades',
             'taker_buy_base_asset_volume', 'taker_buy_quote_asset_volume',
-            'ignore', 'resistance_level', 'support_level'
+            'ignore', 'resistance_level', 'support_level',
+            'regime', 'ad_phase', 'target'  # Exclude categorical columns
         ]
         
         features = [col for col in df.columns if col not in exclude_cols]
         
-        if include_patterns:
-            features = [col for col in features if any(pattern in col for pattern in include_patterns)]
+        # Filter out any remaining string columns
+        numeric_features = []
+        for col in features:
+            if df[col].dtype in ['float64', 'float32', 'int64', 'int32']:
+                numeric_features.append(col)
         
-        return features
+        if include_patterns:
+            numeric_features = [col for col in numeric_features if any(pattern in col for pattern in include_patterns)]
+        
+        return numeric_features
     
     def preprocess(
         self,
@@ -170,7 +177,7 @@ class DataPreprocessor:
             target = self.create_target_variable(df, lookahead=lookahead)
             df['target'] = target
         
-        # Select features
+        # Select features (numeric only)
         self.feature_names = self.select_features(df)
         logger.info(f"Selected {len(self.feature_names)} features")
         
@@ -185,6 +192,7 @@ class DataPreprocessor:
         y = df['target'] if 'target' in df.columns else None
         
         logger.info(f"Preprocessing complete: {len(X)} samples, {len(self.feature_names)} features")
+        logger.info(f"Feature names: {self.feature_names[:10]}...")  # Show first 10
         return X, y
     
     def split_data(
@@ -232,5 +240,6 @@ class DataPreprocessor:
             )
         
         logger.info(f"Train: {len(X_train)}, Val: {len(X_val)}, Test: {len(X_test)}")
+        logger.info(f"Train target distribution: {y_train.value_counts().to_dict()}")
         
         return X_train, X_val, X_test, y_train, y_val, y_test
