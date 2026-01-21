@@ -110,8 +110,8 @@ def generate_features(df):
     df['candle_body_ratio'] = df['candle_body'] / (df['candle_range'] + 1e-8)
     df['range_from_low'] = (df['close'] - df['low']) / (df['high'] - df['low'] + 1e-8)
     
-    stoch_rsi = ta.momentum.StochasticRSIIndicator(close=df['close'], window=14, smooth1=14, smooth2=3)
-    df['stoch_rsi_k'] = stoch_rsi.stochasticrsi()
+    stoch_rsi = ta.momentum.StochRSIIndicator(close=df['close'], window=14, smooth1=14, smooth2=3)
+    df['stoch_rsi_k'] = stoch_rsi.stochrsi()
     df['stoch_rsi_divergence'] = (df['stoch_rsi_k'] - df['stoch_rsi_k'].shift(1)).abs()
     
     df = df.fillna(method='bfill').fillna(method='ffill')
