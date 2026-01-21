@@ -1,3 +1,1 @@
-from .engine import BacktestEngine
-
-__all__ = ['BacktestEngine']
+# Backtest module - do not import submodules here to avoid circular imports
