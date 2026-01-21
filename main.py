@@ -1,165 +1,114 @@
-import sys
-import argparse
+import logging
 from pathlib import Path
-from datetime import datetime
+import joblib
 
-sys.path.insert(0, str(Path(__file__).parent))
+from config import TRAINING_CONFIG, XGBOOST_PARAMS, LIGHTGBM_PARAMS, NEURAL_NETWORK_CONFIG, FEATURE_CONFIG
+from data.loader import KlinesDataLoader
+from data.preprocessor import DataPreprocessor
+from models.ensemble import EnsembleModel
+from models.predictor import UnifiedPredictor
+from backtest.engine import BacktestEngine
 
-from models.ml_model import CryptoEntryModel
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-
-def train_mode(symbol, timeframe, model_type, optimization_level, use_multi_timeframe=True):
-    print("="*60)
-    print(f"Training {timeframe.upper()} BB Model for {symbol}")
-    print(f"Optimization Level: {optimization_level}")
-    if use_multi_timeframe:
-        print(f"Multi-Timeframe Features: Enabled")
-    print("="*60)
+def train_full_pipeline(
+    symbol: str = 'BTCUSDT',
+    timeframe: str = '15m',
+    test_split: float = 0.2,
+    validation_split: float = 0.1,
+    epochs: int = 100,
+    batch_size: int = 32
+):
+    """Complete training pipeline.
     
-    try:
-        print(f"\nStep 1: Loading data...")
-        model = CryptoEntryModel(
-            symbol=symbol,
-            timeframe=timeframe,
-            model_type=model_type,
-            optimization_level=optimization_level,
-            use_multi_timeframe=use_multi_timeframe
-        )
-        model.load_data()
-        
-        print(f"\nStep 2: Engineering features...")
-        model.engineer_features()
-        
-        print(f"\nStep 3: Training model...")
-        results = model.train()
-        
-        print(f"\n" + "="*60)
-        print(f"Training Results:")
-        print("="*60)
-        print(f"Symbol: {results['symbol']}")
-        print(f"Timeframe: {results['timeframe']}")
-        print(f"Model Type: {results['model_type']}")
-        print(f"Optimization: {results.get('optimization', 'none')}")
-        if 'multi_timeframe' in results:
-            print(f"Multi-Timeframe: {results['multi_timeframe']}")
-        print(f"Train Accuracy: {results['train_accuracy']:.4f}")
-        print(f"Test Accuracy: {results['test_accuracy']:.4f}")
-        print(f"Train Precision: {results['train_precision']:.4f}")
-        print(f"Test Precision: {results['test_precision']:.4f}")
-        
-        if 'train_recall' in results:
-            print(f"Train Recall: {results['train_recall']:.4f}")
-            print(f"Test Recall: {results['test_recall']:.4f}")
-        
-        if 'bounce_rate' in results:
-            print(f"Bounce Rate: {results['bounce_rate']:.4f}")
-        
-        print(f"="*60)
-        print(f"\nTraining completed successfully!")
-        print(f"Model saved to: models/cache/{symbol}_{timeframe}_{model_type}.joblib")
-        return True
-        
-    except Exception as e:
-        print(f"\nError during training: {str(e)}")
-        import traceback
-        traceback.print_exc()
-        return False
-
-
-def server_mode():
-    from app import app
-    print("Starting Crypto Entry System server...")
-    print("Access at http://localhost:5000")
-    app.run(debug=True, host='0.0.0.0', port=5000)
-
-
-def main():
-    parser = argparse.ArgumentParser(
-        description='Crypto Entry System - ML-based Trading Signal Analysis',
-        formatter_class=argparse.RawDescriptionHelpFormatter,
-        epilog="""
-Examples:
-  python main.py                              Start web server
-  python main.py --train                      Train model in interactive mode
-  python main.py --symbol BTCUSDT --timeframe 15m             Train with parameters
-  python main.py --symbol ETHUSDT --timeframe 1h --opt aggressive
-  python main.py --symbol LTCUSDT --timeframe 4h --model-type lightgbm --opt balanced
-  python main.py --symbol BTCUSDT --timeframe 1h --no-multi-tf  Train without multi-timeframe features
-
-Optimization Levels:
-  conservative    High precision, fewer signals (precision 65-75%)
-  balanced        Good precision and recall (precision 55-65%)
-  aggressive      More signals, moderate precision (precision 45-55%)
-
-Multi-Timeframe Features:
-  By default, models are trained with multi-timeframe features that reference
-  higher timeframes for better context. Use --no-multi-tf to disable.
-        """
+    Args:
+        symbol: Trading pair (e.g., 'BTCUSDT')
+        timeframe: '15m', '1h', or '1d'
+        test_split: Test set ratio
+        validation_split: Validation set ratio
+        epochs: Neural network epochs
+        batch_size: Neural network batch size
+    
+    Returns:
+        Dict with model artifacts
+    """
+    logger.info(f"Starting training pipeline for {symbol} {timeframe}")
+    
+    model_dir = Path('models/artifacts')
+    model_dir.mkdir(parents=True, exist_ok=True)
+    
+    data_loader = KlinesDataLoader()
+    preprocessor = DataPreprocessor(config=FEATURE_CONFIG)
+    ensemble = EnsembleModel(model_dir=model_dir)
+    
+    logger.info("Step 1: Loading data...")
+    df = data_loader.load_klines(symbol, timeframe, use_cache=True)
+    if not data_loader.validate_data(df):
+        logger.error("Data validation failed")
+        return None
+    logger.info(f"Loaded {len(df)} candles")
+    
+    logger.info("Step 2: Preprocessing and feature engineering...")
+    X, y = preprocessor.preprocess(df, create_target=True, normalize=True)
+    logger.info(f"Features shape: {X.shape}")
+    logger.info(f"Target distribution: {y.value_counts().to_dict()}")
+    
+    logger.info("Step 3: Splitting data...")
+    X_train, X_val, X_test, y_train, y_val, y_test = preprocessor.split_data(
+        X, y, test_split=test_split, validation_split=validation_split, time_series=True
     )
     
-    parser.add_argument(
-        '--train',
-        action='store_true',
-        help='Enter training mode'
-    )
+    logger.info("Step 4: Training ensemble models...")
     
-    parser.add_argument(
-        '--symbol',
-        type=str,
-        default='BTCUSDT',
-        help='Trading pair symbol (default: BTCUSDT)'
-    )
+    ensemble.train_xgboost(X_train, y_train, XGBOOST_PARAMS)
+    ensemble.train_lightgbm(X_train, y_train, LIGHTGBM_PARAMS)
     
-    parser.add_argument(
-        '--timeframe',
-        type=str,
-        default='1h',
-        choices=['15m', '1h', '4h', '1d'],
-        help='Timeframe for model training (default: 1h)'
-    )
+    nn_config = NEURAL_NETWORK_CONFIG.copy()
+    nn_config['epochs'] = epochs
+    nn_config['batch_size'] = batch_size
+    ensemble.train_neural_network(X_train.values, y_train.values, nn_config)
     
-    parser.add_argument(
-        '--model-type',
-        type=str,
-        default='xgboost',
-        choices=['xgboost', 'lightgbm', 'random_forest'],
-        help='Model algorithm type (default: xgboost)'
-    )
+    ensemble.train_logistic_regression(X_train, y_train)
     
-    parser.add_argument(
-        '--opt',
-        type=str,
-        default='balanced',
-        choices=['conservative', 'balanced', 'aggressive'],
-        help='Optimization level (default: balanced)'
-    )
+    logger.info("Step 5: Validation metrics...")
+    val_metrics = ensemble.evaluate(X_val, y_val)
+    logger.info(f"Validation metrics: {val_metrics}")
     
-    parser.add_argument(
-        '--no-multi-tf',
-        action='store_true',
-        help='Disable multi-timeframe feature engineering'
-    )
+    logger.info("Step 6: Test metrics...")
+    test_metrics = ensemble.evaluate(X_test, y_test)
+    logger.info(f"Test metrics: {test_metrics}")
     
-    args = parser.parse_args()
+    logger.info("Step 7: Saving models...")
+    ensemble.save()
+    joblib.dump(preprocessor.scaler, model_dir / 'scaler.pkl')
     
-    if args.train or args.symbol != 'BTCUSDT' or args.timeframe != '1h' or args.model_type != 'xgboost' or args.opt != 'balanced':
-        symbol = args.symbol.upper()
-        if not symbol.endswith('USDT'):
-            symbol = symbol + 'USDT'
-        
-        use_multi_tf = not args.no_multi_tf
-        
-        success = train_mode(
-            symbol=symbol,
-            timeframe=args.timeframe,
-            model_type=args.model_type,
-            optimization_level=args.opt,
-            use_multi_timeframe=use_multi_tf
-        )
-        sys.exit(0 if success else 1)
-    else:
-        server_mode()
-
+    logger.info("Step 8: Backtesting...")
+    predictor = UnifiedPredictor(model_dir=model_dir)
+    
+    predictions_test = predictor.predict_multiple_candles(df.iloc[len(df) - len(X_test):])
+    backtest_results = predictor.backtest_predictions(df.iloc[len(df) - len(X_test):], min_confidence=0.60)
+    
+    logger.info(f"Backtest results: {backtest_results}")
+    
+    artifacts = {
+        'ensemble': ensemble,
+        'preprocessor': preprocessor,
+        'val_metrics': val_metrics,
+        'test_metrics': test_metrics,
+        'backtest_results': backtest_results,
+        'feature_names': preprocessor.feature_names,
+    }
+    
+    logger.info("Training complete!")
+    return artifacts
 
 if __name__ == '__main__':
-    main()
+    train_full_pipeline(
+        symbol='BTCUSDT',
+        timeframe='15m',
+        test_split=0.2,
+        validation_split=0.1,
+        epochs=100,
+        batch_size=32
+    )
