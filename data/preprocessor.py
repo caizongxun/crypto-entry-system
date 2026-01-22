@@ -24,51 +24,46 @@ class DataPreprocessor:
     def create_target_variable(
         df: pd.DataFrame,
         lookahead: int = 3,
-        threshold_up: float = 0.003,
-        threshold_down: float = -0.003
+        threshold: float = 0.002
     ) -> pd.Series:
-        """Create binary target with multi-period reversal detection.
+        """Create binary target based on simple price movement.
         
-        Detects mean reversion patterns:
-        - If price is currently above MA and will drop: 0 (predict DOWN)
-        - If price is currently below MA and will rise: 1 (predict UP)
-        - Otherwise: exclude from training
+        Simple approach:
+        - If price goes UP by threshold% in next lookahead candles: 1
+        - If price goes DOWN by threshold% in next lookahead candles: 0
+        - Otherwise: NaN (exclude from training)
         
         Args:
             df: DataFrame with OHLCV data and indicators
             lookahead: Number of candles to look ahead
-            threshold_up: Minimum return to consider as UP
-            threshold_down: Maximum return to consider as DOWN
+            threshold: Minimum price change threshold (0.002 = 0.2%)
         
         Returns:
-            Binary series: 1 for UP reversal, 0 for DOWN reversal, NaN for neutral
+            Binary series: 1 for UP, 0 for DOWN, NaN for neutral
         """
-        future_close = df['close'].shift(-lookahead)
         future_high = df['high'].shift(-lookahead)
         future_low = df['low'].shift(-lookahead)
-        
         current_close = df['close']
-        sma_20 = df['sma_20']
         
-        # Calculate returns
-        returns = (future_close - current_close) / current_close
-        max_return = (future_high - current_close) / current_close
-        min_return = (future_low - current_close) / current_close
+        # Calculate max up move and max down move
+        up_move = (future_high - current_close) / current_close
+        down_move = (current_close - future_low) / current_close
         
-        # Direction bias: above/below MA
-        above_ma = current_close > sma_20
-        below_ma = current_close < sma_20
+        target = pd.Series(np.nan, index=df.index, dtype='float64')
         
-        # Reversal signals
-        # UP reversal: price below MA now, will go up in future
-        up_reversal = (below_ma) & (max_return > threshold_up)
+        # UP if high is reached before low (and exceeds threshold)
+        up_condition = up_move >= threshold
+        # DOWN if low is reached before high (and exceeds threshold)  
+        down_condition = down_move >= threshold
         
-        # DOWN reversal: price above MA now, will go down in future
-        down_reversal = (above_ma) & (min_return < threshold_down)
+        # If both exceed threshold, compare which happens first
+        both_condition = up_condition & down_condition
+        target[both_condition] = (up_move[both_condition] >= down_move[both_condition]).astype(float)
         
-        target = pd.Series(np.nan, index=df.index)
-        target[up_reversal] = 1
-        target[down_reversal] = 0
+        # Only UP moves
+        target[up_condition & ~both_condition] = 1.0
+        # Only DOWN moves
+        target[down_condition & ~both_condition] = 0.0
         
         return target
     
@@ -208,7 +203,7 @@ class DataPreprocessor:
         # Create target variable BEFORE removing NaN
         if create_target:
             logger.info(f"Creating target variable (lookahead={lookahead})...")
-            target = self.create_target_variable(df, lookahead=lookahead, threshold_up=0.003, threshold_down=-0.003)
+            target = self.create_target_variable(df, lookahead=lookahead, threshold=0.002)
             df['target'] = target
         
         # Remove rows with NaN values
@@ -237,7 +232,8 @@ class DataPreprocessor:
         if y is not None:
             target_dist = y.value_counts()
             logger.info(f"Target distribution: {target_dist.to_dict()}")
-            logger.info(f"Class balance: {(target_dist[1] / len(y) * 100):.1f}% UP, {(target_dist[0] / len(y) * 100):.1f}% DOWN")
+            if len(target_dist) > 1:
+                logger.info(f"Class balance: {(target_dist[1] / len(y) * 100):.1f}% UP, {(target_dist[0] / len(y) * 100):.1f}% DOWN")
         
         logger.info(f"Preprocessing complete: {len(X)} samples, {len(self.feature_names)} features")
         return X, y
