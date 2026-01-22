@@ -36,36 +36,54 @@ kc_lower = ma - atr * kc_mult
 in_squeeze = bb_upper < kc_upper and bb_lower > kc_lower
 squeeze_release = not in_squeeze and in_squeeze[1]
 
-mom_raw = ta.linreg(close - ta.sma(close, mom_length), mom_length, 0) if use_linear_reg else close - ta.sma(close, mom_length)
+mom_raw = use_linear_reg ? 
+     ta.linreg(close - ta.sma(close, mom_length), mom_length, 0) : 
+     close - ta.sma(close, mom_length)
 mom = ta.sma(mom_raw, mom_smooth)
 
 mom_ema_fast = ta.ema(mom, 3)
 mom_ema_slow = ta.ema(mom, 8)
 
-mom_color = mom > 0 ? (mom > mom[1] ? color.new(color.green, 0) : color.new(color.lime, 40)) : (mom < mom[1] ? color.new(color.red, 0) : color.new(color.maroon, 40))
+mom_color = mom > 0 ? (mom > mom[1] ? color.new(color.green, 0) : 
+     color.new(color.lime, 40)) : (mom < mom[1] ? color.new(color.red, 0) : 
+     color.new(color.maroon, 40))
 
 mom_strength = math.abs(mom) / (ta.sma(math.abs(mom), 20) + 0.0001)
 
 rsi_for_div = ta.rsi(close, 14)
 bb_squeeze_level = (bb_upper - bb_lower) / ma
 
-divergence_bullish = rsi_for_div < 30 and ta.crossover(mom, 0) and squeeze_release
-divergence_bearish = rsi_for_div > 70 and ta.crossunder(mom, 0) and squeeze_release
+divergence_bullish = rsi_for_div < 30 and ta.crossover(mom, 0) and 
+     squeeze_release
+divergence_bearish = rsi_for_div > 70 and ta.crossunder(mom, 0) and 
+     squeeze_release
 
-if show_strength
-    plot(mom_strength * 50, "Momentum Strength", color=color.new(color.cyan, 60), linewidth=1, style=plot.style_area)
+plot(mom_strength * 50, "Momentum Strength", 
+     color=color.new(color.cyan, 60), linewidth=1, 
+     style=plot.style_area, display=show_strength ? display.all : 
+     display.none)
 
 plot(mom, "Momentum", color=mom_color, linewidth=2)
-plot(mom_ema_fast, "Momentum Fast EMA", color=color.new(color.blue, 30), linewidth=1)
-plot(mom_ema_slow, "Momentum Slow EMA", color=color.new(color.orange, 30), linewidth=1)
+plot(mom_ema_fast, "Momentum Fast EMA", 
+     color=color.new(color.blue, 30), linewidth=1)
+plot(mom_ema_slow, "Momentum Slow EMA", 
+     color=color.new(color.orange, 30), linewidth=1)
 
 hline(0, "Zero Line", color=color.gray, linestyle=hline.style_solid)
 
-if show_divergence
-    plotshape(divergence_bullish, title="Bullish Divergence", location=location.bottom, char="B", color=color.green, size=size.small)
-    plotshape(divergence_bearish, title="Bearish Divergence", location=location.bottom, char="S", color=color.red, size=size.small)
-    plotshape(in_squeeze, title="Squeeze Active", location=location.top, char="Q", color=color.gray, size=size.tiny)
+plotshape(divergence_bullish and show_divergence, 
+     title="Bullish Divergence", location=location.bottom, text="B", 
+     textcolor=color.green, color=color.green, size=size.small)
+plotshape(divergence_bearish and show_divergence, 
+     title="Bearish Divergence", location=location.bottom, text="S", 
+     textcolor=color.red, color=color.red, size=size.small)
+plotshape(in_squeeze and show_divergence, title="Squeeze Active", 
+     location=location.top, text="Q", textcolor=color.gray, 
+     color=color.gray, size=size.tiny)
 
-alertcondition(divergence_bullish, title="Bullish Divergence", message="Bullish momentum divergence with squeeze release")
-alertcondition(divergence_bearish, title="Bearish Divergence", message="Bearish momentum divergence with squeeze release")
-alertcondition(squeeze_release and in_squeeze[1], title="Squeeze Released", message="Market volatility expanding after squeeze")
+alertcondition(divergence_bullish, title="Bullish Divergence", 
+     message="Bullish momentum divergence with squeeze release")
+alertcondition(divergence_bearish, title="Bearish Divergence", 
+     message="Bearish momentum divergence with squeeze release")
+alertcondition(squeeze_release and in_squeeze[1], title="Squeeze Released", 
+     message="Market volatility expanding after squeeze")
