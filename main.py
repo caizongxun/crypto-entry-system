@@ -86,18 +86,24 @@ def train_full_pipeline(
     logger.info(f"XGBoost params: {xgb_params}")
     ensemble.train_xgboost(X_train, y_train, xgb_params)
     
-    # Conservative LightGBM parameters - prevent overfitting
+    # Aggressively regularized LightGBM to prevent overfitting
+    # Key: very shallow trees, high minimum leaf size, strong L1/L2 penalty
     lgb_params = LIGHTGBM_PARAMS.copy()
     lgb_params.update({
-        'num_leaves': 31,
+        'num_leaves': 15,  # Very shallow - fewer splits
         'learning_rate': 0.05,
-        'n_estimators': 200,
-        'subsample': 0.8,
-        'colsample_bytree': 0.8,
-        'min_data_in_leaf': 30,
-        'reg_alpha': 1.0,
-        'reg_lambda': 2.0,
-        'min_gain_to_split': 0.01,
+        'n_estimators': 150,  # Fewer trees
+        'subsample': 0.7,  # Less data per iteration
+        'colsample_bytree': 0.7,  # Use fewer features per tree
+        'min_data_in_leaf': 50,  # Much higher - require 50 samples per leaf
+        'min_child_samples': 50,  # Explicit minimum
+        'reg_alpha': 2.0,  # Strong L1 regularization
+        'reg_lambda': 3.0,  # Strong L2 regularization
+        'min_gain_to_split': 0.05,  # Need 5% gain to split
+        'max_depth': 4,  # Shallow trees
+        'feature_fraction': 0.7,  # Don't use all features
+        'bagging_fraction': 0.7,  # Bagging
+        'bagging_freq': 5,  # Bagging frequency
     })
     logger.info(f"LightGBM params: {lgb_params}")
     ensemble.train_lightgbm(X_train, y_train, lgb_params)
