@@ -23,47 +23,75 @@ class DataPreprocessor:
     @staticmethod
     def create_target_variable(
         df: pd.DataFrame,
-        lookahead: int = 3,
-        threshold: float = 0.002
+        lookahead: int = 5,
+        strong_move_threshold: float = 0.01  # 1% move
     ) -> pd.Series:
-        """Create binary target based on simple price movement.
+        """Predict strong reversal moves - high quality signals only.
         
-        Simple approach:
-        - If price goes UP by threshold% in next lookahead candles: 1
-        - If price goes DOWN by threshold% in next lookahead candles: 0
-        - Otherwise: NaN (exclude from training)
+        Logic:
+        1. Only label when price is in extreme position (beyond 1.5 std from MA)
+        2. Only label when subsequent move is STRONG (>1%)
+        3. Predict direction of that strong move
+        4. Exclude weak/ambiguous moves (most data)
+        
+        This increases signal quality at cost of sample count.
         
         Args:
             df: DataFrame with OHLCV data and indicators
             lookahead: Number of candles to look ahead
-            threshold: Minimum price change threshold (0.002 = 0.2%)
+            strong_move_threshold: Minimum move to consider (0.01 = 1%)
         
         Returns:
-            Binary series: 1 for UP, 0 for DOWN, NaN for neutral
+            Binary series: 1 for strong UP, 0 for strong DOWN, NaN for weak/excluded
         """
         future_high = df['high'].shift(-lookahead)
         future_low = df['low'].shift(-lookahead)
         current_close = df['close']
+        sma_20 = df['sma_20']
+        bb_upper = df['bb_upper']
+        bb_lower = df['bb_lower']
         
-        # Calculate max up move and max down move
+        # Calculate moves
         up_move = (future_high - current_close) / current_close
         down_move = (current_close - future_low) / current_close
         
+        # Price position relative to bollinger bands
+        bb_position = (current_close - bb_lower) / (bb_upper - bb_lower + 1e-10)
+        distance_from_ma = (current_close - sma_20).abs() / sma_20
+        
         target = pd.Series(np.nan, index=df.index, dtype='float64')
         
-        # UP if high is reached before low (and exceeds threshold)
-        up_condition = up_move >= threshold
-        # DOWN if low is reached before high (and exceeds threshold)  
-        down_condition = down_move >= threshold
+        # === KEY FILTER: Only label extreme positions ===
+        # Price near upper BB (overbought) -> predict DOWN
+        # Price near lower BB (oversold) -> predict UP
+        near_upper_bb = bb_position > 0.85  # Top 15% of band
+        near_lower_bb = bb_position < 0.15  # Bottom 15% of band
         
-        # If both exceed threshold, compare which happens first
-        both_condition = up_condition & down_condition
-        target[both_condition] = (up_move[both_condition] >= down_move[both_condition]).astype(float)
+        # Additional filter: price is far from MA
+        far_from_ma = distance_from_ma > 0.015  # >1.5% distance
         
-        # Only UP moves
-        target[up_condition & ~both_condition] = 1.0
-        # Only DOWN moves
-        target[down_condition & ~both_condition] = 0.0
+        extreme_position = (near_upper_bb | near_lower_bb) & far_from_ma
+        
+        # === Second filter: Strong moves only ===
+        strong_up = up_move >= strong_move_threshold
+        strong_down = down_move >= strong_move_threshold
+        strong_move = strong_up | strong_down
+        
+        # === Combine filters ===
+        valid_signal = extreme_position & strong_move
+        
+        # Determine direction for valid signals
+        # If both up and down moves are strong, use which is stronger
+        both_strong = valid_signal & strong_up & strong_down
+        target[both_strong] = (up_move[both_strong] > down_move[both_strong]).astype(float)
+        
+        # Only up is strong and position is extreme
+        only_up = valid_signal & strong_up & ~strong_down
+        target[only_up] = 1.0
+        
+        # Only down is strong and position is extreme
+        only_down = valid_signal & strong_down & ~strong_up
+        target[only_down] = 0.0
         
         return target
     
@@ -161,7 +189,7 @@ class DataPreprocessor:
         self,
         df: pd.DataFrame,
         create_target: bool = True,
-        lookahead: int = 3,
+        lookahead: int = 5,
         normalize: bool = True
     ) -> Tuple[pd.DataFrame, pd.Series]:
         """Complete preprocessing pipeline.
@@ -169,7 +197,7 @@ class DataPreprocessor:
         Args:
             df: Raw OHLCV DataFrame
             create_target: Whether to create target variable
-            lookahead: Lookahead period for target (3 candles = 45 minutes for 15m)
+            lookahead: Lookahead period for target
             normalize: Whether to normalize features
         
         Returns:
@@ -203,7 +231,7 @@ class DataPreprocessor:
         # Create target variable BEFORE removing NaN
         if create_target:
             logger.info(f"Creating target variable (lookahead={lookahead})...")
-            target = self.create_target_variable(df, lookahead=lookahead, threshold=0.002)
+            target = self.create_target_variable(df, lookahead=lookahead, strong_move_threshold=0.01)
             df['target'] = target
         
         # Remove rows with NaN values
@@ -233,7 +261,9 @@ class DataPreprocessor:
             target_dist = y.value_counts()
             logger.info(f"Target distribution: {target_dist.to_dict()}")
             if len(target_dist) > 1:
-                logger.info(f"Class balance: {(target_dist[1] / len(y) * 100):.1f}% UP, {(target_dist[0] / len(y) * 100):.1f}% DOWN")
+                total = len(y)
+                logger.info(f"Class balance: {(target_dist.get(1.0, 0) / total * 100):.1f}% UP, {(target_dist.get(0.0, 0) / total * 100):.1f}% DOWN")
+                logger.info(f"Total valid signals: {len(y)} out of {initial_rows} ({len(y)/initial_rows*100:.1f}%)")
         
         logger.info(f"Preprocessing complete: {len(X)} samples, {len(self.feature_names)} features")
         return X, y
