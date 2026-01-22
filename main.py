@@ -18,10 +18,10 @@ def train_full_pipeline(
     timeframe: str = '15m',
     test_split: float = 0.2,
     validation_split: float = 0.1,
-    epochs: int = 150,
-    batch_size: int = 64
+    epochs: int = 100,
+    batch_size: int = 32
 ):
-    """Complete training pipeline with optimized parameters.
+    """Complete training pipeline with regularization to prevent overfitting.
     
     Args:
         symbol: Trading pair (e.g., 'BTCUSDT')
@@ -69,47 +69,52 @@ def train_full_pipeline(
     
     logger.info("Step 4: Training ensemble models...")
     
-    # Optimized XGBoost parameters
+    # Conservative XGBoost parameters - prevent overfitting
     xgb_params = XGBOOST_PARAMS.copy()
     xgb_params.update({
-        'max_depth': 8,
-        'learning_rate': 0.03,
-        'n_estimators': 300,
-        'subsample': 0.7,
-        'colsample_bytree': 0.7,
-        'min_child_weight': 2,
-        'gamma': 1,
-        'reg_alpha': 0.5,
-        'reg_lambda': 1,
+        'max_depth': 5,
+        'learning_rate': 0.05,
+        'n_estimators': 200,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_child_weight': 5,
+        'gamma': 2,
+        'reg_alpha': 1.0,
+        'reg_lambda': 2.0,
+        'scale_pos_weight': class_weight_dict[0] / class_weight_dict[1],
     })
+    logger.info(f"XGBoost params: {xgb_params}")
     ensemble.train_xgboost(X_train, y_train, xgb_params)
     
-    # Optimized LightGBM parameters
+    # Conservative LightGBM parameters - prevent overfitting
     lgb_params = LIGHTGBM_PARAMS.copy()
     lgb_params.update({
-        'num_leaves': 50,
-        'learning_rate': 0.03,
-        'n_estimators': 300,
-        'subsample': 0.7,
-        'colsample_bytree': 0.7,
-        'min_data_in_leaf': 10,
-        'reg_alpha': 0.5,
-        'reg_lambda': 1,
+        'num_leaves': 31,
+        'learning_rate': 0.05,
+        'n_estimators': 200,
+        'subsample': 0.8,
+        'colsample_bytree': 0.8,
+        'min_data_in_leaf': 30,
+        'reg_alpha': 1.0,
+        'reg_lambda': 2.0,
+        'min_gain_to_split': 0.01,
     })
+    logger.info(f"LightGBM params: {lgb_params}")
     ensemble.train_lightgbm(X_train, y_train, lgb_params)
     
-    # Optimized Neural Network
+    # Smaller Neural Network with strong regularization
     nn_config = NEURAL_NETWORK_CONFIG.copy()
     nn_config.update({
-        'lstm_units': 256,
-        'lstm_layers': 3,
-        'dense_units': 128,
-        'dropout_rate': 0.4,
-        'learning_rate': 0.0005,
+        'lstm_units': 64,
+        'lstm_layers': 2,
+        'dense_units': 64,
+        'dropout_rate': 0.5,
+        'learning_rate': 0.001,
         'batch_size': batch_size,
         'epochs': epochs,
-        'early_stopping_patience': 15,
+        'early_stopping_patience': 10,
     })
+    logger.info(f"Neural Network config: {nn_config}")
     ensemble.train_neural_network(X_train.values, y_train.values, nn_config)
     
     ensemble.train_logistic_regression(X_train, y_train)
@@ -154,6 +159,6 @@ if __name__ == '__main__':
         timeframe='15m',
         test_split=0.2,
         validation_split=0.1,
-        epochs=150,
-        batch_size=64
+        epochs=100,
+        batch_size=32
     )
